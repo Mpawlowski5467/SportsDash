@@ -1,0 +1,195 @@
+{
+  "leagues": [
+    {
+      "id": "8802",
+      "uid": "s:20~l:8802",
+      "name": "Harvest Football Alliance",
+      "abbreviation": "HFA",
+      "slug": "harvest-football"
+    }
+  ],
+  "season": {"type": 2, "year": 2026},
+  "day": {"date": "2026-06-11"},
+  "events": [
+    {
+      "id": "9600001",
+      "uid": "s:20~l:8802~e:9600001",
+      "date": "2026-06-11T17:00Z",
+      "name": "Cinderfall Drakes at Harrowgate Plowmen",
+      "shortName": "CFD @ HGP",
+      "competitions": [
+        {
+          "id": "9600001",
+          "date": "2026-06-11T17:00Z",
+          "venue": {"id": "7201", "fullName": "Harrowgate Field"},
+          "competitors": [
+            {
+              "id": "401",
+              "homeAway": "home",
+              "winner": true,
+              "score": "31",
+              "linescores": [{"value": 7.0}, {"value": 10.0}, {"value": 7.0}, {"value": 7.0}],
+              "team": {
+                "id": "401",
+                "location": "Harrowgate",
+                "name": "Plowmen",
+                "displayName": "Harrowgate Plowmen",
+                "shortDisplayName": "Plowmen",
+                "abbreviation": "HGP"
+              }
+            },
+            {
+              "id": "402",
+              "homeAway": "away",
+              "winner": false,
+              "score": "24",
+              "linescores": [{"value": 3.0}, {"value": 14.0}, {"value": 0.0}, {"value": 7.0}],
+              "team": {
+                "id": "402",
+                "location": "Cinderfall",
+                "name": "Drakes",
+                "displayName": "Cinderfall Drakes",
+                "shortDisplayName": "Drakes",
+                "abbreviation": "CFD"
+              }
+            }
+          ],
+          "status": {
+            "clock": 0.0,
+            "displayClock": "0:00",
+            "period": 4,
+            "type": {
+              "id": "3",
+              "name": "STATUS_FINAL",
+              "state": "post",
+              "completed": true,
+              "description": "Final",
+              "detail": "Final",
+              "shortDetail": "Final"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9600002",
+      "uid": "s:20~l:8802~e:9600002",
+      "date": "2026-06-11T20:25Z",
+      "name": "Vellmar Thunderoaks at Mossbridge Anvils",
+      "shortName": "VTO @ MSA",
+      "competitions": [
+        {
+          "id": "9600002",
+          "date": "2026-06-11T20:25Z",
+          "venue": {"id": "7202", "fullName": "Mossbridge Foundry Field"},
+          "competitors": [
+            {
+              "id": "403",
+              "homeAway": "home",
+              "winner": false,
+              "score": "27",
+              "linescores": [{"value": 7.0}, {"value": 3.0}, {"value": 10.0}, {"value": 7.0}, {"value": 0.0}],
+              "team": {
+                "id": "403",
+                "location": "Mossbridge",
+                "name": "Anvils",
+                "displayName": "Mossbridge Anvils",
+                "shortDisplayName": "Anvils",
+                "abbreviation": "MSA"
+              }
+            },
+            {
+              "id": "404",
+              "homeAway": "away",
+              "winner": true,
+              "score": "30",
+              "linescores": [{"value": 10.0}, {"value": 7.0}, {"value": 3.0}, {"value": 7.0}, {"value": 3.0}],
+              "team": {
+                "id": "404",
+                "location": "Vellmar",
+                "name": "Thunderoaks",
+                "displayName": "Vellmar Thunderoaks",
+                "shortDisplayName": "Thunderoaks",
+                "abbreviation": "VTO"
+              }
+            }
+          ],
+          "status": {
+            "clock": 0.0,
+            "displayClock": "0:00",
+            "period": 5,
+            "type": {
+              "id": "3",
+              "name": "STATUS_FINAL",
+              "state": "post",
+              "completed": true,
+              "description": "Final",
+              "detail": "Final/OT",
+              "shortDetail": "Final/OT"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9600003",
+      "uid": "s:20~l:8802~e:9600003",
+      "date": "2026-06-11T23:15Z",
+      "name": "Thornbury Mastiffs at Galeford Monarchs",
+      "shortName": "THM @ GFM",
+      "competitions": [
+        {
+          "id": "9600003",
+          "date": "2026-06-11T23:15Z",
+          "venue": {"id": "7203", "fullName": "Galeford Crown Grounds"},
+          "competitors": [
+            {
+              "id": "405",
+              "homeAway": "home",
+              "winner": false,
+              "score": "14",
+              "linescores": [{"value": 7.0}, {"value": 7.0}],
+              "team": {
+                "id": "405",
+                "location": "Galeford",
+                "name": "Monarchs",
+                "displayName": "Galeford Monarchs",
+                "shortDisplayName": "Monarchs",
+                "abbreviation": "GFM"
+              }
+            },
+            {
+              "id": "406",
+              "homeAway": "away",
+              "winner": false,
+              "score": "10",
+              "linescores": [{"value": 3.0}, {"value": 7.0}],
+              "team": {
+                "id": "406",
+                "location": "Thornbury",
+                "name": "Mastiffs",
+                "displayName": "Thornbury Mastiffs",
+                "shortDisplayName": "Mastiffs",
+                "abbreviation": "THM"
+              }
+            }
+          ],
+          "status": {
+            "clock": 0.0,
+            "displayClock": "0:00",
+            "period": 2,
+            "type": {
+              "id": "23",
+              "name": "STATUS_HALFTIME",
+              "state": "in",
+              "completed": false,
+              "description": "Halftime",
+              "detail": "Halftime",
+              "shortDetail": "Halftime"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

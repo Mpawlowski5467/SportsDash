@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="SportsDash">
+  <!-- Flat SportsDash mark (variant="flat"): six solid sport wedges, no seams. -->
+  <path d="M60,60 L60,8 A52,52 0 0 1 105,34 Z" fill="#E8643C"/>
+  <path d="M60,60 L105,34 A52,52 0 0 1 105,86 Z" fill="#15171C"/>
+  <path d="M60,60 L105,86 A52,52 0 0 1 60,112 Z" fill="#C9D14A"/>
+  <path d="M60,60 L60,112 A52,52 0 0 1 15,86 Z" fill="#3B6FD4"/>
+  <path d="M60,60 L15,86 A52,52 0 0 1 15,34 Z" fill="#F1ECE2"/>
+  <path d="M60,60 L15,34 A52,52 0 0 1 60,8 Z" fill="#9A6A43"/>
+  <g stroke="#FFFFFF" stroke-width="3" stroke-linecap="round">
+    <path d="M60,60 L60,8"/>
+    <path d="M60,60 L105,34"/>
+    <path d="M60,60 L105,86"/>
+    <path d="M60,60 L60,112"/>
+    <path d="M60,60 L15,86"/>
+    <path d="M60,60 L15,34"/>
+  </g>
+</svg>

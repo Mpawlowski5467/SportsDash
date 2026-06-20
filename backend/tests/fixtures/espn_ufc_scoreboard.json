@@ -1,0 +1,166 @@
+{
+  "leagues": [
+    {
+      "id": "9900",
+      "uid": "s:1300~l:9900",
+      "name": "Summit Fighting Championship",
+      "abbreviation": "SFC",
+      "slug": "summit-fighting-championship"
+    }
+  ],
+  "events": [
+    {
+      "id": "990058854",
+      "uid": "s:1300~l:9900~e:990058854",
+      "date": "2026-06-13T00:00Z",
+      "name": "SFC 250: Dunmore vs. Harlow",
+      "shortName": "SFC 250",
+      "season": {"year": 2026, "type": 1},
+      "competitions": [
+        {
+          "id": "9910001",
+          "uid": "s:1300~l:9900~e:990058854~c:9910001",
+          "date": "2026-06-13T00:00Z",
+          "endDate": "2026-06-13T05:00Z",
+          "type": {"id": "999", "abbreviation": "Lightweight"},
+          "timeValid": true,
+          "neutralSite": true,
+          "venue": {"fullName": "Summit Grand Arena"},
+          "status": {
+            "period": 2,
+            "displayClock": "3:18",
+            "type": {
+              "id": "2",
+              "name": "STATUS_IN_PROGRESS",
+              "state": "in",
+              "completed": false,
+              "description": "In Progress",
+              "detail": "Round 2",
+              "shortDetail": "Round 2"
+            }
+          },
+          "competitors": [
+            {
+              "id": "80001",
+              "uid": "s:1300~l:9900~a:80001",
+              "type": "athlete",
+              "order": 1,
+              "winner": false,
+              "athlete": {
+                "guid": "11110000-aaaa-bbbb-cccc-ddddeeeeffff",
+                "displayName": "Cassius Dunmore",
+                "shortName": "C. Dunmore",
+                "fullName": "Cassius Dunmore",
+                "flag": {"alt": "Summitland"}
+              }
+            },
+            {
+              "id": "80002",
+              "uid": "s:1300~l:9900~a:80002",
+              "type": "athlete",
+              "order": 2,
+              "winner": false,
+              "athlete": {
+                "guid": "22220000-aaaa-bbbb-cccc-ddddeeeeffff",
+                "displayName": "Bryce Harlow",
+                "shortName": "B. Harlow",
+                "fullName": "Bryce Harlow",
+                "flag": {"alt": "Ridgeport"}
+              }
+            }
+          ]
+        },
+        {
+          "id": "9910002",
+          "uid": "s:1300~l:9900~e:990058854~c:9910002",
+          "date": "2026-06-13T00:00Z",
+          "type": {"id": "1006", "abbreviation": "Welterweight"},
+          "timeValid": true,
+          "venue": {"fullName": "Summit Grand Arena"},
+          "status": {
+            "period": 3,
+            "displayClock": "0:00",
+            "type": {
+              "id": "3",
+              "name": "STATUS_FINAL",
+              "state": "post",
+              "completed": true,
+              "description": "Final",
+              "detail": "Final - Decision - Unanimous",
+              "shortDetail": "Final"
+            }
+          },
+          "competitors": [
+            {
+              "id": "80003",
+              "uid": "s:1300~l:9900~a:80003",
+              "type": "athlete",
+              "order": 1,
+              "winner": true,
+              "athlete": {
+                "guid": "33330000-aaaa-bbbb-cccc-ddddeeeeffff",
+                "displayName": "Dario Welkin",
+                "shortName": "D. Welkin",
+                "fullName": "Dario Welkin"
+              }
+            },
+            {
+              "id": "80004",
+              "uid": "s:1300~l:9900~a:80004",
+              "type": "athlete",
+              "order": 2,
+              "winner": false,
+              "athlete": {
+                "guid": "44440000-aaaa-bbbb-cccc-ddddeeeeffff",
+                "displayName": "Emory Task",
+                "shortName": "E. Task",
+                "fullName": "Emory Task"
+              }
+            }
+          ]
+        },
+        {
+          "id": "9910003",
+          "uid": "s:1300~l:9900~e:990058854~c:9910003",
+          "date": "2026-06-13T00:00Z",
+          "type": {"id": "999", "abbreviation": "Bantamweight"},
+          "status": {
+            "period": 0,
+            "type": {
+              "id": "1",
+              "name": "STATUS_SCHEDULED",
+              "state": "pre",
+              "completed": false,
+              "description": "Scheduled",
+              "detail": "Sat, June 13th at 8:00 PM EDT",
+              "shortDetail": "6/13 - 8:00 PM EDT"
+            }
+          },
+          "competitors": [
+            {
+              "id": "80005",
+              "type": "athlete",
+              "order": 1,
+              "athlete": {"displayName": "Pell Garrick", "shortName": "P. Garrick"}
+            },
+            {
+              "id": "80006",
+              "type": "athlete",
+              "order": 2,
+              "athlete": {"displayName": "Soren Kael", "shortName": "S. Kael"}
+            }
+          ]
+        },
+        {
+          "id": "9910004",
+          "uid": "s:1300~l:9900~e:990058854~c:9910004",
+          "type": {"id": "999", "abbreviation": "Flyweight"},
+          "status": {"type": {"state": "pre", "name": "STATUS_SCHEDULED"}},
+          "competitors": [
+            {"id": "80007", "order": 1, "athlete": {"displayName": "Solo Entry"}}
+          ]
+        }
+      ]
+    }
+  ]
+}

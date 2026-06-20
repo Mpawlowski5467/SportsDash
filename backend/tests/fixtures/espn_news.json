@@ -1,0 +1,72 @@
+{
+  "header": "Crestline Basketball Association News",
+  "link": "https://sports.example.com/crestline",
+  "articles": [
+    {
+      "id": 4900001,
+      "type": "Story",
+      "headline": "Gravenford Owls clinch a playoff berth behind Latchford's 41 points",
+      "description": "Orin Latchford's career night sealed a fourth straight win and the Owls' first postseason trip in five years.",
+      "published": "2026-06-11T14:05:00Z",
+      "lastModified": "2026-06-11T15:20:00Z",
+      "premium": false,
+      "byline": "Harborline Sports Desk",
+      "images": [
+        {
+          "id": 7700001,
+          "name": "Latchford celebrates at Gravenford Arena",
+          "url": "https://img.example.com/photo/2026/0611/owls-clinch_16-9.jpg",
+          "width": 1296,
+          "height": 729
+        }
+      ],
+      "links": {
+        "web": {"href": "https://sports.example.com/crestline/story/owls-clinch-playoff-berth"},
+        "mobile": {"href": "https://m.example.com/crestline/story?storyId=4900001"}
+      }
+    },
+    {
+      "id": 4900002,
+      "type": "Story",
+      "headline": "Scouting the Owls: why Telmark's zone defense keeps failing (premium)",
+      "description": "A film-room breakdown available to subscribers only.",
+      "published": "2026-06-10T18:30:00Z",
+      "premium": true,
+      "images": [
+        {
+          "id": 7700002,
+          "name": "Telmark zone diagram",
+          "url": "https://img.example.com/photo/2026/0610/telmark-zone_16-9.jpg",
+          "width": 1296,
+          "height": 729
+        }
+      ],
+      "links": {
+        "web": {"href": "https://sports.example.com/crestline/insider/telmark-zone-breakdown"}
+      }
+    },
+    {
+      "id": 4900003,
+      "type": "Story",
+      "headline": "Bram Hollowell out two weeks with an ankle sprain",
+      "description": null,
+      "published": "2026-06-09T21:45:00Z",
+      "premium": false,
+      "images": [],
+      "links": {
+        "web": {"href": "https://sports.example.com/crestline/story/hollowell-ankle-sprain"}
+      }
+    },
+    {
+      "id": 4900004,
+      "type": "Media",
+      "headline": "Watch: Wrenmore's buzzer-beater stuns the Foxes",
+      "description": "Video highlight without a web link; parsers must skip it.",
+      "published": "2026-06-08T03:10:00Z",
+      "premium": false,
+      "links": {
+        "mobile": {"href": "https://m.example.com/crestline/video?videoId=4900004"}
+      }
+    }
+  ]
+}

@@ -1,0 +1,532 @@
+@import "tailwindcss";
+@import "./fonts.css";
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────
+ * Theme system (Phase 8)
+ * ─────────────────────────────────────────────────────────────────────────
+ * Tailwind v4 emits utility classes like `bg-zinc-900` / `text-amber-400`
+ * as references to palette CSS vars (`var(--color-zinc-900)` …). Themes are
+ * implemented by REMAPPING those palette vars under a `[data-theme]`
+ * attribute on <html> — the ~23 components keep their existing utility
+ * classes and re-theme automatically.
+ *
+ * The ramp the app actually uses (see grep in CONTRACTS Phase 8):
+ *   background → text scale:  zinc 950 900 800 700 600 500 400 300 200 100
+ *   accent:                   amber 300 400 500 (+ 900/950 badge fills)
+ *   status:                   red 300 400 500 (+ 900/950), emerald 200..500
+ *
+ * The default look (dark kiosk) is Tailwind's stock zinc/amber and is left
+ * UNSET so `:root` keeps shipping today's palette. `[data-theme="dark"]`
+ * is therefore a no-op alias; the other three remap below.
+ *
+ * Contrast was chosen for WCAG-AA: body text (zinc-300/400 on the bg ramp)
+ * clears 4.5:1; accents stay legible on their typical surfaces.
+ */
+
+html {
+  color-scheme: dark;
+}
+
+/* ── Light ──────────────────────────────────────────────────────────────
+ * Near-white surfaces, dark ink. The bg scale (950→100) is inverted so the
+ * darkest token (zinc-950, used as the app backdrop) becomes the lightest
+ * paper, and the lightest token (zinc-100, used for primary text) becomes
+ * near-black. Amber accent darkened to stay readable on white.
+ */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-zinc-950: #f8fafc; /* app backdrop          */
+  --color-zinc-900: #f1f5f9; /* card / panel surface   */
+  --color-zinc-800: #e2e8f0; /* borders / hover fill   */
+  --color-zinc-700: #cbd5e1; /* stronger borders       */
+  --color-zinc-600: #94a3b8; /* muted icon / track     */
+  --color-zinc-500: #64748b; /* faint label text       */
+  --color-zinc-400: #475569; /* secondary text (AA)    */
+  --color-zinc-300: #334155; /* body text              */
+  --color-zinc-200: #1e293b; /* strong text            */
+  --color-zinc-100: #0f172a; /* primary heading text   */
+
+  /* Accent — amber pulled darker for contrast on light surfaces. */
+  --color-amber-300: #d97706;
+  --color-amber-400: #b45309;
+  --color-amber-500: #92400e;
+  --color-amber-900: #fef3c7; /* badge fill (light) w/ dark text */
+  --color-amber-950: #fffbeb;
+
+  /* Status. */
+  --color-red-300: #b91c1c;
+  --color-red-400: #dc2626;
+  --color-red-500: #ef4444;
+  --color-red-900: #fee2e2;
+  --color-red-950: #fef2f2;
+
+  --color-emerald-200: #047857;
+  --color-emerald-300: #059669;
+  --color-emerald-400: #10b981;
+  --color-emerald-500: #047857;
+}
+
+/* ── Newsprint ──────────────────────────────────────────────────────────
+ * Warm paper (cream/ivory) with ink-brown text and a muted maroon accent.
+ * Serif headings opt-in via the `.theme-newsprint` heading rule below.
+ */
+[data-theme="newsprint"] {
+  color-scheme: light;
+
+  --color-zinc-950: #f3ece0; /* aged paper backdrop    */
+  --color-zinc-900: #ece2d2; /* card surface           */
+  --color-zinc-800: #ddd0ba; /* borders / hover        */
+  --color-zinc-700: #c8b79c; /* stronger borders       */
+  --color-zinc-600: #a78f6f; /* muted track            */
+  --color-zinc-500: #7a6a52; /* faint label            */
+  --color-zinc-400: #5c4f3d; /* secondary ink (AA)     */
+  --color-zinc-300: #423829; /* body ink               */
+  --color-zinc-200: #2e261b; /* strong ink             */
+  --color-zinc-100: #241d14; /* heading ink            */
+
+  /* Accent — muted crimson/maroon. */
+  --color-amber-300: #9a2f2a;
+  --color-amber-400: #842420;
+  --color-amber-500: #6b1d1a;
+  --color-amber-900: #f1ddd0; /* badge fill, warm */
+  --color-amber-950: #f7ebe1;
+
+  /* Status, warmed to sit on paper. */
+  --color-red-300: #a02622;
+  --color-red-400: #b32d28;
+  --color-red-500: #c4362f;
+  --color-red-900: #f0d8d2;
+  --color-red-950: #f7e7e2;
+
+  --color-emerald-200: #2f6b48;
+  --color-emerald-300: #357a52;
+  --color-emerald-400: #3e8b5e;
+  --color-emerald-500: #2f6b48;
+
+  /* Serif headline face for the newsprint masthead feel. */
+  --font-sans:
+    "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia,
+    "Times New Roman", serif;
+}
+
+/* ── Stadium ────────────────────────────────────────────────────────────
+ * Keeps the dark base, but the amber accent is driven by `--sd-accent`,
+ * which a small effect sets to the focused team's color (default: vibrant
+ * amber when no team is in focus). All three amber stops fall back to the
+ * stock amber if `--sd-accent` is unset.
+ */
+[data-theme="stadium"] {
+  color-scheme: dark;
+
+  --color-amber-300: var(--sd-accent, #fbbf24);
+  --color-amber-400: var(--sd-accent, #f59e0b);
+  --color-amber-500: var(--sd-accent, #d97706);
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-zinc-950);
+  color: var(--color-zinc-100);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Newsprint: serif, slightly looser headings for an editorial masthead. */
+[data-theme="newsprint"] h1,
+[data-theme="newsprint"] h2,
+[data-theme="newsprint"] h3 {
+  font-family: var(--font-sans);
+  letter-spacing: -0.01em;
+}
+
+/* Thin scrollbars that follow the active palette. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-zinc-700) var(--color-zinc-950);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--color-zinc-950);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-zinc-700);
+  border-radius: 4px;
+  border: 2px solid var(--color-zinc-950);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-zinc-600);
+}
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────
+ * Animations (Phase 11)
+ * ─────────────────────────────────────────────────────────────────────────
+ * Subtle, theme-aware motion: view/tab transitions, card hover lift, a
+ * score-change flash, and a fade/stagger-in for grids and tables. Pure CSS,
+ * no animation dependency. Everything is theme-agnostic — it animates
+ * transforms / opacity and uses the active palette vars for any color, so it
+ * reads correctly in all four themes and the stadium accent.
+ *
+ * ALL motion lives behind `prefers-reduced-motion: no-preference`, so the
+ * reduce setting is a genuine no-op: elements simply render in their final
+ * state with no animation or transition. The kiosk auto-rotation in
+ * App/Layout drives a key change on the view container — these styles only
+ * decorate that swap and never interfere with the rotation timer.
+ */
+
+/* Default (reduced-motion-safe) state — no animation classes do anything
+ * unless the no-preference media query below opts them in. */
+.sd-logo {
+  /* A faint surface so transparent PNG crests stay visible on any theme. */
+  background-color: color-mix(in srgb, var(--color-zinc-100) 6%, transparent);
+}
+
+/* Honor reduced motion for the existing live-dot pulses (Tailwind's
+ * `animate-ping`/`animate-pulse` don't opt out on their own). The dot stays
+ * visible — it just stops pinging. The kiosk "Kiosk" pill and the live game
+ * badges both use these utilities. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-ping,
+  .animate-pulse {
+    animation: none !important;
+  }
+}
+
+/* Status badge gets a soft fade-in so a phase change (scheduled → live →
+ * final) doesn't pop. */
+.sd-status {
+  animation: sd-status-in 240ms ease-out both;
+}
+
+@keyframes sd-status-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-status {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* View / tab transition: the active view container fades + rises slightly
+   * when it mounts. App re-keys this element per tab so the swap animates. */
+  .sd-view-enter {
+    animation: sd-view-in 260ms ease-out both;
+  }
+
+  @keyframes sd-view-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Card hover lift — applied alongside the existing hover utilities so the
+   * border/background hover still works; this just adds a gentle raise. */
+  .sd-card {
+    transition:
+      transform 160ms ease,
+      box-shadow 160ms ease,
+      border-color 160ms ease,
+      background-color 160ms ease;
+    will-change: transform;
+  }
+  .sd-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px -8px rgb(0 0 0 / 0.45);
+  }
+  .sd-card:active {
+    transform: translateY(0);
+  }
+
+  /* Score-change flash: the score <span> is re-keyed on its value, so it
+   * remounts and replays this brief accent flash whenever the score moves. */
+  .sd-score {
+    animation: sd-score-flash 700ms ease-out;
+  }
+
+  @keyframes sd-score-flash {
+    0% {
+      color: var(--color-amber-400);
+      transform: scale(1.18);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  /* Live scoreboard ticker: the duplicated chip track slides left by exactly
+   * one copy (-50%) for a seamless loop. Duration is set inline from the chip
+   * count so the speed stays even regardless of how many games there are.
+   * Hovering the bar pauses it so a score can be read / clicked. Reduced
+   * motion gets no animation (the bar falls back to a manual scroll strip). */
+  .sd-ticker-animate {
+    animation: sd-ticker-scroll 60s linear infinite;
+    will-change: transform;
+  }
+
+  .sd-ticker:hover .sd-ticker-animate {
+    animation-play-state: paused;
+  }
+
+  @keyframes sd-ticker-scroll {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  /* Fade / stagger-in for grid cards and table rows. The small per-child
+   * delay produces a cascade; capped so long lists don't drag. */
+  .sd-stagger-item {
+    animation: sd-fade-up 320ms ease-out both;
+  }
+
+  @keyframes sd-fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .sd-stagger-item:nth-child(1) {
+    animation-delay: 0ms;
+  }
+  .sd-stagger-item:nth-child(2) {
+    animation-delay: 30ms;
+  }
+  .sd-stagger-item:nth-child(3) {
+    animation-delay: 60ms;
+  }
+  .sd-stagger-item:nth-child(4) {
+    animation-delay: 90ms;
+  }
+  .sd-stagger-item:nth-child(5) {
+    animation-delay: 120ms;
+  }
+  .sd-stagger-item:nth-child(6) {
+    animation-delay: 150ms;
+  }
+  .sd-stagger-item:nth-child(7) {
+    animation-delay: 180ms;
+  }
+  .sd-stagger-item:nth-child(8) {
+    animation-delay: 210ms;
+  }
+  /* Everything past the eighth shares the max delay so long tables/grids
+   * don't stagger into a visibly slow ripple. */
+  .sd-stagger-item:nth-child(n + 9) {
+    animation-delay: 240ms;
+  }
+}
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────
+ * SportsDash logo + loaders
+ * ─────────────────────────────────────────────────────────────────────────
+ * The shared ball mark (components/logo) and the four loaders
+ * (components/loaders) built on top of it. Brand typography comes from the
+ * self-hosted faces in fonts.css, surfaced here as --sd-font-display /
+ * --sd-font-mono so the wordmark stays Space Grotesk / Space Mono in EVERY
+ * theme — it must NOT pick up newsprint's serif --font-sans remap.
+ *
+ * Motion follows the house rule used above: every animation is gated behind
+ * `prefers-reduced-motion: no-preference`, so the reduce setting renders the
+ * fully-assembled mark with no motion (each loader's base/static styles are
+ * its reduced-motion state). The brand orange #E8643C is the loaders' accent
+ * and is intentionally separate from the app's amber UI accent.
+ */
+
+:root {
+  --sd-font-display:
+    "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  --sd-font-mono:
+    "Space Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+/* Keyframes. One shared 360° rotation, run at different speeds/easings per
+ * loader; the splash assembly trio shares a 2.8s period so it stays in sync. */
+@keyframes sd-rotate360 {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes sd-pop {
+  0% {
+    transform: scale(0.84);
+  }
+  30% {
+    transform: scale(1.03);
+  }
+  42% {
+    transform: scale(1);
+  }
+  88% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(0.84);
+  }
+}
+@keyframes sd-wedge {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes sd-fadeup {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  26% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  42% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  90% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes sd-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.055);
+  }
+}
+@keyframes sd-dot {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes sd-bar {
+  0% {
+    width: 5%;
+  }
+  90% {
+    width: 100%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+/* Centre the transform on every animated mark/overlay (no-op until motion
+ * is opted in below). */
+.sd-roll,
+.sd-mini-spin,
+.sd-orbit,
+.sd-breathe,
+.sd-splash-ball {
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Prompt 1 — everyday spinner: a real "roll", not a flat mechanical spin. */
+  .sd-roll {
+    animation: sd-rotate360 1.5s cubic-bezier(0.5, 0.15, 0.5, 0.85) infinite;
+  }
+  /* Prompt 4 — mini spinner. */
+  .sd-mini-spin {
+    animation: sd-rotate360 1s linear infinite;
+  }
+  /* Prompt 3 — setup loader: breathing mark + orbiting accent arc + dot. */
+  .sd-breathe {
+    animation: sd-breathe 2.4s ease-in-out infinite;
+  }
+  .sd-orbit {
+    animation: sd-rotate360 1.05s linear infinite;
+  }
+  .sd-setup-dot {
+    animation: sd-dot 1s ease-in-out infinite;
+  }
+  .sd-setup-bar-fill--demo {
+    animation: sd-bar 6.4s ease-in-out infinite;
+  }
+
+  /* Prompt 2 — splash: the whole mark pops while each wedge group and the
+   * separators group fade in on a 0.1s stagger; the wordmark resolves under
+   * it. All 2.8s so they loop in sync. */
+  .sd-splash-ball {
+    animation: sd-pop 2.8s ease-in-out infinite;
+  }
+  .sd-splash-ball .sd-w1,
+  .sd-splash-ball .sd-w2,
+  .sd-splash-ball .sd-w3,
+  .sd-splash-ball .sd-w4,
+  .sd-splash-ball .sd-w5,
+  .sd-splash-ball .sd-w6,
+  .sd-splash-ball .sd-wsep {
+    animation: sd-wedge 2.8s ease-out infinite;
+  }
+  .sd-splash-ball .sd-w1 {
+    animation-delay: 0s;
+  }
+  .sd-splash-ball .sd-w2 {
+    animation-delay: 0.1s;
+  }
+  .sd-splash-ball .sd-w3 {
+    animation-delay: 0.2s;
+  }
+  .sd-splash-ball .sd-w4 {
+    animation-delay: 0.3s;
+  }
+  .sd-splash-ball .sd-w5 {
+    animation-delay: 0.4s;
+  }
+  .sd-splash-ball .sd-w6 {
+    animation-delay: 0.5s;
+  }
+  .sd-splash-ball .sd-wsep {
+    animation-delay: 0.6s;
+  }
+  .sd-splash-word {
+    animation: sd-fadeup 2.8s ease-out infinite;
+  }
+}

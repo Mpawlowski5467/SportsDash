@@ -1,0 +1,39 @@
+# SportsDash — followed leagues and teams (optional bootstrap template).
+#
+# Followed teams live in the DATABASE, not in this file.  This config is
+# read once at startup and ONLY while the teams table is empty; after
+# that it is ignored, so editing it never clobbers your picks.  The
+# normal first-run path is the in-app setup wizard (or POST
+# /api/setup/demo for a fictional zero-network demo) — leave this file
+# as comments unless you'd rather author your followed set by hand.
+#
+# Seeding actual teams from this file marks the app as onboarded, so
+# the wizard won't appear.
+#
+# Every league names the provider that serves its data.  The "espn"
+# provider pulls live data; for ESPN leagues, provider_key is the ESPN
+# sport/league URL fragment and each team's provider_key is its numeric
+# ESPN team id:
+#
+#   leagues:
+#     - id: my-league                          # internal slug, unique
+#       sport: basketball                      # basketball | baseball | soccer
+#       name: My League
+#       provider: espn                         # espn | thesportsdb
+#       provider_key: <sport>/<league-code>    # e.g. an ESPN URL path fragment
+#
+#   teams:
+#     - id: my-team                            # internal slug, unique
+#       league_id: my-league
+#       name: My Team
+#       abbreviation: MYT
+#       provider_key: "<espn-team-id>"         # numeric ESPN team id, quoted
+#       color: "#22c55e"                       # optional accent color
+#       rss_feeds: []                          # optional news feed URLs
+#
+# To follow news for a team, add RSS/Atom feed URLs to its rss_feeds
+# list:
+#
+#   rss_feeds:
+#     - https://example.com/feeds/my-team.xml
+#     - https://blog.example.org/rss

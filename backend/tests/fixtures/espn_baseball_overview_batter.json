@@ -1,0 +1,40 @@
+{
+  "statistics": {
+    "displayName": "Statistics",
+    "labels": ["GP", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO"],
+    "names": [
+      "gamesPlayed",
+      "atBats",
+      "runs",
+      "hits",
+      "doubles",
+      "triples",
+      "homeRuns",
+      "RBIs",
+      "walks",
+      "strikeouts"
+    ],
+    "displayNames": [
+      "Games Played",
+      "At Bats",
+      "Runs",
+      "Hits",
+      "Doubles",
+      "Triples",
+      "Home Runs",
+      "Runs Batted In",
+      "Walks",
+      "Strikeouts"
+    ],
+    "splits": [
+      {
+        "displayName": "Regular Season",
+        "stats": ["148", "557", "92", "162", "31", "2", "22", "74", "63", "118"]
+      },
+      {
+        "displayName": "Career",
+        "stats": ["812", "3011", "498", "864", "171", "14", "133", "451", "352", "640"]
+      }
+    ]
+  }
+}

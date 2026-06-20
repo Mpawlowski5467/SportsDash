@@ -1,0 +1,16 @@
+{
+  "venues": [
+    {
+      "idVenue": "90301",
+      "strVenue": "Tidewater Ground",
+      "strSport": "Soccer",
+      "intCapacity": "41798",
+      "strCountry": "Saltmarsh",
+      "strLocation": "Fulwater, Saltmarsh",
+      "intFormedYear": "1877",
+      "strThumb": "https://images.example.com/venues/90301-thumb.jpg",
+      "strFanart1": "https://images.example.com/venues/90301-fanart.jpg",
+      "strMap": "51°28′54″N 0°11′28″W"
+    }
+  ]
+}

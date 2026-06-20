@@ -1,0 +1,64 @@
+/*
+ * FullCalendar theme for SportsDash. FullCalendar v6 exposes most of its
+ * chrome through --fc-* CSS variables; we point those at the Tailwind
+ * palette vars (--color-zinc-* / --color-amber-*) instead of hardcoded hex
+ * so the calendar re-themes automatically with the rest of the app under
+ * each [data-theme] block (see index.css). A few targeted overrides below
+ * handle the bits FullCalendar doesn't expose as vars.
+ */
+
+.fc {
+  --fc-border-color: var(--color-zinc-800);
+  --fc-page-bg-color: transparent;
+  --fc-neutral-bg-color: var(--color-zinc-900);
+  /* Faint accent wash on "today"; uses the accent stop so it tints with the
+     active theme (amber by default, maroon on newsprint, team color on
+     stadium). */
+  --fc-today-bg-color: color-mix(
+    in srgb,
+    var(--color-amber-400) 7%,
+    transparent
+  );
+  --fc-button-bg-color: var(--color-zinc-800);
+  --fc-button-border-color: var(--color-zinc-700);
+  --fc-button-hover-bg-color: var(--color-zinc-700);
+  --fc-button-active-bg-color: var(--color-zinc-600);
+}
+
+/* Toolbar */
+.fc .fc-toolbar-title {
+  color: var(--color-zinc-100);
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.fc .fc-button {
+  text-transform: capitalize;
+}
+
+/* Day-of-week headers and day numbers */
+.fc .fc-col-header-cell-cushion,
+.fc .fc-daygrid-day-number {
+  color: var(--color-zinc-400);
+  text-decoration: none;
+}
+
+/* Month-grid events stay dense and readable */
+.fc .fc-daygrid-event {
+  font-size: 11px;
+}
+
+.fc .fc-daygrid-more-link {
+  color: var(--color-zinc-400);
+}
+
+/* Week (time-grid) view labels */
+.fc .fc-timegrid-slot-label-cushion,
+.fc .fc-timegrid-axis-cushion {
+  color: var(--color-zinc-500);
+}
+
+/* "all-day" / now-indicator alignment text in week view */
+.fc .fc-timegrid-axis-frame {
+  color: var(--color-zinc-500);
+}

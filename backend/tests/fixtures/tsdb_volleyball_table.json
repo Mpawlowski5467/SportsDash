@@ -1,0 +1,53 @@
+{
+  "table": [
+    {
+      "idStanding": "880002",
+      "intRank": "2",
+      "idTeam": "70101",
+      "strTeam": "Saltmarsh Spikers",
+      "idLeague": "9001",
+      "strLeague": "Tidewater Volleyball League",
+      "strSeason": "2026",
+      "strGroup": null,
+      "intPlayed": "10",
+      "intWin": "7",
+      "intLoss": "3",
+      "intDraw": "0",
+      "intPoints": "21",
+      "dateUpdated": "2026-06-12 23:00:07"
+    },
+    {
+      "idStanding": "880001",
+      "intRank": "1",
+      "idTeam": "70104",
+      "strTeam": "Pellwick Aces",
+      "idLeague": "9001",
+      "strLeague": "Tidewater Volleyball League",
+      "strSeason": "2026",
+      "strGroup": null,
+      "intPlayed": "10",
+      "intWin": "9",
+      "intLoss": "1",
+      "intDraw": "0",
+      "intPoints": "27",
+      "dateUpdated": "2026-06-12 23:00:07"
+    },
+    {
+      "idStanding": "880003",
+      "intRank": "3",
+      "idTeam": "70102",
+      "strTeam": "Harborline Setters",
+      "idLeague": "9001",
+      "strLeague": "Tidewater Volleyball League",
+      "strSeason": "2026",
+      "strGroup": null,
+      "intPlayed": "10",
+      "intWin": "5",
+      "intLoss": "5",
+      "intDraw": "0",
+      "intPoints": "15",
+      "dateUpdated": "2026-06-12 23:00:07"
+    },
+    "not-an-entry"
+  ]
+}

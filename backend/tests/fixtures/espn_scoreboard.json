@@ -1,0 +1,143 @@
+{
+  "leagues": [
+    {
+      "id": "9001",
+      "uid": "s:40~l:9001",
+      "name": "Crestline Basketball Association",
+      "abbreviation": "CBA",
+      "slug": "crestline-basketball"
+    }
+  ],
+  "season": {"type": 2, "year": 2026},
+  "day": {"date": "2026-06-11"},
+  "events": [
+    {
+      "id": "9100001",
+      "uid": "s:40~l:9001~e:9100001",
+      "date": "2026-06-11T23:30Z",
+      "name": "Rivermont Gulls at Crestfall Lynx",
+      "shortName": "RVG @ CFL",
+      "competitions": [
+        {
+          "id": "9100001",
+          "date": "2026-06-11T23:30Z",
+          "venue": {"id": "7001", "fullName": "Crestfall Fieldhouse"},
+          "competitors": [
+            {
+              "id": "55",
+              "homeAway": "home",
+              "winner": false,
+              "score": "67",
+              "team": {
+                "id": "55",
+                "location": "Crestfall",
+                "name": "Lynx",
+                "displayName": "Crestfall Lynx",
+                "shortDisplayName": "Lynx",
+                "abbreviation": "CFL"
+              }
+            },
+            {
+              "id": "77",
+              "homeAway": "away",
+              "winner": false,
+              "score": "71",
+              "team": {
+                "id": "77",
+                "location": "Rivermont",
+                "name": "Gulls",
+                "displayName": "Rivermont Gulls",
+                "shortDisplayName": "Gulls",
+                "abbreviation": "RVG"
+              }
+            }
+          ],
+          "status": {
+            "clock": 462.0,
+            "displayClock": "7:42",
+            "period": 3,
+            "type": {
+              "id": "2",
+              "name": "STATUS_IN_PROGRESS",
+              "state": "in",
+              "completed": false,
+              "description": "In Progress",
+              "detail": "7:42 - 3rd Quarter",
+              "shortDetail": "7:42 - 3rd"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9100002",
+      "uid": "s:40~l:9001~e:9100002",
+      "date": "2026-06-11T17:00Z",
+      "name": "Bellharbor Manticores at Dunwick Spires",
+      "shortName": "BHM @ DWS",
+      "competitions": [
+        {
+          "id": "9100002",
+          "date": "2026-06-11T17:00Z",
+          "venue": {"id": "7002", "fullName": "Dunwick Pavilion"},
+          "competitors": [
+            {
+              "id": "88",
+              "homeAway": "away",
+              "winner": true,
+              "score": "104",
+              "team": {
+                "id": "88",
+                "location": "Bellharbor",
+                "name": "Manticores",
+                "displayName": "Bellharbor Manticores",
+                "shortDisplayName": "Manticores",
+                "abbreviation": "BHM"
+              }
+            },
+            {
+              "id": "66",
+              "homeAway": "home",
+              "winner": false,
+              "score": "97",
+              "team": {
+                "id": "66",
+                "location": "Dunwick",
+                "name": "Spires",
+                "displayName": "Dunwick Spires",
+                "shortDisplayName": "Spires",
+                "abbreviation": "DWS"
+              }
+            }
+          ],
+          "status": {
+            "clock": 0.0,
+            "displayClock": "0.0",
+            "period": 4,
+            "type": {
+              "id": "3",
+              "name": "STATUS_FINAL",
+              "state": "post",
+              "completed": true,
+              "description": "Final",
+              "detail": "Final",
+              "shortDetail": "Final"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9100003",
+      "uid": "s:40~l:9001~e:9100003",
+      "date": "not-a-real-timestamp",
+      "name": "Malformed event that parsers must skip",
+      "competitions": [
+        {
+          "id": "9100003",
+          "competitors": []
+        }
+      ]
+    }
+  ]
+}

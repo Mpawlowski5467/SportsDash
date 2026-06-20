@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#09090b" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="SportsDash" />
+    <title>SportsDash</title>
+    <!--
+      No-FOUC theme bootstrap. Runs before the stylesheet paints and before
+      main.tsx loads, so the persisted theme's palette is in place on the
+      very first frame (no flash of the dark default). Mirrors the values in
+      src/lib/theme.ts (localStorage key, allowed ids, default). Kept inline
+      and dependency-free on purpose.
+    -->
+    <script>
+      (function () {
+        try {
+          var allowed = { dark: 1, light: 1, newsprint: 1, stadium: 1 };
+          var stored = window.localStorage.getItem("sportsdash.theme");
+          var theme = allowed[stored] ? stored : "dark";
+          var root = document.documentElement;
+          root.setAttribute("data-theme", theme);
+          var darkBased = theme === "dark" || theme === "stadium";
+          root.classList.toggle("dark", darkBased);
+        } catch (e) {
+          /* storage blocked — leave the dark default from <html class="dark"> */
+        }
+      })();
+    </script>
+  </head>
+  <body style="background-color: var(--color-zinc-950, #09090b)">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

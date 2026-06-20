@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="SportsDash">
+  <title>SportsDash</title>
+  <defs>
+    <clipPath id="w0"><path d="M60,60 L60,8 A52,52 0 0 1 105,34 Z"/></clipPath>
+    <clipPath id="w1"><path d="M60,60 L105,34 A52,52 0 0 1 105,86 Z"/></clipPath>
+    <clipPath id="w2"><path d="M60,60 L105,86 A52,52 0 0 1 60,112 Z"/></clipPath>
+    <clipPath id="w3"><path d="M60,60 L60,112 A52,52 0 0 1 15,86 Z"/></clipPath>
+    <clipPath id="w4"><path d="M60,60 L15,86 A52,52 0 0 1 15,34 Z"/></clipPath>
+    <clipPath id="w5"><path d="M60,60 L15,34 A52,52 0 0 1 60,8 Z"/></clipPath>
+  </defs>
+
+  <!-- six sport wedges (detailed variant fills) -->
+  <path d="M60,60 L60,8 A52,52 0 0 1 105,34 Z" fill="#E8643C"/>
+  <path d="M60,60 L105,34 A52,52 0 0 1 105,86 Z" fill="#F4F1EC"/>
+  <path d="M60,60 L105,86 A52,52 0 0 1 60,112 Z" fill="#C9D14A"/>
+  <path d="M60,60 L60,112 A52,52 0 0 1 15,86 Z" fill="#3B6FD4"/>
+  <path d="M60,60 L15,86 A52,52 0 0 1 15,34 Z" fill="#F4EFE6"/>
+  <path d="M60,60 L15,34 A52,52 0 0 1 60,8 Z" fill="#9A6A43"/>
+
+  <!-- per-sport seam detail, clipped to each wedge -->
+  <g clip-path="url(#w0)"><path d="M60,8 V112 M8,60 H112 M60,8 Q18,60 60,112 M60,8 Q102,60 60,112" fill="none" stroke="#15171C" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g clip-path="url(#w1)"><path d="M82,49 L92.5,56.6 L88.5,68.9 L75.5,68.9 L71.5,56.6 Z" fill="#15171C"/></g>
+  <g clip-path="url(#w2)"><path d="M104,70 C84,72 80,86 64,104 M98,57 C86,66 88,82 78,99" fill="none" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g clip-path="url(#w3)"><path d="M16,84 Q40,74 60,60 M28,98 Q48,84 66,82 M10,68 Q34,72 52,64" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g clip-path="url(#w4)"><path d="M24,32 Q36,60 24,88" fill="none" stroke="#D8423B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g clip-path="url(#w5)">
+    <path d="M37,16 L47,42" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M32,23 L42,20 M34,30 L44,27 M36,37 L46,34" fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- white radial separators + ring + hub -->
+  <g stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round">
+    <path d="M60,60 L60,8"/>
+    <path d="M60,60 L105,34"/>
+    <path d="M60,60 L105,86"/>
+    <path d="M60,60 L60,112"/>
+    <path d="M60,60 L15,86"/>
+    <path d="M60,60 L15,34"/>
+  </g>
+  <circle cx="60" cy="60" r="52" fill="none" stroke="#FFFFFF" stroke-width="2.6"/>
+  <circle cx="60" cy="60" r="4.5" fill="#FFFFFF"/>
+</svg>

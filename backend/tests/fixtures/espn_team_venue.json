@@ -1,0 +1,31 @@
+{
+  "team": {
+    "id": "8801",
+    "uid": "s:40~l:46~t:8801",
+    "slug": "foxglen-wardens",
+    "location": "Foxglen",
+    "name": "Wardens",
+    "abbreviation": "FOX",
+    "displayName": "Foxglen Wardens",
+    "color": "f59e0b",
+    "isActive": true,
+    "venue": null,
+    "franchise": {
+      "venue": {
+        "$ref": "http://sports.core.api.espn.pvt/v2/.../venues/9901?lang=en&region=us",
+        "id": "9901",
+        "fullName": "Foxglen Coliseum",
+        "shortName": "The Coliseum",
+        "address": {
+          "city": "Foxglen",
+          "state": "CA",
+          "country": "USA"
+        },
+        "indoor": true,
+        "images": [
+          {"href": "https://example.com/venues/9901.jpg", "width": 2000, "height": 1125}
+        ]
+      }
+    }
+  }
+}

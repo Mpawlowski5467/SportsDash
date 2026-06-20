@@ -1,0 +1,98 @@
+{
+  "header": {
+    "id": "9100200",
+    "competitions": [
+      {
+        "id": "9100200",
+        "date": "2026-06-11T00:30Z",
+        "competitors": [
+          {
+            "id": "55",
+            "homeAway": "home",
+            "score": "112",
+            "linescores": [
+              {"value": 28, "displayValue": "28"},
+              {"value": 24, "displayValue": "24"},
+              {"value": 31, "displayValue": "31"},
+              {"value": 29, "displayValue": "29"}
+            ],
+            "team": {"id": "55", "displayName": "Crestfall Lynx", "abbreviation": "CFL"}
+          },
+          {
+            "id": "77",
+            "homeAway": "away",
+            "score": "105",
+            "linescores": [
+              {"value": 26, "displayValue": "26"},
+              {"value": 30, "displayValue": "30"},
+              {"value": 22, "displayValue": "22"},
+              {"value": 27, "displayValue": "27"}
+            ],
+            "team": {"id": "77", "displayName": "Rivermont Gulls", "abbreviation": "RMG"}
+          }
+        ],
+        "status": {
+          "type": {
+            "id": "3",
+            "name": "STATUS_FINAL",
+            "state": "post",
+            "completed": true,
+            "description": "Final",
+            "detail": "Final",
+            "shortDetail": "Final"
+          }
+        }
+      }
+    ]
+  },
+  "leaders": [
+    {
+      "team": {"id": "55", "displayName": "Crestfall Lynx", "abbreviation": "CFL"},
+      "leaders": [
+        {
+          "name": "points",
+          "displayName": "Points",
+          "leaders": [
+            {
+              "displayValue": "34",
+              "value": 34.0,
+              "mainStat": {"value": "34", "label": "PTS"},
+              "summary": "13/22 FG, 6/6 FT",
+              "athlete": {"id": "910001", "displayName": "Della Marsh", "shortName": "D. Marsh"}
+            }
+          ]
+        },
+        {
+          "name": "rebounds",
+          "displayName": "Rebounds",
+          "leaders": [
+            {
+              "displayValue": "12",
+              "value": 12.0,
+              "mainStat": {"value": "12", "label": "REB"},
+              "athlete": {"id": "910002", "displayName": "Petra Kohl", "shortName": "P. Kohl"}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "team": {"id": "77", "displayName": "Rivermont Gulls", "abbreviation": "RMG"},
+      "leaders": [
+        {
+          "name": "points",
+          "displayName": "Points",
+          "leaders": [
+            {
+              "displayValue": "29",
+              "value": 29.0,
+              "mainStat": {"value": "29", "label": "PTS"},
+              "summary": "10/19 FG, 5/7 FT",
+              "athlete": {"id": "910010", "displayName": "Soraya Vance", "shortName": "S. Vance"}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

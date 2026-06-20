@@ -1,0 +1,329 @@
+{
+  "leagues": [
+    {
+      "id": "8801",
+      "uid": "s:70~l:8801",
+      "name": "Glacierline Hockey Loop",
+      "abbreviation": "GHL",
+      "slug": "glacierline-hockey"
+    }
+  ],
+  "season": {"type": 2, "year": 2026},
+  "day": {"date": "2026-06-11"},
+  "events": [
+    {
+      "id": "9500001",
+      "uid": "s:70~l:8801~e:9500001",
+      "date": "2026-06-11T23:00Z",
+      "name": "Embermont Yetis at Glacierport Narwhals",
+      "shortName": "EMY @ GPN",
+      "competitions": [
+        {
+          "id": "9500001",
+          "date": "2026-06-11T23:00Z",
+          "venue": {"id": "7101", "fullName": "Glacierport Ice Barn"},
+          "competitors": [
+            {
+              "id": "301",
+              "homeAway": "home",
+              "winner": false,
+              "score": "2",
+              "linescores": [{"value": 1.0}, {"value": 1.0}],
+              "team": {
+                "id": "301",
+                "location": "Glacierport",
+                "name": "Narwhals",
+                "displayName": "Glacierport Narwhals",
+                "shortDisplayName": "Narwhals",
+                "abbreviation": "GPN"
+              }
+            },
+            {
+              "id": "302",
+              "homeAway": "away",
+              "winner": false,
+              "score": "1",
+              "linescores": [{"value": 1.0}, {"value": 0.0}],
+              "team": {
+                "id": "302",
+                "location": "Embermont",
+                "name": "Yetis",
+                "displayName": "Embermont Yetis",
+                "shortDisplayName": "Yetis",
+                "abbreviation": "EMY"
+              }
+            }
+          ],
+          "status": {
+            "clock": 842.0,
+            "displayClock": "14:02",
+            "period": 2,
+            "type": {
+              "id": "2",
+              "name": "STATUS_IN_PROGRESS",
+              "state": "in",
+              "completed": false,
+              "description": "In Progress",
+              "detail": "14:02 - 2nd Period",
+              "shortDetail": "14:02 - 2nd"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9500002",
+      "uid": "s:70~l:8801~e:9500002",
+      "date": "2026-06-11T00:00Z",
+      "name": "Tarnbrook Seals at Frosthelm Wardens",
+      "shortName": "TBS @ FHW",
+      "competitions": [
+        {
+          "id": "9500002",
+          "date": "2026-06-11T00:00Z",
+          "venue": {"id": "7102", "fullName": "Frosthelm Coliseum"},
+          "competitors": [
+            {
+              "id": "303",
+              "homeAway": "home",
+              "winner": true,
+              "score": "4",
+              "linescores": [{"value": 1.0}, {"value": 2.0}, {"value": 1.0}],
+              "team": {
+                "id": "303",
+                "location": "Frosthelm",
+                "name": "Wardens",
+                "displayName": "Frosthelm Wardens",
+                "shortDisplayName": "Wardens",
+                "abbreviation": "FHW"
+              }
+            },
+            {
+              "id": "304",
+              "homeAway": "away",
+              "winner": false,
+              "score": "2",
+              "linescores": [{"value": 1.0}, {"value": 0.0}, {"value": 1.0}],
+              "team": {
+                "id": "304",
+                "location": "Tarnbrook",
+                "name": "Seals",
+                "displayName": "Tarnbrook Seals",
+                "shortDisplayName": "Seals",
+                "abbreviation": "TBS"
+              }
+            }
+          ],
+          "status": {
+            "clock": 0.0,
+            "displayClock": "0:00",
+            "period": 3,
+            "type": {
+              "id": "3",
+              "name": "STATUS_FINAL",
+              "state": "post",
+              "completed": true,
+              "description": "Final",
+              "detail": "Final",
+              "shortDetail": "Final"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9500003",
+      "uid": "s:70~l:8801~e:9500003",
+      "date": "2026-06-11T01:00Z",
+      "name": "Vexmoor Blizzards at Northgale Icehawks",
+      "shortName": "VXB @ NGI",
+      "competitions": [
+        {
+          "id": "9500003",
+          "date": "2026-06-11T01:00Z",
+          "venue": {"id": "7103", "fullName": "Northgale Frost Dome"},
+          "competitors": [
+            {
+              "id": "305",
+              "homeAway": "home",
+              "winner": true,
+              "score": "4",
+              "linescores": [{"value": 1.0}, {"value": 1.0}, {"value": 1.0}, {"value": 1.0}],
+              "team": {
+                "id": "305",
+                "location": "Northgale",
+                "name": "Icehawks",
+                "displayName": "Northgale Icehawks",
+                "shortDisplayName": "Icehawks",
+                "abbreviation": "NGI"
+              }
+            },
+            {
+              "id": "306",
+              "homeAway": "away",
+              "winner": false,
+              "score": "3",
+              "linescores": [{"value": 2.0}, {"value": 0.0}, {"value": 1.0}, {"value": 0.0}],
+              "team": {
+                "id": "306",
+                "location": "Vexmoor",
+                "name": "Blizzards",
+                "displayName": "Vexmoor Blizzards",
+                "shortDisplayName": "Blizzards",
+                "abbreviation": "VXB"
+              }
+            }
+          ],
+          "status": {
+            "clock": 0.0,
+            "displayClock": "0:00",
+            "period": 4,
+            "type": {
+              "id": "3",
+              "name": "STATUS_FINAL",
+              "state": "post",
+              "completed": true,
+              "description": "Final",
+              "detail": "Final/OT",
+              "shortDetail": "Final/OT",
+              "altDetail": "OT"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9500004",
+      "uid": "s:70~l:8801~e:9500004",
+      "date": "2026-06-11T02:30Z",
+      "name": "Karswick Aurorans at Drelford Glaciers",
+      "shortName": "KAR @ DRG",
+      "competitions": [
+        {
+          "id": "9500004",
+          "date": "2026-06-11T02:30Z",
+          "venue": {"id": "7104", "fullName": "Drelford Icehouse"},
+          "competitors": [
+            {
+              "id": "307",
+              "homeAway": "home",
+              "winner": true,
+              "score": "2",
+              "linescores": [{"value": 1.0}, {"value": 0.0}, {"value": 0.0}, {"value": 0.0}],
+              "team": {
+                "id": "307",
+                "location": "Drelford",
+                "name": "Glaciers",
+                "displayName": "Drelford Glaciers",
+                "shortDisplayName": "Glaciers",
+                "abbreviation": "DRG"
+              }
+            },
+            {
+              "id": "308",
+              "homeAway": "away",
+              "winner": false,
+              "score": "1",
+              "linescores": [{"value": 0.0}, {"value": 1.0}, {"value": 0.0}, {"value": 0.0}],
+              "team": {
+                "id": "308",
+                "location": "Karswick",
+                "name": "Aurorans",
+                "displayName": "Karswick Aurorans",
+                "shortDisplayName": "Aurorans",
+                "abbreviation": "KAR"
+              }
+            }
+          ],
+          "status": {
+            "clock": 0.0,
+            "displayClock": "0:00",
+            "period": 5,
+            "type": {
+              "id": "3",
+              "name": "STATUS_FINAL",
+              "state": "post",
+              "completed": true,
+              "description": "Final",
+              "detail": "Final/SO",
+              "shortDetail": "Final/SO",
+              "altDetail": "SO"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9500005",
+      "uid": "s:70~l:8801~e:9500005",
+      "date": "2026-06-11T23:30Z",
+      "name": "Slatewick Foxfires at Morrowvale Lumberjacks",
+      "shortName": "SWF @ MVL",
+      "competitions": [
+        {
+          "id": "9500005",
+          "date": "2026-06-11T23:30Z",
+          "venue": {"id": "7105", "fullName": "Morrowvale Winter Hall"},
+          "competitors": [
+            {
+              "id": "309",
+              "homeAway": "home",
+              "winner": false,
+              "score": "1",
+              "linescores": [{"value": 1.0}],
+              "team": {
+                "id": "309",
+                "location": "Morrowvale",
+                "name": "Lumberjacks",
+                "displayName": "Morrowvale Lumberjacks",
+                "shortDisplayName": "Lumberjacks",
+                "abbreviation": "MVL"
+              }
+            },
+            {
+              "id": "310",
+              "homeAway": "away",
+              "winner": false,
+              "score": "0",
+              "linescores": [{"value": 0.0}],
+              "team": {
+                "id": "310",
+                "location": "Slatewick",
+                "name": "Foxfires",
+                "displayName": "Slatewick Foxfires",
+                "shortDisplayName": "Foxfires",
+                "abbreviation": "SWF"
+              }
+            }
+          ],
+          "status": {
+            "clock": 0.0,
+            "displayClock": "0:00",
+            "period": 1,
+            "type": {
+              "id": "2",
+              "name": "STATUS_END_PERIOD",
+              "state": "in",
+              "completed": false,
+              "description": "End of Period",
+              "detail": "End of 1st Period",
+              "shortDetail": "End 1st"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9500006",
+      "uid": "s:70~l:8801~e:9500006",
+      "date": "not-a-real-timestamp",
+      "name": "Malformed event that parsers must skip",
+      "competitions": [
+        {
+          "id": "9500006",
+          "competitors": []
+        }
+      ]
+    }
+  ]
+}

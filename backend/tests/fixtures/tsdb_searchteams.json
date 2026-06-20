@@ -1,0 +1,33 @@
+{
+  "teams": [
+    {
+      "idTeam": "80201",
+      "strTeam": "Saltmarsh Spikers",
+      "strSport": "Soccer",
+      "strStadium": "Tidewater Ground",
+      "strLocation": "Fulwater, Saltmarsh",
+      "intStadiumCapacity": "41,798",
+      "strStadiumThumb": null,
+      "intFormedYear": "1905",
+      "idVenue": "90301"
+    },
+    {
+      "idTeam": "80202",
+      "strTeam": "Saltmarsh Spikers U21",
+      "strSport": "Soccer",
+      "strStadium": "Reserve Pitch",
+      "strLocation": "Fulwater, Saltmarsh",
+      "intStadiumCapacity": "2000",
+      "idVenue": "0"
+    },
+    {
+      "idTeam": "80203",
+      "strTeam": "Saltmarsh Spikers Hoops",
+      "strSport": "Basketball",
+      "strStadium": "Tidewater Fieldhouse",
+      "strLocation": "Fulwater, Saltmarsh",
+      "intStadiumCapacity": "8400",
+      "idVenue": null
+    }
+  ]
+}

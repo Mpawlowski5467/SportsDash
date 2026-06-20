@@ -1,0 +1,95 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sportsdash
+      POSTGRES_PASSWORD: sportsdash
+      POSTGRES_DB: sportsdash
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sportsdash"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  ntfy:
+    image: binwiederhier/ntfy
+    command: serve
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+    ports:
+      - "8090:80"
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPORTSDASH_DATABASE_URL: postgresql+asyncpg://sportsdash:sportsdash@db:5432/sportsdash
+      SPORTSDASH_REDIS_URL: redis://redis:6379/0
+      SPORTSDASH_NTFY_URL: http://ntfy
+      SPORTSDASH_NTFY_TOPIC: ${SPORTSDASH_NTFY_TOPIC:-sportsdash}
+      SPORTSDASH_TIMEZONE: ${SPORTSDASH_TIMEZONE:-America/New_York}
+    volumes:
+      # Edit backend/config/teams.yaml on the host, then restart the api
+      # service — no image rebuild needed.
+      - ./backend/config:/app/config:ro
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # Daily logical backups of the Postgres database.  Runs independently
+  # of the rest of the stack (no other service depends on it) so a backup
+  # failure never blocks startup; restart:unless-stopped just retries the
+  # loop.  Dumps land in ./backups on the host; anything older than 14
+  # days is pruned each cycle.
+  backup:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: sportsdash
+      PGPASSWORD: sportsdash
+      PGDATABASE: sportsdash
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "backup loop started; dumps in /backups, pruning >14 days"
+        while true; do
+          ts="$$(date +%Y%m%d-%H%M%S)"
+          out="/backups/sportsdash-$$ts.sql.gz"
+          if pg_dump | gzip > "$$out"; then
+            echo "wrote $$out"
+          else
+            echo "pg_dump failed; will retry next cycle" >&2
+            rm -f "$$out"
+          fi
+          find /backups -name 'sportsdash-*.sql.gz' -type f -mtime +14 -delete 2>/dev/null || true
+          sleep 86400
+        done
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  ntfy-cache:

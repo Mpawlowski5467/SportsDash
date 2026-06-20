@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "frontend",
+      "port": 5173
+    },
+    {
+      "name": "app",
+      "runtimeExecutable": "sleep",
+      "runtimeArgs": ["86400"],
+      "cwd": ".",
+      "port": 3000
+    }
+  ]
+}

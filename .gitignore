@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.db
+
+# Node / Bun (bun.lock stays committed)
+node_modules/
+dist/
+
+# PyInstaller desktop build (`dist/` above already covers backend/dist)
+backend/build/
+
+# Environment
+.env
+
+# Misc
+.DS_Store
+*.log

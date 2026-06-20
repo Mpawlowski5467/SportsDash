@@ -1,0 +1,38 @@
+{
+  "player": [
+    {
+      "idPlayer": "990001",
+      "idTeam": "70101",
+      "strPlayer": "Orin Latchford",
+      "strTeam": "Saltmarsh Spikers",
+      "strSport": "Volleyball",
+      "strPosition": "Outside Hitter",
+      "strNumber": "7",
+      "strStatus": "Active"
+    },
+    {
+      "idPlayer": "990002",
+      "idTeam": "70101",
+      "strPlayer": "Bram Hollowell",
+      "strTeam": "Saltmarsh Spikers",
+      "strSport": "Volleyball",
+      "strPosition": "Setter",
+      "strNumber": "12",
+      "strStatus": "Out"
+    },
+    {
+      "idPlayer": "990003",
+      "idTeam": "70101",
+      "strPlayer": "Cassius Wrenmore",
+      "strTeam": "Saltmarsh Spikers",
+      "strSport": "Volleyball",
+      "strPosition": "Libero",
+      "strNumber": "3",
+      "strStatus": "Day-To-Day"
+    },
+    {
+      "idTeam": "70101",
+      "strNumber": "99"
+    }
+  ]
+}

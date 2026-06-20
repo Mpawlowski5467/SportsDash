@@ -1,0 +1,34 @@
+{
+  "header": {
+    "id": "9100201",
+    "competitions": [
+      {
+        "id": "9100201",
+        "date": "2026-06-20T23:00Z",
+        "competitors": [
+          {
+            "id": "55",
+            "homeAway": "home",
+            "team": {"id": "55", "displayName": "Crestfall Lynx", "abbreviation": "CFL"}
+          },
+          {
+            "id": "77",
+            "homeAway": "away",
+            "team": {"id": "77", "displayName": "Rivermont Gulls", "abbreviation": "RMG"}
+          }
+        ],
+        "status": {
+          "type": {
+            "id": "1",
+            "name": "STATUS_SCHEDULED",
+            "state": "pre",
+            "completed": false,
+            "description": "Scheduled",
+            "detail": "Sat, June 20th at 7:00 PM EDT",
+            "shortDetail": "6/20 - 7:00 PM EDT"
+          }
+        }
+      }
+    ]
+  }
+}

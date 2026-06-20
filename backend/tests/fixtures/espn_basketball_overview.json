@@ -1,0 +1,25 @@
+{
+  "statistics": {
+    "displayName": "Statistics",
+    "labels": ["GP", "MIN", "FG%", "REB", "AST", "PTS"],
+    "names": ["gamesPlayed", "avgMinutes", "fieldGoalPct", "avgRebounds", "avgAssists", "avgPoints"],
+    "displayNames": [
+      "Games Played",
+      "Minutes Per Game",
+      "Field Goal Percentage",
+      "Rebounds Per Game",
+      "Assists Per Game",
+      "Points Per Game"
+    ],
+    "splits": [
+      {
+        "displayName": "Career",
+        "stats": ["402", "33.1", "45.2", "8.4", "5.7", "22.9"]
+      },
+      {
+        "displayName": "Regular Season",
+        "stats": ["78", "34.2", "47.1", "7.8", "5.2", "24.1"]
+      }
+    ]
+  }
+}

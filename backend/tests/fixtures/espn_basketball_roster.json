@@ -1,0 +1,44 @@
+{
+  "season": {"year": 2026, "displayName": "2025-26", "type": 2, "name": "Regular Season"},
+  "team": {"id": "501", "displayName": "Gravenford Owls"},
+  "athletes": [
+    {
+      "position": "guards",
+      "items": [
+        {
+          "id": 9001,
+          "fullName": "Orin Latchford",
+          "jersey": "7",
+          "position": {"abbreviation": "PG"},
+          "injuries": []
+        },
+        {
+          "id": 9002,
+          "fullName": "Bram Hollowell",
+          "jersey": "23",
+          "position": {"abbreviation": "SG"},
+          "injuries": []
+        }
+      ]
+    },
+    {
+      "position": "forwards",
+      "items": [
+        {
+          "id": 9003,
+          "fullName": "Cassius Wrenmore",
+          "jersey": "31",
+          "position": {"abbreviation": "C"},
+          "injuries": []
+        },
+        {
+          "id": 9004,
+          "fullName": "Dell Pemberton",
+          "jersey": "44",
+          "position": {"abbreviation": "PF"},
+          "injuries": []
+        }
+      ]
+    }
+  ]
+}

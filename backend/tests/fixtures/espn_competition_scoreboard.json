@@ -1,0 +1,243 @@
+{
+  "leagues": [
+    {
+      "id": "9700",
+      "uid": "s:600~l:9700",
+      "name": "Coastline Nations Cup",
+      "abbreviation": "CNC",
+      "slug": "coastline-nations-cup"
+    }
+  ],
+  "season": {"type": 1, "year": 2026, "displayName": "2026 Coastline Nations Cup"},
+  "day": {"date": "2026-06-15"},
+  "events": [
+    {
+      "id": "9700001",
+      "uid": "s:600~l:9700~e:9700001",
+      "date": "2026-06-10T18:00Z",
+      "name": "Vandermere at Solwick",
+      "shortName": "VDM @ SLW",
+      "competitions": [
+        {
+          "id": "9700001",
+          "date": "2026-06-10T18:00Z",
+          "venue": {"id": "8001", "fullName": "Solwick National Ground"},
+          "competitors": [
+            {
+              "id": "501",
+              "homeAway": "home",
+              "winner": true,
+              "score": "2",
+              "team": {
+                "id": "501",
+                "location": "Solwick",
+                "name": "Solwick",
+                "displayName": "Solwick",
+                "abbreviation": "SLW"
+              }
+            },
+            {
+              "id": "502",
+              "homeAway": "away",
+              "winner": false,
+              "score": "1",
+              "team": {
+                "id": "502",
+                "location": "Vandermere",
+                "name": "Vandermere",
+                "displayName": "Vandermere",
+                "abbreviation": "VDM"
+              }
+            }
+          ],
+          "status": {
+            "period": 2,
+            "type": {
+              "id": "28",
+              "name": "STATUS_FULL_TIME",
+              "state": "post",
+              "completed": true,
+              "description": "Full Time",
+              "detail": "FT",
+              "shortDetail": "FT"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9700002",
+      "uid": "s:600~l:9700~e:9700002",
+      "date": "2026-06-15T19:00Z",
+      "name": "Embermoor at Caldreth",
+      "shortName": "EMB @ CLD",
+      "competitions": [
+        {
+          "id": "9700002",
+          "date": "2026-06-15T19:00Z",
+          "venue": {"id": "8002", "fullName": "Caldreth Arena"},
+          "competitors": [
+            {
+              "id": "503",
+              "homeAway": "home",
+              "winner": false,
+              "score": "0",
+              "team": {
+                "id": "503",
+                "location": "Caldreth",
+                "name": "Caldreth",
+                "displayName": "Caldreth",
+                "abbreviation": "CLD"
+              }
+            },
+            {
+              "id": "504",
+              "homeAway": "away",
+              "winner": false,
+              "score": "0",
+              "team": {
+                "id": "504",
+                "location": "Embermoor",
+                "name": "Embermoor",
+                "displayName": "Embermoor",
+                "abbreviation": "EMB"
+              }
+            }
+          ],
+          "status": {
+            "period": 0,
+            "type": {
+              "id": "1",
+              "name": "STATUS_SCHEDULED",
+              "state": "pre",
+              "completed": false,
+              "description": "Scheduled",
+              "detail": "Sun, June 15th at 3:00 PM EDT",
+              "shortDetail": "6/15 - 3:00 PM EDT"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9700003",
+      "uid": "s:600~l:9700~e:9700003",
+      "date": "2026-06-20T16:30Z",
+      "name": "Thornwick at Marrowfen",
+      "shortName": "THW @ MRF",
+      "competitions": [
+        {
+          "id": "9700003",
+          "date": "2026-06-20T16:30Z",
+          "venue": {"id": "8003", "fullName": "Marrowfen Bowl"},
+          "competitors": [
+            {
+              "id": "505",
+              "homeAway": "home",
+              "winner": false,
+              "score": "0",
+              "team": {
+                "id": "505",
+                "location": "Marrowfen",
+                "name": "Marrowfen",
+                "displayName": "Marrowfen",
+                "abbreviation": "MRF"
+              }
+            },
+            {
+              "id": "506",
+              "homeAway": "away",
+              "winner": false,
+              "score": "0",
+              "team": {
+                "id": "506",
+                "location": "Thornwick",
+                "name": "Thornwick",
+                "displayName": "Thornwick",
+                "abbreviation": "THW"
+              }
+            }
+          ],
+          "status": {
+            "period": 0,
+            "type": {
+              "id": "1",
+              "name": "STATUS_SCHEDULED",
+              "state": "pre",
+              "completed": false,
+              "description": "Scheduled",
+              "detail": "Fri, June 20th at 12:30 PM EDT",
+              "shortDetail": "6/20 - 12:30 PM EDT"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9700004",
+      "uid": "s:600~l:9700~e:9700004",
+      "date": "2026-06-26T22:00Z",
+      "name": "Solwick at Embermoor",
+      "shortName": "SLW @ EMB",
+      "competitions": [
+        {
+          "id": "9700004",
+          "date": "2026-06-26T22:00Z",
+          "venue": {"id": "8004", "fullName": "Embermoor Park"},
+          "competitors": [
+            {
+              "id": "504",
+              "homeAway": "home",
+              "winner": false,
+              "score": "0",
+              "team": {
+                "id": "504",
+                "location": "Embermoor",
+                "name": "Embermoor",
+                "displayName": "Embermoor",
+                "abbreviation": "EMB"
+              }
+            },
+            {
+              "id": "501",
+              "homeAway": "away",
+              "winner": false,
+              "score": "0",
+              "team": {
+                "id": "501",
+                "location": "Solwick",
+                "name": "Solwick",
+                "displayName": "Solwick",
+                "abbreviation": "SLW"
+              }
+            }
+          ],
+          "status": {
+            "period": 0,
+            "type": {
+              "id": "1",
+              "name": "STATUS_SCHEDULED",
+              "state": "pre",
+              "completed": false,
+              "description": "Scheduled",
+              "detail": "Fri, June 26th at 6:00 PM EDT",
+              "shortDetail": "6/26 - 6:00 PM EDT"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "9700005",
+      "uid": "s:600~l:9700~e:9700005",
+      "date": "not-a-real-timestamp",
+      "name": "Malformed competition event that parsers must skip",
+      "competitions": [
+        {
+          "id": "9700005",
+          "competitors": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "sports": [{"id": "850", "name": "Tennis"}],
+  "leagues": [{"id": "9800", "name": "Coastline Tennis Series"}],
+  "season": {"year": 2026, "displayName": "2026"},
+  "rankings": [
+    {
+      "id": "1",
+      "name": "Coastline Tennis Series Rankings",
+      "shortName": "CTS",
+      "type": "ATP",
+      "ranks": [
+        {
+          "current": 2,
+          "previous": 2,
+          "points": 8120.0,
+          "trend": "-",
+          "athlete": {
+            "id": "70001",
+            "uid": "s:850~a:70001",
+            "displayName": "Rowan Ashgrove",
+            "shortName": "R. Ashgrove",
+            "fullName": "Rowan Ashgrove"
+          }
+        },
+        {
+          "current": 1,
+          "previous": 1,
+          "points": 10240.0,
+          "trend": "-",
+          "athlete": {
+            "id": "70005",
+            "uid": "s:850~a:70005",
+            "displayName": "Idris Calloway",
+            "shortName": "I. Calloway",
+            "fullName": "Idris Calloway"
+          }
+        },
+        {
+          "current": 3,
+          "points": 6035.0,
+          "athlete": {
+            "id": "70002",
+            "displayName": "Niall Brackwater",
+            "shortName": "N. Brackwater"
+          }
+        },
+        {
+          "current": 4,
+          "athlete": {"id": "70003", "displayName": "Teague Vellmoor"}
+        },
+        "not-a-ranking-entry",
+        {"current": 5, "points": 4100.0, "athlete": {}}
+      ],
+      "update": "2026-06-09T00:00Z"
+    }
+  ],
+  "availableRankings": []
+}

@@ -1,0 +1,208 @@
+{
+  "leagues": [
+    {
+      "id": "9800",
+      "uid": "s:850~l:9800",
+      "name": "Coastline Tennis Series",
+      "abbreviation": "CTS",
+      "slug": "coastline-tennis-series"
+    }
+  ],
+  "season": {"type": 2, "year": 2026},
+  "day": {"date": "2026-06-12"},
+  "events": [
+    {
+      "id": "98-2026",
+      "uid": "s:850~l:9800~e:98-2026",
+      "date": "2026-06-08T04:00Z",
+      "endDate": "2026-06-14T03:59Z",
+      "major": false,
+      "name": "Harborfield Open",
+      "shortName": "Harborfield",
+      "season": {"year": 2026, "type": 2},
+      "groupings": [
+        {
+          "grouping": {"id": "1", "slug": "mens-singles", "displayName": "Men's Singles"},
+          "competitions": [
+            {
+              "id": "9810001",
+              "uid": "s:850~l:9800~e:98-2026~c:9810001",
+              "date": "2026-06-12T12:30Z",
+              "startDate": "2026-06-12T12:30Z",
+              "timeValid": true,
+              "round": {"id": "5", "displayName": "Quarterfinal"},
+              "status": {
+                "period": 2,
+                "type": {
+                  "id": "2",
+                  "name": "STATUS_IN_PROGRESS",
+                  "state": "in",
+                  "completed": false,
+                  "description": "In Progress",
+                  "detail": "2nd Set",
+                  "shortDetail": "2nd Set"
+                }
+              },
+              "venue": {"fullName": "Harborfield, Coastland", "court": "Centre Court"},
+              "format": {"regulation": {"periods": 3}},
+              "competitors": [
+                {
+                  "id": "70001",
+                  "uid": "s:850~l:9800~a:70001",
+                  "type": "athlete",
+                  "order": 1,
+                  "homeAway": "home",
+                  "winner": false,
+                  "linescores": [
+                    {"value": 6.0, "winner": true},
+                    {"value": 3.0, "winner": false}
+                  ],
+                  "athlete": {
+                    "guid": "aaaa1111-bbbb-2222-cccc-333344445555",
+                    "displayName": "Rowan Ashgrove",
+                    "shortName": "R. Ashgrove",
+                    "fullName": "Rowan Ashgrove",
+                    "flag": {"alt": "Coastland"}
+                  }
+                },
+                {
+                  "id": "70002",
+                  "uid": "s:850~l:9800~a:70002",
+                  "type": "athlete",
+                  "order": 2,
+                  "homeAway": "away",
+                  "winner": false,
+                  "linescores": [
+                    {"value": 4.0, "winner": false},
+                    {"value": 5.0, "winner": false}
+                  ],
+                  "athlete": {
+                    "guid": "dddd1111-eeee-2222-ffff-333344445555",
+                    "displayName": "Niall Brackwater",
+                    "shortName": "N. Brackwater",
+                    "fullName": "Niall Brackwater",
+                    "flag": {"alt": "Harrowmere"}
+                  }
+                }
+              ]
+            },
+            {
+              "id": "9810002",
+              "uid": "s:850~l:9800~e:98-2026~c:9810002",
+              "date": "2026-06-11T11:00Z",
+              "startDate": "2026-06-11T11:00Z",
+              "timeValid": true,
+              "round": {"id": "1", "displayName": "Round 1"},
+              "status": {
+                "period": 2,
+                "type": {
+                  "id": "3",
+                  "name": "STATUS_FINAL",
+                  "state": "post",
+                  "completed": true,
+                  "description": "Final",
+                  "detail": "Final",
+                  "shortDetail": "Final"
+                }
+              },
+              "venue": {"fullName": "Harborfield, Coastland", "court": "Match Court 2"},
+              "format": {"regulation": {"periods": 3}},
+              "notes": [
+                {"text": "Rowan Ashgrove bt Teague Vellmoor 6-2 6-4", "type": "event"}
+              ],
+              "competitors": [
+                {
+                  "id": "70001",
+                  "uid": "s:850~l:9800~a:70001",
+                  "type": "athlete",
+                  "order": 1,
+                  "homeAway": "home",
+                  "winner": true,
+                  "linescores": [
+                    {"value": 6.0, "winner": true},
+                    {"value": 6.0, "winner": true}
+                  ],
+                  "athlete": {
+                    "guid": "aaaa1111-bbbb-2222-cccc-333344445555",
+                    "displayName": "Rowan Ashgrove",
+                    "shortName": "R. Ashgrove",
+                    "fullName": "Rowan Ashgrove"
+                  }
+                },
+                {
+                  "id": "70003",
+                  "uid": "s:850~l:9800~a:70003",
+                  "type": "athlete",
+                  "order": 2,
+                  "homeAway": "away",
+                  "winner": false,
+                  "linescores": [
+                    {"value": 2.0, "winner": false},
+                    {"value": 4.0, "winner": false}
+                  ],
+                  "athlete": {
+                    "guid": "9999aaaa-bbbb-cccc-dddd-eeeeffff0000",
+                    "displayName": "Teague Vellmoor",
+                    "shortName": "T. Vellmoor",
+                    "fullName": "Teague Vellmoor"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "grouping": {"id": "2", "slug": "mens-doubles", "displayName": "Men's Doubles"},
+          "competitions": [
+            {
+              "id": "9810003",
+              "uid": "s:850~l:9800~e:98-2026~c:9810003",
+              "date": "2026-06-12T09:00Z",
+              "startDate": "2026-06-12T09:00Z",
+              "timeValid": true,
+              "round": {"id": "1", "displayName": "Round 1"},
+              "status": {
+                "period": 0,
+                "type": {
+                  "id": "1",
+                  "name": "STATUS_SCHEDULED",
+                  "state": "pre",
+                  "completed": false,
+                  "description": "Scheduled",
+                  "detail": "Scheduled",
+                  "shortDetail": "6/12"
+                }
+              },
+              "competitors": [
+                {
+                  "id": "70010",
+                  "type": "athlete",
+                  "order": 1,
+                  "homeAway": "home",
+                  "athlete": {"displayName": "Fenwick Dale", "shortName": "F. Dale"}
+                },
+                {
+                  "id": "70011",
+                  "type": "athlete",
+                  "order": 2,
+                  "homeAway": "away",
+                  "athlete": {"displayName": "Aldous Renmark", "shortName": "A. Renmark"}
+                }
+              ]
+            },
+            {
+              "id": "9810004",
+              "uid": "s:850~l:9800~e:98-2026~c:9810004",
+              "date": "not-a-real-timestamp",
+              "round": {"id": "1", "displayName": "Round 1"},
+              "status": {"type": {"state": "pre", "name": "STATUS_SCHEDULED"}},
+              "competitors": [
+                {"id": "70020", "order": 1, "athlete": {"displayName": "Only One Side"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

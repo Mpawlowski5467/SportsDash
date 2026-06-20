@@ -1,0 +1,117 @@
+{
+  "name": "Crestline Basketball Association",
+  "season": {"displayName": "2025-26"},
+  "children": [
+    {
+      "name": "Eastreach Conference",
+      "abbreviation": "ER",
+      "standings": {"entries": []},
+      "children": [
+        {
+          "name": "Tidewater Division",
+          "abbreviation": "TID",
+          "standings": {
+            "entries": [
+              {
+                "team": {"id": "501", "displayName": "Gravenford Owls"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 2},
+                  {"name": "wins", "value": 48},
+                  {"name": "losses", "value": 34},
+                  {"name": "winPercent", "value": 0.585},
+                  {"name": "gamesBehind", "value": 5.0}
+                ]
+              },
+              {
+                "team": {"id": "502", "displayName": "Telmark Foxes"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 1},
+                  {"name": "wins", "value": 53},
+                  {"name": "losses", "value": 29},
+                  {"name": "winPercent", "value": 0.646},
+                  {"name": "gamesBehind", "value": 0.0}
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "Highland Division",
+          "abbreviation": "HIG",
+          "standings": {
+            "entries": [
+              {
+                "team": {"id": "503", "displayName": "Bellharbor Manticores"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 1},
+                  {"name": "wins", "value": 50},
+                  {"name": "losses", "value": 32},
+                  {"name": "winPercent", "value": 0.61}
+                ]
+              },
+              {
+                "team": {"id": "504", "displayName": "Marrow Creek Bisons"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 2},
+                  {"name": "wins", "value": 41},
+                  {"name": "losses", "value": 41},
+                  {"name": "winPercent", "value": 0.5}
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Westmark Conference",
+      "abbreviation": "WM",
+      "standings": {"entries": []},
+      "children": [
+        {
+          "name": "Sandsea Division",
+          "abbreviation": "SAN",
+          "standings": {
+            "entries": [
+              {
+                "team": {"id": "505", "displayName": "Wrenfield Stags"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 1},
+                  {"name": "wins", "value": 55},
+                  {"name": "losses", "value": 27},
+                  {"name": "winPercent", "value": 0.671}
+                ]
+              },
+              {
+                "team": {"id": "506", "displayName": "Dunwick Spires"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 2},
+                  {"name": "wins", "value": 44},
+                  {"name": "losses", "value": 38},
+                  {"name": "winPercent", "value": 0.537}
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "Summit Division",
+          "abbreviation": "SUM",
+          "standings": {
+            "entries": [
+              {
+                "team": {"id": "507", "displayName": "Ironvale Cougars"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 1},
+                  {"name": "wins", "value": 47},
+                  {"name": "losses", "value": 35},
+                  {"name": "winPercent", "value": 0.573}
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

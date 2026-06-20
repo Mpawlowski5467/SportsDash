@@ -1,0 +1,28 @@
+{
+  "events": [
+    {
+      "idEvent": "3300001",
+      "strEvent": "Saltmarsh Spikers vs Harborline Setters",
+      "strSport": "Volleyball",
+      "idLeague": "9001",
+      "strLeague": "Tidewater Volleyball League",
+      "strSeason": "2026",
+      "strHomeTeam": "Saltmarsh Spikers",
+      "strAwayTeam": "Harborline Setters",
+      "intHomeScore": "3",
+      "intAwayScore": "1",
+      "intRound": "4",
+      "dateEvent": "2026-06-09",
+      "strTime": "18:00:00",
+      "strTimestamp": "2026-06-09T18:00:00",
+      "strGroup": "A",
+      "idHomeTeam": "70101",
+      "idAwayTeam": "70102",
+      "strVenue": "Saltmarsh Hall",
+      "strCountry": "Tidewater",
+      "strStatus": "FT",
+      "strProgress": "",
+      "strPostponed": "no"
+    }
+  ]
+}

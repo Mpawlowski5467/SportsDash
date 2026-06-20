@@ -1,0 +1,14 @@
+{
+  "teams": [
+    {
+      "idTeam": "70101",
+      "strTeam": "Saltmarsh Spikers",
+      "strSport": "Volleyball",
+      "strStadium": "Saltmarsh Hall",
+      "strLocation": "Tidewater, Saltmarsh, Coastland",
+      "intStadiumCapacity": "8400",
+      "strCountry": "Coastland",
+      "strStadiumThumb": "https://example.com/venues/70101.png"
+    }
+  ]
+}

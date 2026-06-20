@@ -1,0 +1,12 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+httpx>=0.28
+APScheduler>=3.10,<4
+SQLAlchemy[asyncio]>=2.0.36
+asyncpg>=0.30
+aiosqlite>=0.20
+pydantic>=2.9
+pydantic-settings>=2.6
+PyYAML>=6.0
+feedparser>=6.0.11
+redis>=5.2
