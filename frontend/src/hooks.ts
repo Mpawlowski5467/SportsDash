@@ -23,7 +23,6 @@ import type {
   GameOdds,
   MapResponse,
   Matchup,
-  Meta,
   NewsItem,
   NewsRefreshResult,
   NewsScope,
@@ -32,7 +31,6 @@ import type {
   Nation,
   Scorers,
   SetupStatus,
-  SportEvent,
   Standings,
   StatLeaders,
   TeamsResponse,
@@ -65,14 +63,6 @@ function todayRefetchInterval(data: TodayResponse | undefined): number {
     return 60_000;
   }
   return FIVE_MINUTES;
-}
-
-export function useMeta(): UseQueryResult<Meta> {
-  return useQuery({
-    queryKey: ["meta"],
-    queryFn: () => api.meta(),
-    staleTime: Infinity,
-  });
 }
 
 export function useTeams(): UseQueryResult<TeamsResponse> {
@@ -181,30 +171,6 @@ export function localDayOffset(daysOffset: number): string {
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-/**
- * Leaderboard events (golf, …). Defaults to the same window as the backend
- * (today-7d .. today+45d) when start/end are omitted, so the Golf tab can
- * just call `useEvents()`. Polls faster while a tournament is in progress.
- */
-export function useEvents(
-  start?: string,
-  end?: string,
-): UseQueryResult<SportEvent[]> {
-  const startKey = start ?? localDayOffset(-7);
-  const endKey = end ?? localDayOffset(45);
-  return useQuery({
-    queryKey: ["events", startKey, endKey],
-    queryFn: () => api.events({ start: startKey, end: endKey }),
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (data?.some((event) => event.phase === "in_progress")) {
-        return 60_000;
-      }
-      return FIVE_MINUTES;
-    },
-  });
 }
 
 /**

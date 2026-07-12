@@ -4,6 +4,7 @@ import { formatShortDate } from "../lib/time";
 import type { Game, GameSide, Sport } from "../types";
 import TeamLogo from "../components/TeamLogo";
 import Select, { type SelectOption } from "../components/Select";
+import { useManageTeams } from "../components/ManageTeamsContext";
 
 /** Per-side display metadata for logos, keyed by internal team id. */
 interface SideMeta {
@@ -204,6 +205,7 @@ function ResultRow({
 }
 
 export default function ResultsView() {
+  const openManageTeams = useManageTeams();
   const teamsQuery = useTeams();
   const [selected, setSelected] = useState<string | undefined>(undefined);
 
@@ -282,9 +284,16 @@ export default function ResultsView() {
   }
   if (teams.length === 0) {
     return (
-      <p className="text-sm text-zinc-500">
-        No teams configured. Add teams in backend/config/teams.yaml.
-      </p>
+      <div className="flex flex-col items-start gap-3">
+        <p className="text-sm text-zinc-500">No teams followed yet — follow a team to see its results here.</p>
+        <button
+          type="button"
+          onClick={openManageTeams}
+          className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
+        >
+          Manage teams
+        </button>
+      </div>
     );
   }
 

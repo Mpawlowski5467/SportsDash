@@ -182,11 +182,20 @@ export interface GamePlay {
   scoring: boolean;
 }
 
+export interface Goal {
+  player: string;
+  team: string; // scoring team's display name
+  minute: string | null;
+  own_goal: boolean;
+  penalty: boolean;
+}
+
 export interface GameSummary {
   game_id: string;
   periods: PeriodScore[];
   performers: Performer[];
   team_stats: TeamStat[];
+  goals: Goal[]; // soccer: scorers with minutes (own goals flagged)
   home_total: number | null;
   away_total: number | null;
   win_probability: number[]; // home win % over time (0–100), chronological

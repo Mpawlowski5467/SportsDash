@@ -5,6 +5,7 @@ import type { Sport, StandingRow } from "../types";
 import TeamLogo from "../components/TeamLogo";
 import Select, { type SelectOption } from "../components/Select";
 import { useOpenNation, useOpenTeam } from "../components/TeamDetailPanel";
+import { useManageTeams } from "../components/ManageTeamsContext";
 
 /** Per-team display metadata pulled from the /teams payload, keyed by id. */
 interface TeamMeta {
@@ -295,6 +296,7 @@ function groupStandings(rows: StandingRow[]): Group[] {
 }
 
 export default function StandingsView() {
+  const openManageTeams = useManageTeams();
   const teamsQuery = useTeams();
   const setupLeaguesQuery = useSetupLeagues();
   const [selected, setSelected] = useState<string | undefined>(undefined);
@@ -344,9 +346,16 @@ export default function StandingsView() {
   }
   if (leagues.length === 0) {
     return (
-      <p className="text-sm text-zinc-500">
-        No leagues configured. Add leagues in backend/config/teams.yaml.
-      </p>
+      <div className="flex flex-col items-start gap-3">
+        <p className="text-sm text-zinc-500">No leagues followed yet — follow a league to see its standings here.</p>
+        <button
+          type="button"
+          onClick={openManageTeams}
+          className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
+        >
+          Manage teams
+        </button>
+      </div>
     );
   }
 

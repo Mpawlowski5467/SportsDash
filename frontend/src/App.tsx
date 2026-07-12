@@ -26,13 +26,15 @@ import SettingsView from "./views/SettingsView";
 import { TeamDetailProvider } from "./components/TeamDetailPanel";
 import SportsDashSplash from "./components/loaders/SportsDashSplash";
 import SportsDashSpinner from "./components/loaders/SportsDashSpinner";
-import LoaderGallery from "./components/loaders/LoaderGallery";
+import { ManageTeamsContext } from "./components/ManageTeamsContext";
 
 // Heavy, route-specific deps (MapLibre ~megabyte, FullCalendar) are split out
 // so they only download when their tab is first opened — keeping the initial
-// bundle small.
+// bundle small. LoaderGallery is a dev-only showcase (#sd-loaders), so it
+// stays out of the production critical path too.
 const MapView = lazy(() => import("./views/MapView"));
 const CalendarView = lazy(() => import("./views/CalendarView"));
+const LoaderGallery = lazy(() => import("./components/loaders/LoaderGallery"));
 
 const VIEWS: Record<TabId, ComponentType> = {
   today: TodayView,
@@ -76,7 +78,11 @@ export default function App() {
     typeof window !== "undefined" &&
     window.location.hash === "#sd-loaders"
   ) {
-    return <LoaderGallery />;
+    return (
+      <Suspense fallback={null}>
+        <LoaderGallery />
+      </Suspense>
+    );
   }
 
   // ThemeProvider lives inside the QueryClientProvider (mounted in main.tsx)
@@ -97,6 +103,8 @@ function AppContent() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [firstRunActive, setFirstRunActive] = useState(false);
   const [mapFocus, setMapFocus] = useState<MapFocusTarget | null>(null);
+  // Stable so views consuming ManageTeamsContext don't re-render on App state.
+  const openManageTeams = useCallback(() => setManageOpen(true), []);
 
   // Lets the team profile's "Next match" card jump to the Map and fly to that
   // game's venue. requestFocus stores the target and switches to the Map tab;
@@ -163,6 +171,7 @@ function AppContent() {
 
   return (
     <MapFocusContext.Provider value={mapFocusValue}>
+    <ManageTeamsContext.Provider value={openManageTeams}>
     <TeamDetailProvider>
       <Layout
         active={active}
@@ -199,6 +208,7 @@ function AppContent() {
         <SettingsView onClose={() => setNotificationsOpen(false)} />
       )}
     </TeamDetailProvider>
+    </ManageTeamsContext.Provider>
     </MapFocusContext.Provider>
   );
 }

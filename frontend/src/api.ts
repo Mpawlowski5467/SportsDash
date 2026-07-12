@@ -16,7 +16,6 @@ import type {
   GameOdds,
   MapResponse,
   Matchup,
-  Meta,
   NewsItem,
   NewsScope,
   NotificationPrefsResponse,
@@ -26,7 +25,6 @@ import type {
   Roster,
   Scorers,
   SetupStatus,
-  SportEvent,
   Standings,
   StatLeaders,
   TeamsResponse,
@@ -103,8 +101,6 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export const api = {
-  meta: () => get<Meta>("/meta"),
-
   teams: () => get<TeamsResponse>("/teams"),
 
   today: () => get<TodayResponse>("/today"),
@@ -135,11 +131,6 @@ export const api = {
   // provider has no line for.
   odds: (ids: string[]) =>
     get<Record<string, GameOdds>>("/odds", { ids: ids.join(",") }),
-
-  events: (p: { start: string; end: string }) =>
-    get<SportEvent[]>("/events", { start: p.start, end: p.end }),
-
-  event: (id: string) => get<SportEvent>(`/events/${encodeURIComponent(id)}`),
 
   standings: (leagueId: string) =>
     get<Standings>(`/standings/${encodeURIComponent(leagueId)}`),

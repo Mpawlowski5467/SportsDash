@@ -2,7 +2,7 @@ import { useEffect, useId } from "react";
 
 import { formatShortDate } from "../lib/time";
 import type { LeaderRow, SportEvent } from "../types";
-import Portal from "../components/Portal";
+import Portal from "./Portal";
 
 /** Date span label: single day, or "Jun 12 – Jun 15" across a tournament. */
 function spanLabel(event: SportEvent): string {

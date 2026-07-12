@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useGameOdds, useTeams, useToday } from "../hooks";
 import GameCard from "../components/GameCard";
-import EventLeaderboardModal from "./EventsView";
+import EventLeaderboardModal from "../components/EventLeaderboardModal";
 import type { League, SportEvent } from "../types";
 
 /**
