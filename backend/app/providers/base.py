@@ -4,6 +4,20 @@ Each external data source implements :class:`SportsProvider` and
 normalizes everything into the domain models in ``app.models.domain``.
 Swapping or adding a source must never require touching services,
 routes, or the scheduler.
+
+Error contract
+--------------
+Implementations should follow EspnProvider's convention: **raise** on
+transport errors and 5xx (so the registry's circuit breaker records the
+failure and can trip), and **degrade quietly** (return ``None`` / ``[]``)
+only for genuine not-found or legitimately-empty results.  Raising
+:class:`~app.providers.http_util.TransientProviderError` marks a failure
+as retry-worthy.
+
+Known deviation: TheSportsDbProvider is documented never-raise and
+swallows HTTP errors internally, so its breaker only sees failures from
+exhausted retries — new providers should NOT copy that; prefer the
+raise-on-failure contract above.
 """
 from __future__ import annotations
 

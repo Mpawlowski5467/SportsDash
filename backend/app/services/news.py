@@ -32,7 +32,7 @@ import httpx
 
 from app.config import get_settings
 from app.db import session_scope
-from app.models import domain
+from app.models import convert, domain
 from app.models.orm import LeagueORM, TeamORM
 from app.providers import registry
 from app.services import repository
@@ -234,31 +234,11 @@ async def fetch_google_news(
 
 
 # ---------------------------------------------------------------------------
-# ORM -> domain helpers (providers take domain objects)
+# ORM -> domain helpers (providers take domain objects) — shared mappers.
 # ---------------------------------------------------------------------------
 
-def _league_from_row(row: LeagueORM) -> domain.League:
-    return domain.League(
-        id=row.id,
-        sport=domain.Sport(row.sport),
-        name=row.name,
-        provider=row.provider,
-        provider_key=row.provider_key,
-        follow_all=row.follow_all,
-    )
-
-
-def _team_from_row(row: TeamORM) -> domain.Team:
-    return domain.Team(
-        id=row.id,
-        league_id=row.league_id,
-        name=row.name,
-        abbreviation=row.abbreviation,
-        provider_key=row.provider_key,
-        logo_url=row.logo_url,
-        color=row.color,
-        rss_feeds=tuple(row.rss_feeds or ()),
-    )
+_league_from_row = convert.league_from_row
+_team_from_row = convert.team_from_row
 
 
 def _leagues_by_id(rows: list[LeagueORM]) -> dict[str, domain.League]:

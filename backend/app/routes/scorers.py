@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import domain
+from app.models import convert, domain
 from app.models.orm import LeagueORM
 from app.providers import registry
 from app.schemas import ScorerOut, ScorersOut
@@ -31,15 +31,7 @@ _CACHE_TTL_SECONDS = 1800  # 30 min — scorers only change as matches finish
 _MAX_CONCURRENCY = 8       # parallel summary fetches per request
 
 
-def _league_from_row(row: LeagueORM) -> domain.League:
-    return domain.League(
-        id=row.id,
-        sport=domain.Sport(row.sport),
-        name=row.name,
-        provider=row.provider,
-        provider_key=row.provider_key,
-        follow_all=row.follow_all,
-    )
+_league_from_row = convert.league_from_row
 
 
 @router.get("/scorers/{league_id}", response_model=ScorersOut)

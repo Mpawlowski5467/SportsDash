@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_session
-from app.models import domain
+from app.models import convert, domain
 from app.models.orm import GameORM, LeagueORM
 from app.providers import registry
 from app.schemas import (
@@ -43,15 +43,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _league_from_row(row: LeagueORM) -> domain.League:
-    return domain.League(
-        id=row.id,
-        sport=domain.Sport(row.sport),
-        name=row.name,
-        provider=row.provider,
-        provider_key=row.provider_key,
-        follow_all=row.follow_all,
-    )
+_league_from_row = convert.league_from_row
 
 
 def _provider_game_key(game_id: str) -> str:

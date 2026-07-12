@@ -26,12 +26,12 @@ def _provider_health() -> tuple[dict[str, dict[str, object]], bool]:
     """Per-provider circuit state, plus whether any breaker is open.
 
     Every registered provider is reported; remote providers carry a live
-    circuit-breaker (the mock has none, so it reads as permanently closed).
+    circuit-breaker (an unguarded provider reads as permanently closed).
     """
     breakers = circuit_breaker.all_breakers()
     detail: dict[str, dict[str, object]] = {}
     any_open = False
-    for provider_id in sorted(registry._providers):
+    for provider_id in registry.provider_ids():
         breaker = breakers.get(provider_id)
         if breaker is None:
             detail[provider_id] = {
@@ -75,7 +75,7 @@ async def health(
         # Backward-compatible fields: `providers` stays the integer count.
         "status": "ok" if (database_ok and not any_provider_open) else "degraded",
         "database": database_ok,
-        "providers": len(registry._providers),
+        "providers": len(registry.provider_ids()),
         # Per-provider circuit-breaker detail (added with the resilience work).
         "provider_health": provider_health,
     }

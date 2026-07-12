@@ -5,8 +5,10 @@ creates missing TABLES but never adds COLUMNS to existing ones.  Every
 entry here is an idempotent "add column if missing" applied at startup,
 so an existing homelab database survives upgrades without manual steps.
 
-Append-only: never edit or remove entries, and only use NULL-able
-columns (both sqlite and postgres can add those in place).
+Append-only: never edit or remove entries.  Columns must be NULL-able
+OR ``NOT NULL`` with a ``DEFAULT`` (both sqlite and postgres can add
+either in place; a bare NOT NULL without a default would fail on
+non-empty tables).
 """
 from __future__ import annotations
 
@@ -17,8 +19,9 @@ from sqlalchemy import Connection, inspect, text
 logger = logging.getLogger(__name__)
 
 # (table, column, DDL type) — append-only.
-# NOTE: booleans use INTEGER DDL with a 0 default — portable across
-# sqlite and postgres, and SQLAlchemy reads it back as bool either way.
+# NOTE: `BOOLEAN DEFAULT FALSE NOT NULL` is portable here — sqlite treats
+# BOOLEAN as INTEGER and both dialects backfill from the DEFAULT when the
+# column is added to a non-empty table.
 _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("news_items", "image_url", "TEXT"),
     ("leagues", "follow_all", "BOOLEAN DEFAULT FALSE NOT NULL"),

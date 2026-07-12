@@ -94,8 +94,9 @@ def register_provider(provider: SportsProvider) -> None:
 def get_provider(provider_id: str) -> SportsProvider:
     """Look up a provider by id; raises ``KeyError`` if unknown.
 
-    Remote providers are returned wrapped in a circuit-breaker guard; the
-    mock provider is returned as-is.
+    Remote providers (those in ``_GUARDED_PROVIDERS``) are returned wrapped
+    in a circuit-breaker guard; any other registered provider is returned
+    as-is.
     """
     try:
         provider = _providers[provider_id]
@@ -112,6 +113,11 @@ def get_provider(provider_id: str) -> SportsProvider:
         guard = _GuardedProvider(provider, circuit_breaker.get_breaker(provider_id))
         _guards[provider_id] = guard
     return guard  # type: ignore[return-value]
+
+
+def provider_ids() -> list[str]:
+    """Sorted ids of every registered provider (public read-only view)."""
+    return sorted(_providers)
 
 
 async def close_all() -> None:
