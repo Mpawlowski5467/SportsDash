@@ -25,6 +25,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import get_settings
 from app.db import session_scope
+from app import background
 from app.models import convert, domain
 from app.models.domain import EventType, GameEvent, GamePhase, GameState, Sport
 from app.models.orm import EventORM, GameORM
@@ -992,20 +993,6 @@ async def daily_refresh() -> None:
     logger.info("daily_refresh: complete")
 
 
-# Strong references to kicked-off tasks: the event loop only holds weak
-# references, so an otherwise-unreferenced task could be GC'd mid-flight.
-_kicked_tasks: set[asyncio.Task[None]] = set()
-
-
-def _kicked_task_done(task: asyncio.Task[None]) -> None:
-    _kicked_tasks.discard(task)
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.error("kicked daily_refresh failed", exc_info=exc)
-
-
 def kick_daily_refresh() -> None:
     """Spawn ``daily_refresh()`` as a fire-and-forget background task.
 
@@ -1014,9 +1001,7 @@ def kick_daily_refresh() -> None:
     a multi-source refresh inline (and must not import ``app.main`` for
     its task spawner: circular).
     """
-    task = asyncio.create_task(daily_refresh(), name="kicked-daily-refresh")
-    _kicked_tasks.add(task)
-    task.add_done_callback(_kicked_task_done)
+    background.spawn(daily_refresh(), "kicked-daily-refresh")
 
 
 def kick_refresh_locations() -> None:
@@ -1027,9 +1012,7 @@ def kick_refresh_locations() -> None:
     never raises, but the done-callback still logs any unexpected escape and
     holds a strong reference so the task can't be GC'd mid-flight.
     """
-    task = asyncio.create_task(refresh_locations(), name="kicked-refresh-locations")
-    _kicked_tasks.add(task)
-    task.add_done_callback(_kicked_task_done)
+    background.spawn(refresh_locations(), "kicked-refresh-locations")
 
 
 def kick_team_info() -> None:
@@ -1040,18 +1023,10 @@ def kick_team_info() -> None:
     skipped).  ``refresh_team_info`` never raises; the done-callback logs any
     unexpected escape and holds a strong reference against GC.
     """
-    task = asyncio.create_task(refresh_team_info(), name="kicked-refresh-team-info")
-    _kicked_tasks.add(task)
-    task.add_done_callback(_kicked_task_done)
+    background.spawn(refresh_team_info(), "kicked-refresh-team-info")
 
 
 # A single in-flight on-demand location refresh, coalesced across concurrent
-# ``GET /api/map`` calls: the map view polls, so a freshly-followed team's
-# coordinates must start resolving without spawning a new refresh on every
-# poll.  ``None`` (or a finished task) means none is running.
-_ondemand_locations_task: asyncio.Task[None] | None = None
-
-
 def kick_locations_if_pending() -> None:
     """On-demand hook for ``GET /api/map``: resolve missing coordinates soon.
 
@@ -1062,21 +1037,7 @@ def kick_locations_if_pending() -> None:
     Coalesced — if a refresh is already in flight, this is a no-op, so map
     polling can't pile up overlapping refreshes.  Never raises.
     """
-    global _ondemand_locations_task
-    task = _ondemand_locations_task
-    if task is not None and not task.done():
-        return
-    task = asyncio.create_task(refresh_locations(), name="ondemand-refresh-locations")
-    _ondemand_locations_task = task
-    _kicked_tasks.add(task)
-    task.add_done_callback(_kicked_task_done)
-
-
-# A single in-flight on-demand competition-stadium refresh, coalesced across
-# concurrent ``GET /api/map`` calls the same way as the followed-team
-# locations above: the map view polls, so an active competition's field must
-# start resolving its stadiums without spawning a new refresh on every poll.
-_ondemand_competition_task: asyncio.Task[None] | None = None
+    background.spawn_coalesced("ondemand-refresh-locations", refresh_locations())
 
 
 def kick_competition_stadiums() -> None:
@@ -1088,21 +1049,9 @@ def kick_competition_stadiums() -> None:
     Fire-and-forget and coalesced — a refresh already in flight makes this a
     no-op, so map polling can't pile up overlapping resolves.  Never raises.
     """
-    global _ondemand_competition_task
-    task = _ondemand_competition_task
-    if task is not None and not task.done():
-        return
-    task = asyncio.create_task(
-        refresh_competition_stadiums(), name="ondemand-refresh-competition-stadiums"
+    background.spawn_coalesced(
+        "ondemand-refresh-competition-stadiums", refresh_competition_stadiums()
     )
-    _ondemand_competition_task = task
-    _kicked_tasks.add(task)
-    task.add_done_callback(_kicked_task_done)
-
-
-# A single in-flight on-demand game-venue geocode, coalesced across concurrent
-# ``GET /api/map`` polls the same way as the two refreshes above.
-_ondemand_game_venues_task: asyncio.Task[None] | None = None
 
 
 def kick_game_venue_coords() -> None:
@@ -1114,16 +1063,7 @@ def kick_game_venue_coords() -> None:
     geocoding inline.  Fire-and-forget and coalesced — a refresh already in
     flight makes this a no-op.  Never raises.
     """
-    global _ondemand_game_venues_task
-    task = _ondemand_game_venues_task
-    if task is not None and not task.done():
-        return
-    task = asyncio.create_task(
-        refresh_game_venue_coords(), name="ondemand-refresh-game-venue-coords"
-    )
-    _ondemand_game_venues_task = task
-    _kicked_tasks.add(task)
-    task.add_done_callback(_kicked_task_done)
+    background.spawn_coalesced("ondemand-refresh-game-venue-coords", refresh_game_venue_coords())
 
 
 async def _refresh_standings_for_leagues(leagues: list[domain.League]) -> None:
@@ -1153,11 +1093,7 @@ def kick_standings_refresh(leagues: list[domain.League]) -> None:
     """
     if not leagues:
         return
-    task = asyncio.create_task(
-        _refresh_standings_for_leagues(leagues), name="kicked-standings-refresh"
-    )
-    _kicked_tasks.add(task)
-    task.add_done_callback(_kicked_task_done)
+    background.spawn(_refresh_standings_for_leagues(leagues), "kicked-standings-refresh")
 
 
 # ---------------------------------------------------------------------------

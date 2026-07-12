@@ -30,6 +30,7 @@ from sqlalchemy.pool import StaticPool
 from app.models import domain
 from app.models.orm import Base, EventORM, TeamCompetitionORM
 from app.providers import registry
+from app import background
 from app.scheduler import jobs
 from app.services import repository
 from app.timeutil import utcnow
@@ -707,7 +708,7 @@ async def _drain_kicked_tasks() -> None:
     run before asserting.  A snapshot is awaited so the set can mutate as
     tasks complete and pop themselves out via the done-callback.
     """
-    for task in list(jobs._kicked_tasks):
+    for task in list(background._tasks):
         await asyncio.gather(task, return_exceptions=True)
 
 
