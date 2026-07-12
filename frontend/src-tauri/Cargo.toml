@@ -1,8 +1,8 @@
 [package]
 name = "app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "SportsDash — self-hosted sports dashboard (desktop shell)"
+authors = ["Mateusz Pawlowski"]
 license = ""
 repository = ""
 edition = "2021"

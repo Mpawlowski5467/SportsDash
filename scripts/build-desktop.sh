@@ -8,6 +8,10 @@
 #
 # Output: frontend/src-tauri/target/release/bundle/{macos,dmg}/
 #
+# Self-bootstrapping: creates backend/.venv (with PyInstaller, from
+# requirements-dev.txt) when missing, and fails early with a clear
+# message if rustc / bun / python3.12 aren't installed.
+#
 # Re-run this whenever the backend or frontend changes.
 set -euo pipefail
 
@@ -15,8 +19,26 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "error: '$1' is required but not installed. $2" >&2
+    exit 1
+  }
+}
+need rustc "Install Rust via https://rustup.rs"
+need bun "Install Bun via https://bun.sh"
+need python3.12 "Install Python 3.12 (e.g. 'brew install python@3.12')"
+
 TRIPLE="$(rustc -Vv | sed -n 's/^host: //p')"
 echo "==> Host target triple: $TRIPLE"
+
+if [ ! -x "$ROOT/backend/.venv/bin/pyinstaller" ]; then
+  echo "==> Bootstrapping backend/.venv (+ PyInstaller)…"
+  python3.12 -m venv "$ROOT/backend/.venv"
+  "$ROOT/backend/.venv/bin/pip" install --quiet --upgrade pip
+  "$ROOT/backend/.venv/bin/pip" install --quiet \
+    -r "$ROOT/backend/requirements-dev.txt"
+fi
 
 echo "==> Freezing backend (PyInstaller)…"
 cd "$ROOT/backend"
@@ -30,6 +52,7 @@ chmod +x "$BIN_DIR/sportsdash-backend-$TRIPLE"
 
 echo "==> Building SportsDash.app (Tauri)…"
 cd "$ROOT/frontend"
+bun install --frozen-lockfile
 bun tauri build
 
 echo "==> Done. Bundles in:"
