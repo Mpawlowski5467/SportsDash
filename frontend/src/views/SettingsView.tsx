@@ -15,6 +15,7 @@
  */
 
 import { useMemo, useState } from "react";
+import { useModalChrome } from "../components/modalChrome";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useNotificationPrefs } from "../hooks";
@@ -370,6 +371,7 @@ export interface Props {
 }
 
 export default function SettingsView({ onClose }: Props) {
+  const dialogRef = useModalChrome(onClose);
   const queryClient = useQueryClient();
   const prefsQuery = useNotificationPrefs();
   const [error, setError] = useState<string | null>(null);
@@ -419,7 +421,14 @@ export default function SettingsView({ onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950 text-zinc-100">
+    <div
+      ref={dialogRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Settings"
+      className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950 text-zinc-100 outline-none"
+    >
       <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6">
         <header className="mb-6 flex items-center gap-4">
           <span className="select-none whitespace-nowrap text-base font-bold tracking-tight">

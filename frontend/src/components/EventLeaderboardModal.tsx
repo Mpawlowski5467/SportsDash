@@ -1,8 +1,9 @@
-import { useEffect, useId } from "react";
+import { useId } from "react";
 
 import { formatShortDate } from "../lib/time";
 import type { LeaderRow, SportEvent } from "../types";
 import Portal from "./Portal";
+import { useModalChrome } from "./modalChrome";
 
 /** Date span label: single day, or "Jun 12 – Jun 15" across a tournament. */
 function spanLabel(event: SportEvent): string {
@@ -165,19 +166,7 @@ export default function EventLeaderboardModal({
 }) {
   const titleId = useId();
 
-  // ESC to close, and lock background scroll while the overlay is open.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [onClose]);
+  const dialogRef = useModalChrome(onClose);
 
   return (
     <Portal>
@@ -186,10 +175,12 @@ export default function EventLeaderboardModal({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-start gap-3 border-b border-zinc-800 px-4 py-3">

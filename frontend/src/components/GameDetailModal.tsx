@@ -1,7 +1,7 @@
 import OddsSection from "./OddsSection";
 import { oddsHasContent } from "../lib/odds";
 import { abbrev } from "../lib/labels";
-import { useEffect, useId } from "react";
+import { useId } from "react";
 
 import { useGameDetail } from "../hooks";
 import { formatDateTime } from "../lib/time";
@@ -17,6 +17,7 @@ import type {
 import LineupView from "./LineupView";
 import PlayByPlayTimeline from "./PlayByPlayTimeline";
 import Portal from "./Portal";
+import { useModalChrome } from "./modalChrome";
 import StatusBadge from "./StatusBadge";
 import WeatherInline from "./WeatherInline";
 import WinProbChart from "./WinProbChart";
@@ -45,21 +46,7 @@ export default function GameDetailModal({
   const { data, isLoading, isError } = useGameDetail(gameId);
   const titleId = useId();
 
-  // ESC to close, and lock background scroll while the overlay is open.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [onClose]);
+  const dialogRef = useModalChrome(onClose);
 
   const game = data?.game ?? fallbackGame;
   const summary = data?.summary ?? null;
@@ -74,10 +61,12 @@ export default function GameDetailModal({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl outline-none"
         onClick={(event) => event.stopPropagation()}
       >
         <header className="flex items-start gap-3 border-b border-zinc-800 px-4 py-3">

@@ -4,6 +4,7 @@ import type { Game, MapTeam } from "../types";
 import { formatDateTime, formatShortDate } from "../lib/time";
 import TeamLogo from "./TeamLogo";
 import Portal from "./Portal";
+import { useTopmostEsc } from "./modalChrome";
 import WeatherInline from "./WeatherInline";
 import { useOpenNation, useOpenTeam } from "./TeamDetailPanel";
 
@@ -60,15 +61,9 @@ export default function MapTeamPanel({
   }, [team]);
   const shown = team ?? last;
 
-  // ESC closes while open.
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  // ESC closes while open — via the shared stack, so a modal opened on
+  // top of this panel takes ESC priority.
+  useTopmostEsc(onClose, open);
 
   const leagueLabel = shown
     ? shown.league_name ?? leagueNames[shown.league_id] ?? shown.league_id

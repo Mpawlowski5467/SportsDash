@@ -1,8 +1,8 @@
-import { useEffect } from "react";
 
 import type { Game, NewsItem, Player } from "../types";
 import { formatShortDate, relativeTime } from "../lib/time";
 import Portal from "./Portal";
+import { useModalChrome } from "./modalChrome";
 import TeamLogo from "./TeamLogo";
 import PlayerAvatar from "./PlayerAvatar";
 import { useMapFocus } from "./MapFocusContext";
@@ -63,18 +63,7 @@ export default function TeamProfileView({
   isError: boolean;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previous;
-    };
-  }, [onClose]);
+  const dialogRef = useModalChrome(onClose);
 
   const { requestFocus } = useMapFocus();
   const accent = profile?.color ?? "#f59e0b";
@@ -86,9 +75,12 @@ export default function TeamProfileView({
         onClick={onClose}
       >
         <div
+          ref={dialogRef}
+          tabIndex={-1}
           role="dialog"
           aria-modal="true"
-          className="my-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+          aria-label={profile?.name ?? "Team profile"}
+          className="my-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl outline-none"
           onClick={(event) => event.stopPropagation()}
         >
           {/* Hero — optional stadium photo behind the crest + identity. */}
