@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.models import convert, domain
-from app.models.orm import LeagueORM
 from app.providers import registry
 from app.schemas import ScorerOut, ScorersOut
 from app.services import cache, repository

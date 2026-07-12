@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 from app.models import domain
-from app.models.orm import Base, EventORM, GameORM, TeamCompetitionORM
+from app.models.orm import Base, EventORM, TeamCompetitionORM
 from app.providers import registry
 from app.scheduler import jobs
 from app.services import repository

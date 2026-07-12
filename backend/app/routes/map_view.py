@@ -313,7 +313,7 @@ async def _attach_weather(teams: list[MapTeamOut]) -> None:
         *(weather.fetch(team.lat, team.lon) for team in targets),
         return_exceptions=True,
     )
-    for team, result in zip(targets, results):
+    for team, result in zip(targets, results, strict=False):
         if isinstance(result, Weather):
             team.weather = weather_to_out(result)
 

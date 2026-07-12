@@ -1,0 +1,16 @@
+# Tooling config only — packaging stays requirements.txt-based.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Right-sized for a solo project: correctness + unused-code rules; no
+# style bikeshedding (the codebase has its own consistent conventions).
+select = ["E4", "E7", "E9", "F", "B", "UP032"]
+ignore = [
+    "B008",  # FastAPI's Depends(...) in defaults is idiomatic
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use quick lambdas for spies.
+"tests/*" = ["E731"]

@@ -3193,7 +3193,7 @@ class EspnProvider:
             )
 
         lines = await asyncio.gather(*(fetch(player) for player in targets))
-        by_id = {player.id: line for player, line in zip(targets, lines)}
+        by_id = {player.id: line for player, line in zip(targets, lines, strict=False)}
 
         def _apply(player: Player) -> Player:
             season, career = by_id.get(player.id, (None, None))

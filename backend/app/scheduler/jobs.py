@@ -26,7 +26,7 @@ from app.config import get_settings
 from app.db import session_scope
 from app.models import convert, domain
 from app.models.domain import EventType, GameEvent, GamePhase, GameState, Sport
-from app.models.orm import EventORM, GameORM, LeagueORM, TeamORM
+from app.models.orm import EventORM, GameORM
 from app.providers import espn_catalog, registry
 from app.services import (
     geocode,
@@ -429,7 +429,7 @@ async def _attach_player_photos(
             return None
 
     photos = await asyncio.gather(*(fetch(player) for player in targets))
-    by_id = {player.id: url for player, url in zip(targets, photos) if url}
+    by_id = {player.id: url for player, url in zip(targets, photos, strict=False) if url}
     if not by_id:
         return roster
 

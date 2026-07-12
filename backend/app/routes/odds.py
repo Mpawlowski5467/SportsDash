@@ -112,6 +112,6 @@ async def odds(
     )
     return {
         game_id: value
-        for (game_id, _league), value in zip(targets, priced)
+        for (game_id, _league), value in zip(targets, priced, strict=False)
         if value is not None
     }

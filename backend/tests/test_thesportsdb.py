@@ -8,7 +8,7 @@ async tests exercise that contract by monkeypatching ``_get_json``.
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 

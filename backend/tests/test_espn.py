@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
+from app import timeutil
 from app.models.domain import GamePhase, League, PlayerStatus, Sport, Team
 from app.providers.espn import (
     EspnProvider,
@@ -2732,6 +2733,30 @@ async def test_live_games_scoreboard_passes_limit(scoreboard_data: dict[str, Any
     assert len(games) == 2
 
 
+async def test_live_games_scoreboard_date_is_eastern_not_utc(
+    scoreboard_data: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ESPN buckets scoreboard days by US/Eastern (espn.py documents that a
+    UTC date after 8pm ET 'silently misses every live evening game'). At
+    01:30 UTC on Jan 2 — 20:30 ET on Jan 1 — the requested date must be the
+    previous ET day, not the UTC one."""
+    provider = EspnProvider()
+    captured: dict[str, Any] = {}
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        captured["params"] = params
+        return scoreboard_data
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        timeutil,
+        "utcnow",
+        lambda: datetime(2026, 1, 2, 1, 30, tzinfo=timezone.utc),
+    )
+    await provider.get_live_games(BASKETBALL_LEAGUE)
+    assert captured["params"]["dates"] == "20260101"
+
+
 async def test_provider_close_without_use_is_safe() -> None:
     provider = EspnProvider()
     assert provider.provider_id == "espn"
@@ -2785,7 +2810,7 @@ def test_chunk_date_range_long_range_splits_on_month_boundaries() -> None:
         (date(2026, 4, 1), date(2026, 4, 10)),
     ]
     # Contiguous: each chunk starts the day after the previous one ends.
-    for (_, prev_end), (next_start, _) in zip(chunks, chunks[1:]):
+    for (_, prev_end), (next_start, _) in zip(chunks, chunks[1:], strict=False):
         assert next_start == prev_end + timedelta(days=1)
 
 
