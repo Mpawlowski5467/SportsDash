@@ -14,6 +14,10 @@ backend/build/
 # Environment
 .env
 
+# Database dumps written by the docker-compose backup sidecar — personal
+# data, never commit these.
+backups/
+
 # Misc
 .DS_Store
 *.log

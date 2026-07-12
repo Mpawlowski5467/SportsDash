@@ -3,3 +3,10 @@ dist
 .env
 *.log
 .DS_Store
+
+# Desktop-app build tree — ~1GB of Rust target/ + sidecar binaries that
+# the web image must never pull into its build context.
+src-tauri
+.env.tauri
+scripts
+.claude

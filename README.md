@@ -185,7 +185,8 @@ docker compose up -d --build
 Then open:
 
 - Dashboard — <http://localhost:3000>
-- API docs (Swagger) — <http://localhost:8000/docs>
+- API docs (Swagger) — <http://localhost:8001/docs> (loopback-only; the
+  dashboard proxies `/api` internally, so other devices never need this port)
 - ntfy — <http://localhost:8090>
 
 On first load the dashboard opens the **setup wizard**: choose the leagues
@@ -256,11 +257,15 @@ The schedule is exported as a standard iCalendar feed, so SportsDash games
 can live inside Apple Calendar, Google Calendar, or any calendar app that
 supports subscriptions.
 
-- **All games:** `http://<your-host>:8000/api/calendar.ics` (covers −30 …
+- **All games:** `http://<your-host>:3000/api/calendar.ics` (covers −30 …
   +60 days). For a *live, auto-updating* subscription use the `webcal://`
-  scheme — `webcal://<your-host>:8000/api/calendar.ics`.
+  scheme — `webcal://<your-host>:3000/api/calendar.ics`.
 - **One team:** append `?team_id=<team-id>`, e.g.
-  `webcal://<your-host>:8000/api/calendar.ics?team_id=<team-id>`.
+  `webcal://<your-host>:3000/api/calendar.ics?team_id=<team-id>`.
+
+(The feed goes through the frontend on port 3000, which proxies `/api` —
+the API itself is bound to loopback and isn't reachable from other
+devices.)
 
 In the Calendar tab, **Subscribe** offers ready-made `webcal://` links (all
 games plus one per followed team) with copy-to-clipboard, alongside the

@@ -18,11 +18,14 @@ services:
     restart: unless-stopped
 
   ntfy:
-    image: binwiederhier/ntfy
+    image: binwiederhier/ntfy:v2
     command: serve
     volumes:
       - ntfy-cache:/var/cache/ntfy
     ports:
+      # Deliberately LAN-exposed: phones subscribe to the notification
+      # topic directly. The topic name is the only secret — set a random
+      # SPORTSDASH_NTFY_TOPIC in .env rather than the default.
       - "8090:80"
     restart: unless-stopped
 
@@ -42,7 +45,18 @@ services:
       # service — no image rebuild needed.
       - ./backend/config:/app/config:ro
     ports:
-      - "8000:8000"
+      # Loopback-only: the API has no auth, so it must not be reachable
+      # from the LAN — other devices go through the frontend's /api proxy.
+      # Host port 8001 (not 8000) so a resurrected container never shadows
+      # a locally-run `uvicorn` during development.
+      - "127.0.0.1:8001:8000"
+    healthcheck:
+      # python:3.12-slim has no curl; use the stdlib.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   frontend:
@@ -50,9 +64,12 @@ services:
     environment:
       API_URL: http://api:8000
     ports:
+      # LAN-exposed on purpose: this is the wall-display / phone entry
+      # point, and it proxies /api to the backend internally.
       - "3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   # Daily logical backups of the Postgres database.  Runs independently
