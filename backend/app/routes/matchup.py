@@ -17,12 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.models import domain
 from app.models.orm import GameORM, LeagueORM
-from app.routes.games import (
-    _fetch_lineup,
-    _fetch_odds,
-    _fetch_weather,
-    _league_from_row,
-)
+from app.models import convert
+from app.services.game_detail import fetch_lineup, fetch_odds, fetch_weather
 from app.schemas import MatchupOut, PlayerOut
 from app.services import repository
 from app.services.serialize import game_to_out, player_to_out
@@ -87,11 +83,11 @@ async def matchup(
     if league_row is None:
         raise HTTPException(status_code=404, detail="Game has no league")
 
-    league = _league_from_row(league_row)
+    league = convert.league_from_row(league_row)
     game = game_to_out(row, league_row)
-    odds = await _fetch_odds(league, row.id)
-    weather = await _fetch_weather(session, league, row)
-    lineup = await _fetch_lineup(session, league, row)
+    odds = await fetch_odds(league, row.id)
+    weather = await fetch_weather(session, league, row)
+    lineup = await fetch_lineup(session, league, row)
     home_form = await _form(session, row.league_id, row.home_name)
     away_form = await _form(session, row.league_id, row.away_name)
     h2h_rows = await repository.head_to_head(

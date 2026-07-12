@@ -25,7 +25,8 @@ from app.db import get_session
 from app.models import domain
 from app.models.orm import GameORM, LeagueORM
 from app.providers import registry
-from app.routes.games import _league_from_row, _provider_game_key
+from app.models import convert
+from app.services.game_detail import provider_game_key
 from app.schemas import GameOddsOut
 from app.services import cache, repository
 from app.services.serialize import odds_to_out
@@ -75,7 +76,7 @@ async def odds(
             )
             if league_row is None:
                 continue
-            league = _league_from_row(league_row)
+            league = convert.league_from_row(league_row)
             leagues[row.league_id] = league
         if league.sport in domain.INDIVIDUAL_SPORTS:
             continue
@@ -91,7 +92,7 @@ async def odds(
             try:
                 provider = registry.get_provider(league.provider)
                 result = await provider.get_game_odds(
-                    league, _provider_game_key(game_id)
+                    league, provider_game_key(game_id)
                 )
             except Exception:
                 # Transient/circuit errors: skip without caching so the next

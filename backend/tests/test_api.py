@@ -39,7 +39,7 @@ from app.models.orm import (
     StandingsORM,
     TeamORM,
 )
-from app.routes import games as games_route
+from app.services import game_detail as game_detail_service
 from app.routes import odds as odds_route
 from app.routes import router as api_router
 from app.services.ics import games_to_ics
@@ -775,7 +775,7 @@ class _FakeProvider:
 def _use_provider(monkeypatch: pytest.MonkeyPatch, provider: _FakeProvider) -> None:
     """Point the games route's registry lookup at ``provider``."""
     monkeypatch.setattr(
-        games_route.registry, "get_provider", lambda provider_id: provider
+        game_detail_service.registry, "get_provider", lambda provider_id: provider
     )
 
 
@@ -935,7 +935,7 @@ async def test_game_detail_attaches_weather_for_scheduled_outdoor_game(
             precip_chance=10,
         )
 
-    monkeypatch.setattr(games_route.weather, "fetch", fake_fetch)
+    monkeypatch.setattr(game_detail_service.weather, "fetch", fake_fetch)
 
     resp = await client.get(f"/api/games/{SOCCER_GAME}")
     assert resp.status_code == 200
@@ -967,7 +967,7 @@ async def test_game_detail_weather_requests_game_date_not_today(
             wind_speed=12.0, units="metric",
         )
 
-    monkeypatch.setattr(games_route.weather, "fetch", fake_fetch)
+    monkeypatch.setattr(game_detail_service.weather, "fetch", fake_fetch)
 
     resp = await client.get(f"/api/games/{SOCCER_GAME}")
     assert resp.status_code == 200
@@ -985,7 +985,7 @@ async def test_game_detail_no_weather_for_indoor_sport(
     async def boom(*_a, **_k):  # pragma: no cover - must not be called
         raise AssertionError("weather must not be fetched for indoor sports")
 
-    monkeypatch.setattr(games_route.weather, "fetch", boom)
+    monkeypatch.setattr(game_detail_service.weather, "fetch", boom)
 
     # GAME_FUTURE is a scheduled basketball game (indoor) — no weather.
     resp = await client.get(f"/api/games/{GAME_FUTURE}")

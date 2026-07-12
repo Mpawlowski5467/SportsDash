@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db import get_session
 from app.models.orm import LeagueORM
-from app.routes.games import _fetch_weather, _league_from_row
+from app.models import convert
+from app.services.game_detail import fetch_weather
 from app.schemas import GameOut, WeatherOut
 from app.services import repository
 from app.services.serialize import games_to_out
@@ -76,7 +77,7 @@ async def schedule_weather(
     comma).  The map includes ONLY games that are outdoor, scheduled, have
     resolvable venue coordinates, and returned a forecast — every other game
     is simply absent (the calendar shows no glyph for it).  Reuses the same
-    per-game ``_fetch_weather`` the detail endpoint uses, so a calendar
+    per-game ``game_detail.fetch_weather`` the detail endpoint uses, so a calendar
     glyph and the modal forecast always agree.  Never fails the request.
     """
     out: dict[str, WeatherOut] = {}
@@ -93,7 +94,7 @@ async def schedule_weather(
             if league_row is None:
                 continue
             leagues[row.league_id] = league_row
-        forecast = await _fetch_weather(session, _league_from_row(league_row), row)
+        forecast = await fetch_weather(session, convert.league_from_row(league_row), row)
         if forecast is not None:
             out[game_id] = forecast
     return out
