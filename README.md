@@ -30,7 +30,7 @@ tennis, MMA, golf, and volleyball.**
 
 | Playoff bracket | World stadium map |
 |---|---|
-| ![NBA playoff bracket](docs/screenshots/bracket.png) | ![Stadium map](docs/screenshots/map.png) |
+| ![NBA playoff bracket](docs/screenshots/bracket.png) | ![Stadium map](docs/screenshots/map.jpg) |
 | **Standings** | **Calendar** |
 | ![League standings](docs/screenshots/standings.png) | ![Calendar](docs/screenshots/calendar.png) |
 | **Stat leaders** | **Onboarding — follow a team or a whole league** |
