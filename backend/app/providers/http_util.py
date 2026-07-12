@@ -10,6 +10,7 @@ providers' ``except httpx.HTTPError`` degrade-blocks do not catch, so a
 sustained outage propagates to the per-provider circuit breaker instead of
 being silently swallowed.  This smooths over brief blips and rate limits.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -72,7 +73,12 @@ async def get_with_retry(
             delay = _backoff(attempt, backoff_base)
             logger.warning(
                 "%s GET %s failed (%s); retry %d/%d in %.1fs",
-                label, url, exc, attempt + 1, max_retries, delay,
+                label,
+                url,
+                exc,
+                attempt + 1,
+                max_retries,
+                delay,
             )
             await asyncio.sleep(delay)
             attempt += 1
@@ -83,7 +89,12 @@ async def get_with_retry(
                 delay = _retry_after(response) or _backoff(attempt, backoff_base)
                 logger.warning(
                     "%s GET %s -> %d; retry %d/%d in %.1fs",
-                    label, url, response.status_code, attempt + 1, max_retries, delay,
+                    label,
+                    url,
+                    response.status_code,
+                    attempt + 1,
+                    max_retries,
+                    delay,
                 )
                 await asyncio.sleep(delay)
                 attempt += 1
@@ -99,7 +110,7 @@ async def get_with_retry(
 
 
 def _backoff(attempt: int, base: float) -> float:
-    delay = base * (2 ** attempt) + random.uniform(0, base)
+    delay = base * (2**attempt) + random.uniform(0, base)
     return min(delay, _MAX_BACKOFF)
 
 

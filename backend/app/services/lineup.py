@@ -11,6 +11,7 @@ them many ways), each unit fills up to a sport-typical count (active players
 first), and anything left over becomes the bench.  Sparse or oddly-labeled
 rosters still produce *a* lineup rather than nothing.
 """
+
 from __future__ import annotations
 
 from typing import Iterable, Protocol
@@ -54,18 +55,64 @@ _UNITS: dict[Sport, tuple[tuple[str, int], ...]] = {
 _POSITION_UNITS: dict[Sport, tuple[tuple[str, frozenset[str]], ...]] = {
     Sport.SOCCER: (
         ("GK", frozenset({"GK", "G", "GOALKEEPER", "KEEPER"})),
-        ("DEF", frozenset({
-            "D", "DF", "CB", "LB", "RB", "LWB", "RWB", "SW", "WB",
-            "DEFENDER", "DEFENCE", "DEFENSE", "FULLBACK", "BACK",
-        })),
-        ("MID", frozenset({
-            "M", "MF", "CM", "DM", "AM", "RM", "LM", "CDM", "CAM",
-            "MIDFIELDER", "MIDFIELD",
-        })),
-        ("FWD", frozenset({
-            "F", "FW", "ST", "CF", "W", "LW", "RW", "SS",
-            "FORWARD", "STRIKER", "WINGER", "ATTACKER",
-        })),
+        (
+            "DEF",
+            frozenset(
+                {
+                    "D",
+                    "DF",
+                    "CB",
+                    "LB",
+                    "RB",
+                    "LWB",
+                    "RWB",
+                    "SW",
+                    "WB",
+                    "DEFENDER",
+                    "DEFENCE",
+                    "DEFENSE",
+                    "FULLBACK",
+                    "BACK",
+                }
+            ),
+        ),
+        (
+            "MID",
+            frozenset(
+                {
+                    "M",
+                    "MF",
+                    "CM",
+                    "DM",
+                    "AM",
+                    "RM",
+                    "LM",
+                    "CDM",
+                    "CAM",
+                    "MIDFIELDER",
+                    "MIDFIELD",
+                }
+            ),
+        ),
+        (
+            "FWD",
+            frozenset(
+                {
+                    "F",
+                    "FW",
+                    "ST",
+                    "CF",
+                    "W",
+                    "LW",
+                    "RW",
+                    "SS",
+                    "FORWARD",
+                    "STRIKER",
+                    "WINGER",
+                    "ATTACKER",
+                }
+            ),
+        ),
     ),
     Sport.BASKETBALL: (
         ("G", frozenset({"PG", "SG", "G", "GUARD", "POINT", "SHOOTING"})),
@@ -75,13 +122,37 @@ _POSITION_UNITS: dict[Sport, tuple[tuple[str, frozenset[str]], ...]] = {
     Sport.BASEBALL: (
         ("P", frozenset({"P", "SP", "RP", "LHP", "RHP", "PITCHER"})),
         ("C", frozenset({"C", "CATCHER"})),
-        ("IF", frozenset({
-            "1B", "2B", "3B", "SS", "IF", "INFIELD", "INFIELDER",
-            "FIRST", "SECOND", "THIRD", "SHORTSTOP",
-        })),
-        ("OF", frozenset({
-            "LF", "CF", "RF", "OF", "OUTFIELD", "OUTFIELDER",
-        })),
+        (
+            "IF",
+            frozenset(
+                {
+                    "1B",
+                    "2B",
+                    "3B",
+                    "SS",
+                    "IF",
+                    "INFIELD",
+                    "INFIELDER",
+                    "FIRST",
+                    "SECOND",
+                    "THIRD",
+                    "SHORTSTOP",
+                }
+            ),
+        ),
+        (
+            "OF",
+            frozenset(
+                {
+                    "LF",
+                    "CF",
+                    "RF",
+                    "OF",
+                    "OUTFIELD",
+                    "OUTFIELDER",
+                }
+            ),
+        ),
         ("DH", frozenset({"DH", "DESIGNATED", "HITTER", "UTIL", "UT"})),
     ),
     Sport.HOCKEY: (
@@ -90,14 +161,51 @@ _POSITION_UNITS: dict[Sport, tuple[tuple[str, frozenset[str]], ...]] = {
         ("G", frozenset({"G", "GOALIE", "GOALTENDER", "GK"})),
     ),
     Sport.FOOTBALL: (
-        ("OFF", frozenset({
-            "QB", "RB", "FB", "HB", "WR", "TE", "OL", "C", "G", "T",
-            "OT", "OG", "LT", "RT", "LG", "RG",
-        })),
-        ("DEF", frozenset({
-            "DL", "DE", "DT", "NT", "EDGE", "LB", "ILB", "OLB", "MLB",
-            "CB", "S", "SS", "FS", "DB", "NB",
-        })),
+        (
+            "OFF",
+            frozenset(
+                {
+                    "QB",
+                    "RB",
+                    "FB",
+                    "HB",
+                    "WR",
+                    "TE",
+                    "OL",
+                    "C",
+                    "G",
+                    "T",
+                    "OT",
+                    "OG",
+                    "LT",
+                    "RT",
+                    "LG",
+                    "RG",
+                }
+            ),
+        ),
+        (
+            "DEF",
+            frozenset(
+                {
+                    "DL",
+                    "DE",
+                    "DT",
+                    "NT",
+                    "EDGE",
+                    "LB",
+                    "ILB",
+                    "OLB",
+                    "MLB",
+                    "CB",
+                    "S",
+                    "SS",
+                    "FS",
+                    "DB",
+                    "NB",
+                }
+            ),
+        ),
         ("ST", frozenset({"K", "P", "LS", "PK", "KR", "PR", "KICKER", "PUNTER"})),
     ),
     Sport.VOLLEYBALL: (
@@ -139,9 +247,7 @@ def _is_active(player: _PlayerLike) -> bool:
     return player.status == PlayerStatus.ACTIVE
 
 
-def build_team_lineup(
-    sport: Sport, players: Iterable[_PlayerLike]
-) -> TeamLineup | None:
+def build_team_lineup(sport: Sport, players: Iterable[_PlayerLike]) -> TeamLineup | None:
     """Arrange a roster into ``sport``'s starting shape, or None if not applicable.
 
     Returns None for sports without a roster-based lineup (individual /
@@ -187,9 +293,7 @@ def build_team_lineup(
 
     formation: str | None = None
     if sport is Sport.SOCCER:
-        outfield = [
-            sum(1 for s in slots if s.unit == unit) for unit in ("DEF", "MID", "FWD")
-        ]
+        outfield = [sum(1 for s in slots if s.unit == unit) for unit in ("DEF", "MID", "FWD")]
         if any(outfield):
             formation = "-".join(str(n) for n in outfield if n) or None
 

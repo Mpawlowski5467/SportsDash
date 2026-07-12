@@ -20,6 +20,7 @@ Results are cached in Redis (best-effort) with a long TTL, since a club's
 history changes rarely.  A small semaphore bounds concurrent upstream calls
 so a fresh many-team refresh stays a good citizen of the free service.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -71,7 +72,7 @@ _BAD_TITLE_MARKERS = ("rivalry", "list of", "season", "(disambiguation)")
 @dataclass(frozen=True)
 class WikiSummary:
     title: str
-    extract: str | None = None   # lead-paragraph prose for the "About" section
+    extract: str | None = None  # lead-paragraph prose for the "About" section
     image_url: str | None = None  # lead image (a crest or photo), when present
 
 
@@ -211,9 +212,7 @@ async def _resolve_player_title(
     competition page because the player has no article of their own.
     """
     qualifier = _PLAYER_SPORT_QUALIFIER.get((sport or "").casefold(), "")
-    query = " ".join(
-        part.strip() for part in (name, team_name, qualifier) if part and part.strip()
-    )
+    query = " ".join(part.strip() for part in (name, team_name, qualifier) if part and part.strip())
     if not query:
         return None
     return await _search_title(query, lang, accept=lambda t: _title_matches_name(t, name))

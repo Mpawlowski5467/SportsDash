@@ -5,6 +5,7 @@ By default the feed covers every followed game.  An optional
 frontend "Subscribe" control) lets a user subscribe to a live per-team
 calendar in Apple/Google Calendar.
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,9 +39,7 @@ async def calendar_ics(
     rows = await repository.games_between(
         session, now - PAST_WINDOW, now + FUTURE_WINDOW, team_id=team_id
     )
-    leagues_by_id = {
-        league.id: league for league in await repository.list_leagues(session)
-    }
+    leagues_by_id = {league.id: league for league in await repository.list_leagues(session)}
     filename = f"sportsdash-{team_id}.ics" if team_id is not None else "sportsdash.ics"
     return Response(
         content=games_to_ics(rows, leagues_by_id),

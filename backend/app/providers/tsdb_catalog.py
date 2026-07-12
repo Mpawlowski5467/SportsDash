@@ -17,6 +17,7 @@ return few teams, a placeholder set, or none.  Parsing is defensive so the
 wizard never crashes regardless of what the upstream returns; an empty
 result is simply an empty picker.
 """
+
 from __future__ import annotations
 
 import logging
@@ -93,9 +94,7 @@ def _parse_team_entry(entry: Any) -> CatalogTeam | None:
             color=_normalize_color(entry.get("strColour1")),
         )
     except Exception:
-        logger.warning(
-            "Skipping malformed TheSportsDB catalog team entry", exc_info=True
-        )
+        logger.warning("Skipping malformed TheSportsDB catalog team entry", exc_info=True)
         return None
 
 

@@ -28,6 +28,7 @@ relies on the never-raise contract.  Successful lookups are cached
 in-process (keyed by the normalized name + sport) so the same team is
 never re-fetched within a process lifetime.
 """
+
 from __future__ import annotations
 
 import logging
@@ -58,13 +59,12 @@ _info_cache: dict[str, "TeamInfo | None"] = {}
 @dataclass(frozen=True)
 class TeamInfo:
     """Club background facts for the team page's "About" section."""
-    description: str | None = None   # history paragraph (``strDescriptionEN``)
-    founded: int | None = None       # founding year (``intFormedYear``)
+
+    description: str | None = None  # history paragraph (``strDescriptionEN``)
+    founded: int | None = None  # founding year (``intFormedYear``)
 
 
-async def lookup_stadium(
-    team_name: str, *, sport: str | None = None
-) -> TeamLocation | None:
+async def lookup_stadium(team_name: str, *, sport: str | None = None) -> TeamLocation | None:
     """Resolve a team's home stadium (+ facts) by name; ``None`` on miss.
 
     Searches TheSportsDB for ``team_name``, prefers the best match for
@@ -97,9 +97,7 @@ async def lookup_stadium(
     return location
 
 
-async def lookup_team_info(
-    team_name: str, *, sport: str | None = None
-) -> TeamInfo | None:
+async def lookup_team_info(team_name: str, *, sport: str | None = None) -> TeamInfo | None:
     """Resolve a club's "About" facts (description + founded) by name.
 
     Reads the same ``searchteams.php`` hit as :func:`lookup_stadium` —
@@ -155,11 +153,7 @@ async def _search_team(name: str, sport: str | None) -> tuple[bool, dict | None]
     candidates = [team for team in teams if isinstance(team, dict)]
     label = _SPORT_LABEL.get((sport or "").casefold())
     if label is not None:
-        sport_matches = [
-            team
-            for team in candidates
-            if _clean(team.get("strSport")) == label
-        ]
+        sport_matches = [team for team in candidates if _clean(team.get("strSport")) == label]
         if sport_matches:
             candidates = sport_matches
 
@@ -211,9 +205,7 @@ async def _build_location(team: dict) -> TeamLocation | None:
     venue = await _lookup_venue(team.get("idVenue"))
     if venue is not None:
         capacity = capacity or _coerce_int(venue.get("intCapacity"))
-        image_url = image_url or _clean(venue.get("strThumb")) or _clean(
-            venue.get("strFanart1")
-        )
+        image_url = image_url or _clean(venue.get("strThumb")) or _clean(venue.get("strFanart1"))
         opened = _coerce_int(venue.get("intFormedYear"))
         location = location or _clean(venue.get("strLocation"))
         coords = _parse_dms_map(_clean(venue.get("strMap")))
@@ -299,9 +291,9 @@ def _coerce_int(value: object) -> int | None:
 # variety of degree/minute/second glyphs and ASCII fallbacks).  Capture the
 # numbers and the hemisphere letter for each of the two coordinates.
 _DMS_RE = re.compile(
-    r"(\d+(?:\.\d+)?)[°\s]+"          # degrees
-    r"(?:(\d+(?:\.\d+)?)[′'`\s]+)?"   # minutes (optional)
-    r"(?:(\d+(?:\.\d+)?)[″\"\s]*)?"   # seconds (optional)
+    r"(\d+(?:\.\d+)?)[°\s]+"  # degrees
+    r"(?:(\d+(?:\.\d+)?)[′'`\s]+)?"  # minutes (optional)
+    r"(?:(\d+(?:\.\d+)?)[″\"\s]*)?"  # seconds (optional)
     r"([NSEW])",
     re.IGNORECASE,
 )
@@ -361,6 +353,8 @@ async def _get_json(endpoint: str, params: dict[str, str]) -> object | None:
     except Exception:
         logger.warning(
             "stadiums: lookup failed (%s params=%s) — returning None",
-            endpoint, params, exc_info=True,
+            endpoint,
+            params,
+            exc_info=True,
         )
         return None

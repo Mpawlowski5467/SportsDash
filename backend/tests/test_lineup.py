@@ -1,4 +1,5 @@
 """Roster-derived projected lineup arrangement."""
+
 from __future__ import annotations
 
 from app.models.domain import Player, PlayerStatus, Sport
@@ -16,10 +17,19 @@ def _roster(*positions: str) -> list[Player]:
 def test_soccer_lineup_has_gk_and_formation() -> None:
     # 1 GK + 4 DEF + 3 MID + 3 FWD = a full 4-3-3.
     roster = _roster(
-        "GK", "GK",
-        "DF", "DF", "DF", "DF", "DF",
-        "MF", "MF", "MF",
-        "FW", "FW", "FW",
+        "GK",
+        "GK",
+        "DF",
+        "DF",
+        "DF",
+        "DF",
+        "DF",
+        "MF",
+        "MF",
+        "MF",
+        "FW",
+        "FW",
+        "FW",
     )
     team = lineup.build_team_lineup(Sport.SOCCER, roster)
     assert team is not None

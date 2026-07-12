@@ -1,4 +1,5 @@
 """Unit tests for the keyless Wikipedia club-summary enrichment."""
+
 from __future__ import annotations
 
 import httpx
@@ -48,9 +49,7 @@ async def test_team_summary_resolves_title_then_extract(
         "extract": "Chelsea Football Club is an English club.",
         "thumbnail": {"source": "https://img/crest.png"},
     }
-    monkeypatch.setattr(
-        wiki.httpx, "AsyncClient", _route(_dispatch("Chelsea F.C.", summary))
-    )
+    monkeypatch.setattr(wiki.httpx, "AsyncClient", _route(_dispatch("Chelsea F.C.", summary)))
 
     result = await wiki.team_summary("Chelsea", sport="soccer")
     assert result is not None
@@ -92,9 +91,7 @@ async def test_team_summary_none_for_disambiguation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     summary = {"type": "disambiguation", "title": "Chelsea", "extract": "many things"}
-    monkeypatch.setattr(
-        wiki.httpx, "AsyncClient", _route(_dispatch("Chelsea", summary))
-    )
+    monkeypatch.setattr(wiki.httpx, "AsyncClient", _route(_dispatch("Chelsea", summary)))
     assert await wiki.team_summary("Chelsea") is None
 
 
@@ -134,9 +131,7 @@ async def test_player_photo_resolves_with_club_qualified_query(
     def handler(request: httpx.Request) -> httpx.Response:
         if "/w/api.php" in request.url.path:
             seen["srsearch"] = request.url.params.get("srsearch", "")
-            return httpx.Response(
-                200, json={"query": {"search": [{"title": "Cole Palmer"}]}}
-            )
+            return httpx.Response(200, json={"query": {"search": [{"title": "Cole Palmer"}]}})
         assert "Cole_Palmer" in request.url.path
         return httpx.Response(
             200,
@@ -184,9 +179,7 @@ async def test_player_photo_skips_wrong_person_title(
         return httpx.Response(200, json={"type": "standard", "title": "x"})
 
     monkeypatch.setattr(wiki.httpx, "AsyncClient", _route(handler))
-    result = await wiki.player_photo(
-        "Reserve Youngster", team_name="Chelsea", sport="soccer"
-    )
+    result = await wiki.player_photo("Reserve Youngster", team_name="Chelsea", sport="soccer")
     assert result is None
     assert not any("/page/summary/" in path for path in calls)
 
@@ -200,11 +193,7 @@ async def test_player_photo_matches_name_with_diacritics(
         if "/w/api.php" in request.url.path:
             return httpx.Response(
                 200,
-                json={
-                    "query": {
-                        "search": [{"title": "Estêvão (footballer, born 2007)"}]
-                    }
-                },
+                json={"query": {"search": [{"title": "Estêvão (footballer, born 2007)"}]}},
             )
         return httpx.Response(
             200,
@@ -224,13 +213,8 @@ async def test_player_photo_none_when_summary_has_no_image(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     summary = {"type": "standard", "title": "Cole Palmer", "extract": "A footballer."}
-    monkeypatch.setattr(
-        wiki.httpx, "AsyncClient", _route(_dispatch("Cole Palmer", summary))
-    )
-    assert (
-        await wiki.player_photo("Cole Palmer", team_name="Chelsea", sport="soccer")
-        is None
-    )
+    monkeypatch.setattr(wiki.httpx, "AsyncClient", _route(_dispatch("Cole Palmer", summary)))
+    assert await wiki.player_photo("Cole Palmer", team_name="Chelsea", sport="soccer") is None
 
 
 async def test_player_photo_never_raises_on_http_error(
@@ -240,10 +224,7 @@ async def test_player_photo_never_raises_on_http_error(
         return httpx.Response(500, text="boom")
 
     monkeypatch.setattr(wiki.httpx, "AsyncClient", _route(handler))
-    assert (
-        await wiki.player_photo("Cole Palmer", team_name="Chelsea", sport="soccer")
-        is None
-    )
+    assert await wiki.player_photo("Cole Palmer", team_name="Chelsea", sport="soccer") is None
 
 
 async def test_player_photo_disabled_returns_none(
@@ -252,10 +233,7 @@ async def test_player_photo_disabled_returns_none(
     from app.config import get_settings
 
     monkeypatch.setattr(get_settings(), "wiki_enabled", False)
-    assert (
-        await wiki.player_photo("Cole Palmer", team_name="Chelsea", sport="soccer")
-        is None
-    )
+    assert await wiki.player_photo("Cole Palmer", team_name="Chelsea", sport="soccer") is None
 
 
 async def test_player_photo_empty_name_is_none() -> None:
@@ -290,15 +268,11 @@ async def test_player_photo_caches_miss_to_avoid_reflooding(
 
     def handler(request: httpx.Request) -> httpx.Response:
         if "/w/api.php" in request.url.path:
-            return httpx.Response(
-                200, json={"query": {"search": [{"title": "Chelsea F.C."}]}}
-            )
+            return httpx.Response(200, json={"query": {"search": [{"title": "Chelsea F.C."}]}})
         return httpx.Response(200, json={"type": "standard", "title": "x"})
 
     monkeypatch.setattr(wiki.httpx, "AsyncClient", _route(handler))
-    result = await wiki.player_photo(
-        "Nobody Here", team_name="Chelsea", sport="soccer"
-    )
+    result = await wiki.player_photo("Nobody Here", team_name="Chelsea", sport="soccer")
     assert result is None
     # A negative result is cached so the same photoless player isn't re-queried
     # on every daily roster refresh.

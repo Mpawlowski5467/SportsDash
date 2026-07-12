@@ -3,6 +3,7 @@
 Keeps the response-shaping logic out of the route handlers so every
 endpoint that returns games produces identical ``GameOut`` payloads.
 """
+
 from __future__ import annotations
 
 import logging
@@ -49,8 +50,7 @@ def game_to_out(row: GameORM, league: LeagueORM) -> GameOut:
     partial score.
     """
     hide_scores = row.phase == "scheduled" or (
-        row.phase in _NO_STATE_PHASES
-        and (row.state_updated_at is None or row.period == 0)
+        row.phase in _NO_STATE_PHASES and (row.state_updated_at is None or row.period == 0)
     )
     home_score: int | None = None if hide_scores else row.home_score
     away_score: int | None = None if hide_scores else row.away_score
@@ -249,17 +249,13 @@ def events_to_out(
     for row in rows:
         league = leagues_by_id.get(row.league_id)
         if league is None:
-            logger.warning(
-                "Skipping event %s: unknown league %s", row.id, row.league_id
-            )
+            logger.warning("Skipping event %s: unknown league %s", row.id, row.league_id)
             continue
         out.append(event_to_out(row, league))
     return out
 
 
-def games_to_out(
-    rows: Sequence[GameORM], leagues_by_id: Mapping[str, LeagueORM]
-) -> list[GameOut]:
+def games_to_out(rows: Sequence[GameORM], leagues_by_id: Mapping[str, LeagueORM]) -> list[GameOut]:
     """Serialize many rows, skipping (and logging) any with an unknown league.
 
     A missing league can't happen through normal FK-enforced writes, but a
@@ -269,9 +265,7 @@ def games_to_out(
     for row in rows:
         league = leagues_by_id.get(row.league_id)
         if league is None:
-            logger.warning(
-                "Skipping game %s: unknown league %s", row.id, row.league_id
-            )
+            logger.warning("Skipping game %s: unknown league %s", row.id, row.league_id)
             continue
         out.append(game_to_out(row, league))
     return out

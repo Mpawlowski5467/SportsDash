@@ -13,6 +13,7 @@ wraps remote providers so every network call records success/failure, and
 :func:`app.timeutil.utcnow` (tz-aware UTC) so it stays consistent with the
 rest of the app.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 class CircuitState(str, Enum):
-    CLOSED = "closed"        # healthy — calls pass through
-    OPEN = "open"            # failing fast — calls rejected until cooldown
+    CLOSED = "closed"  # healthy — calls pass through
+    OPEN = "open"  # failing fast — calls rejected until cooldown
     HALF_OPEN = "half_open"  # cooldown elapsed — one probe allowed
 
 
@@ -140,9 +141,7 @@ class CircuitBreaker:
         return {
             "state": self.state.value,
             "failures": self.failures,
-            "last_error_at": (
-                self.last_error_at.isoformat() if self.last_error_at else None
-            ),
+            "last_error_at": (self.last_error_at.isoformat() if self.last_error_at else None),
         }
 
 

@@ -1,4 +1,5 @@
 """Unit tests for the Open-Meteo venue-weather service."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -104,9 +105,7 @@ async def test_fetch_parses_live_payload(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(weather.cache, "cache_get_json", no_cache_get)
     monkeypatch.setattr(weather.cache, "cache_set_json", no_cache_set)
-    monkeypatch.setitem(
-        http_client._clients, "weather", httpx.AsyncClient(transport=transport)
-    )
+    monkeypatch.setitem(http_client._clients, "weather", httpx.AsyncClient(transport=transport))
 
     w = await weather.fetch(40.7128, -74.0060, units="imperial")
     assert w is not None
@@ -130,9 +129,7 @@ async def test_fetch_never_raises_on_http_error(monkeypatch: pytest.MonkeyPatch)
         return None
 
     monkeypatch.setattr(weather.cache, "cache_get_json", no_cache)
-    monkeypatch.setitem(
-        http_client._clients, "weather", httpx.AsyncClient(transport=transport)
-    )
+    monkeypatch.setitem(http_client._clients, "weather", httpx.AsyncClient(transport=transport))
 
     assert await weather.fetch(1.0, 2.0) is None
 
@@ -190,8 +187,9 @@ def test_parse_returns_none_when_target_date_not_in_window() -> None:
     assert weather._parse(_DATED, "metric", target_date=date(2026, 7, 30)) is None
     # A dated request with no daily block at all -> None (no forecast).
     assert (
-        weather._parse({"current": {"temperature_2m": 5.0}}, "metric",
-                       target_date=date(2026, 6, 17))
+        weather._parse(
+            {"current": {"temperature_2m": 5.0}}, "metric", target_date=date(2026, 6, 17)
+        )
         is None
     )
 
@@ -205,9 +203,7 @@ def test_parse_target_date_none_keeps_today_first_row() -> None:
 
 def _route_through(monkeypatch: pytest.MonkeyPatch, handler) -> None:
     transport = httpx.MockTransport(handler)
-    monkeypatch.setitem(
-        http_client._clients, "weather", httpx.AsyncClient(transport=transport)
-    )
+    monkeypatch.setitem(http_client._clients, "weather", httpx.AsyncClient(transport=transport))
 
 
 async def test_fetch_sends_start_end_date_for_target_date(

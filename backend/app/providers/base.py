@@ -19,6 +19,7 @@ swallows HTTP errors internally, so its breaker only sees failures from
 exhausted retries — new providers should NOT copy that; prefer the
 raise-on-failure contract above.
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -43,9 +44,7 @@ from app.models.domain import (
 class SportsProvider(Protocol):
     provider_id: str
 
-    async def get_schedule(
-        self, league: League, team: Team, start: date, end: date
-    ) -> list[Game]:
+    async def get_schedule(self, league: League, team: Team, start: date, end: date) -> list[Game]:
         """All games for ``team`` with start dates in [start, end] (UTC dates)."""
         ...
 
@@ -53,9 +52,7 @@ class SportsProvider(Protocol):
         """Today's scoreboard for the league; each game carries a populated state."""
         ...
 
-    async def get_competition_schedule(
-        self, league: League, start: date, end: date
-    ) -> list[Game]:
+    async def get_competition_schedule(self, league: League, start: date, end: date) -> list[Game]:
         """Every fixture in the league between [start, end] (UTC dates).
 
         Used for whole-competition follows (``League.follow_all``) where
@@ -64,15 +61,11 @@ class SportsProvider(Protocol):
         """
         ...
 
-    async def get_game_state(
-        self, league: League, provider_game_key: str
-    ) -> GameState | None:
+    async def get_game_state(self, league: League, provider_game_key: str) -> GameState | None:
         """Current state of a single game, or None if unknown to the provider."""
         ...
 
-    async def get_game_summary(
-        self, league: League, provider_game_key: str
-    ) -> GameSummary | None:
+    async def get_game_summary(self, league: League, provider_game_key: str) -> GameSummary | None:
         """On-demand box score (period lines + performers) for one game.
 
         Best-effort: providers without a summary source return ``None``.
@@ -80,9 +73,7 @@ class SportsProvider(Protocol):
         """
         ...
 
-    async def get_game_odds(
-        self, league: League, provider_game_key: str
-    ) -> GameOdds | None:
+    async def get_game_odds(self, league: League, provider_game_key: str) -> GameOdds | None:
         """On-demand betting lines + win-probability for one game.
 
         Best-effort and never stored, like :meth:`get_game_summary`.
@@ -91,15 +82,11 @@ class SportsProvider(Protocol):
         """
         ...
 
-    async def get_standings(self, league: League) -> Standings:
-        ...
+    async def get_standings(self, league: League) -> Standings: ...
 
-    async def get_roster(self, league: League, team: Team) -> Roster:
-        ...
+    async def get_roster(self, league: League, team: Team) -> Roster: ...
 
-    async def get_team_location(
-        self, league: League, team: Team
-    ) -> TeamLocation | None:
+    async def get_team_location(self, league: League, team: Team) -> TeamLocation | None:
         """Home venue (name + optional coordinates) for the map view.
 
         Providers return what they know — at minimum a venue name; the

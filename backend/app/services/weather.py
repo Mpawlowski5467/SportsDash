@@ -12,6 +12,7 @@ weather changes slowly and many calls hit the same stadiums.  A small
 semaphore bounds concurrent upstream calls so a fresh many-pin map stays a
 good citizen of the free service.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -114,8 +115,7 @@ async def fetch(
         "longitude": f"{lon:.4f}",
         "current": "temperature_2m,weather_code,wind_speed_10m",
         "daily": (
-            "temperature_2m_max,temperature_2m_min,"
-            "precipitation_probability_max,weather_code"
+            "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code"
         ),
         "timezone": "UTC",
         **_units_params(units),
@@ -131,9 +131,7 @@ async def fetch(
         params["forecast_days"] = "1"
     try:
         async with _MAX_INFLIGHT:
-            client = http_client.get_client(
-                "weather", timeout=_TIMEOUT, headers=_HEADERS
-            )
+            client = http_client.get_client("weather", timeout=_TIMEOUT, headers=_HEADERS)
             response = await client.get(_URL, params=params)
             response.raise_for_status()
             payload = response.json()
@@ -148,9 +146,7 @@ async def fetch(
 
     weather = _parse(payload, units, target_date=target_date)
     if weather is not None:
-        await cache.cache_set_json(
-            key, _to_cache(weather), settings.weather_cache_minutes * 60
-        )
+        await cache.cache_set_json(key, _to_cache(weather), settings.weather_cache_minutes * 60)
     return weather
 
 

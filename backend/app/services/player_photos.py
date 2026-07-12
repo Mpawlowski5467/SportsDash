@@ -26,6 +26,7 @@ REALITY: the free tier rate-limits bulk per-player lookups, so coverage fills
 in GRADUALLY (a handful per refresh) rather than all at once.  For instant
 full coverage a keyed provider (e.g. API-Football) would be required.
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,8 +41,8 @@ logger = logging.getLogger(__name__)
 # same gate every other TSDB caller uses.
 _SPORT_LABEL = tsdb_client.SPORT_LABEL
 
-_SUCCESS_TTL = 60 * 60 * 24 * 30   # 30 days — a player's cutout rarely changes
-_MISS_TTL = 60 * 60 * 24 * 3       # 3 days — re-check in case TheSportsDB adds them
+_SUCCESS_TTL = 60 * 60 * 24 * 30  # 30 days — a player's cutout rarely changes
+_MISS_TTL = 60 * 60 * 24 * 3  # 3 days — re-check in case TheSportsDB adds them
 
 
 async def lookup_photo(
@@ -74,9 +75,7 @@ async def lookup_photo(
         # until the cache TTL expires.
         return None
     except Exception:
-        logger.warning(
-            "player_photos: lookup failed for %r — returning None", clean, exc_info=True
-        )
+        logger.warning("player_photos: lookup failed for %r — returning None", clean, exc_info=True)
         return None
 
     url = _pick_photo(payload, team_name, sport)
@@ -109,9 +108,7 @@ async def _search(name: str) -> object | None:
     return response.json()
 
 
-def _pick_photo(
-    payload: object, team_name: str | None, sport: str | None
-) -> str | None:
+def _pick_photo(payload: object, team_name: str | None, sport: str | None) -> str | None:
     """Choose the best candidate's image URL from a ``searchplayers`` payload.
 
     Filters to the right sport when known, then prefers the candidate whose
@@ -127,9 +124,7 @@ def _pick_photo(
 
     label = _SPORT_LABEL.get((sport or "").casefold())
     if label is not None:
-        sport_matches = [
-            p for p in candidates if _clean(p.get("strSport")) == label
-        ]
+        sport_matches = [p for p in candidates if _clean(p.get("strSport")) == label]
         if sport_matches:
             candidates = sport_matches
 

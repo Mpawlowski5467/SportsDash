@@ -4,6 +4,7 @@
 range is inclusive on both ends: the UTC window runs from the start of the
 ``start`` day to the end of the ``end`` day in the configured timezone.
 """
+
 from __future__ import annotations
 
 import logging
@@ -48,9 +49,7 @@ async def _schedule_games(
     end_utc = local_day_bounds(end, tz)[1]  # end day inclusive
 
     rows = await repository.games_between(session, start_utc, end_utc, team_id=team_id)
-    leagues_by_id = {
-        league.id: league for league in await repository.list_leagues(session)
-    }
+    leagues_by_id = {league.id: league for league in await repository.list_leagues(session)}
     return games_to_out(rows, leagues_by_id)
 
 

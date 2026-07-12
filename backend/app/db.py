@@ -3,6 +3,7 @@
 The engine is created lazily so tests can point
 ``SPORTSDASH_DATABASE_URL`` somewhere else before first use.
 """
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager

@@ -1,4 +1,5 @@
 """Leaders board: parsing the headline stat from a roster line."""
+
 from __future__ import annotations
 
 from app.routes.leaders import _leading_stat

@@ -12,6 +12,7 @@ ordered ``labels`` (e.g. offensive → PTS, FGM, …); each athlete's
 So we find the headline label's index once, then read each athlete's
 value at that index.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,10 +38,10 @@ _SPECS: dict[Sport, tuple[str, str, str, str]] = {
 class LeaderEntry:
     athlete_id: str
     player: str
-    team: str            # ESPN short team name (e.g. "CHI")
+    team: str  # ESPN short team name (e.g. "CHI")
     position: str | None
     value: float
-    stat_label: str      # unit shown (e.g. "PPG", "HR")
+    stat_label: str  # unit shown (e.g. "PPG", "HR")
 
 
 def supports(sport: Sport) -> bool:
@@ -120,9 +121,7 @@ async def fetch_league_leaders(
         if value is None:
             continue
         position = athlete.get("position")
-        pos_abbr = (
-            position.get("abbreviation") if isinstance(position, dict) else None
-        )
+        pos_abbr = position.get("abbreviation") if isinstance(position, dict) else None
         team = athlete.get("teamShortName")
         out.append(
             LeaderEntry(

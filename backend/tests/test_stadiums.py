@@ -1,4 +1,5 @@
 """Unit tests for the TheSportsDB ``lookup_team_info`` enrichment."""
+
 from __future__ import annotations
 
 import httpx

@@ -10,6 +10,7 @@ Two sources, picked by sport:
   from your FOLLOWED teams' players (soccer's real league-wide board is the
   box-score Golden Boot in ``routes/scorers``).
 """
+
 from __future__ import annotations
 
 import logging
@@ -47,9 +48,7 @@ def _leading_stat(stat_line: str | None) -> tuple[float, str] | None:
         return None
 
 
-async def _followed_athletes(
-    session: AsyncSession, teams: list[TeamORM]
-) -> dict[str, TeamORM]:
+async def _followed_athletes(session: AsyncSession, teams: list[TeamORM]) -> dict[str, TeamORM]:
     """Bare ESPN athlete id -> the followed team they play for.
 
     Roster ids are stored provider-prefixed (``"espn:4711294"``) but the
@@ -65,19 +64,13 @@ async def _followed_athletes(
 
 
 @router.get("/leaders/{league_id}", response_model=StatLeadersOut)
-async def leaders(
-    league_id: str, session: AsyncSession = Depends(get_session)
-) -> StatLeadersOut:
+async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) -> StatLeadersOut:
     league = await repository.get_league(session, league_id)
     if league is None:
         raise HTTPException(status_code=404, detail="Unknown league")
 
     sport = Sport(league.sport)
-    teams = [
-        team
-        for team in await repository.list_teams(session)
-        if team.league_id == league_id
-    ]
+    teams = [team for team in await repository.list_teams(session) if team.league_id == league_id]
 
     # --- League-wide leaders (NBA/MLB/NHL) from the ESPN athlete stats feed ---
     if league.provider == "espn" and espn_leaders.supports(sport):
@@ -85,9 +78,7 @@ async def leaders(
         cached = await cache.cache_get_json(cache_key)
         if cached is not None:
             return StatLeadersOut(**cached)
-        entries = await espn_leaders.fetch_league_leaders(
-            league.provider_key, sport
-        )
+        entries = await espn_leaders.fetch_league_leaders(league.provider_key, sport)
         if entries:
             by_athlete = await _followed_athletes(session, teams)
             rows: list[StatLeaderOut] = []
@@ -118,9 +109,7 @@ async def leaders(
                 stat_label=entries[0].stat_label,
                 rows=rows,
             )
-            await cache.cache_set_json(
-                cache_key, result.model_dump(), _CACHE_TTL_SECONDS
-            )
+            await cache.cache_set_json(cache_key, result.model_dump(), _CACHE_TTL_SECONDS)
             return result
         # fall through to the roster board if the feed had nothing
 
@@ -154,8 +143,7 @@ async def leaders(
 
     scored.sort(key=lambda item: (-item[0], item[1].name))
     rows = [
-        row.model_copy(update={"rank": index + 1})
-        for index, (_, row) in enumerate(scored[:30])
+        row.model_copy(update={"rank": index + 1}) for index, (_, row) in enumerate(scored[:30])
     ]
     return StatLeadersOut(
         league_id=league.id,

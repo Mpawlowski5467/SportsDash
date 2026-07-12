@@ -4,6 +4,7 @@ The Redis-backed cache helpers (``get_cached`` / ``set_coords``) no-op
 without a configured Redis, so they're exercised at the API/integration
 level; here we cover the pure pieces.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace

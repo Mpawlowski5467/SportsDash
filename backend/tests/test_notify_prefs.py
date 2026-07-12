@@ -11,6 +11,7 @@ Three layers, all with fictional fixture data:
    while an enabled team's game still notifies (fake provider + a spy on
    ``notify.send_event``).
 """
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -267,9 +268,7 @@ async def session() -> AsyncIterator[AsyncSession]:
 
 
 async def test_upsert_creates_row_when_missing(session: AsyncSession) -> None:
-    await repository.upsert_notification_pref(
-        session, "global", muted=True, events={FINAL: False}
-    )
+    await repository.upsert_notification_pref(session, "global", muted=True, events={FINAL: False})
     await session.flush()
     prefs = await repository.prefs_by_scope(session)
     assert prefs["global"].muted is True
@@ -279,15 +278,11 @@ async def test_upsert_creates_row_when_missing(session: AsyncSession) -> None:
 async def test_upsert_merges_only_provided_fields(session: AsyncSession) -> None:
     scope = f"team:{TEAM_COMETS}"
     # Seed muted + one disabled event.
-    await repository.upsert_notification_pref(
-        session, scope, muted=True, events={FINAL: False}
-    )
+    await repository.upsert_notification_pref(session, scope, muted=True, events={FINAL: False})
     await session.flush()
 
     # Update only events -> muted must be preserved, events merged not replaced.
-    await repository.upsert_notification_pref(
-        session, scope, events={GAME_START: False}
-    )
+    await repository.upsert_notification_pref(session, scope, events={GAME_START: False})
     await session.flush()
     row = await repository.prefs_by_scope(session)
     assert row[scope].muted is True, "omitted muted must be preserved"
@@ -322,9 +317,7 @@ async def test_get_notification_prefs_ordered_by_scope(session: AsyncSession) ->
 
 async def test_prefs_by_scope_round_trips_through_decide(session: AsyncSession) -> None:
     """A stored ORM row resolves the same way as the plain stand-in."""
-    await repository.upsert_notification_pref(
-        session, f"team:{TEAM_COMETS}", muted=True
-    )
+    await repository.upsert_notification_pref(session, f"team:{TEAM_COMETS}", muted=True)
     await session.flush()
     prefs = await repository.prefs_by_scope(session)
     assert decide(prefs, FINAL, [TEAM_COMETS], LEAGUE_ID) is False
@@ -385,9 +378,7 @@ class FakeProvider:
 
 @pytest.fixture
 async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:", poolclass=StaticPool
-    )
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     try:
@@ -397,9 +388,7 @@ async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
 
 @pytest.fixture
-def patched_scope(
-    db: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def patched_scope(db: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch) -> None:
     @asynccontextmanager
     async def scope() -> AsyncIterator[AsyncSession]:
         async with db() as sess:
@@ -571,8 +560,12 @@ async def test_live_tick_resends_final_after_first_send_fails(
 
     fake_provider.states = {
         game: GameState(
-            game_id=game, phase=GamePhase.FINAL,
-            home_score=11, away_score=8, period=4, period_label="Final",
+            game_id=game,
+            phase=GamePhase.FINAL,
+            home_score=11,
+            away_score=8,
+            period=4,
+            period_label="Final",
         )
     }
 
@@ -619,8 +612,12 @@ async def test_live_tick_does_not_resend_when_first_send_succeeded(
 
     fake_provider.states = {
         game: GameState(
-            game_id=game, phase=GamePhase.FINAL,
-            home_score=11, away_score=8, period=4, period_label="Final",
+            game_id=game,
+            phase=GamePhase.FINAL,
+            home_score=11,
+            away_score=8,
+            period=4,
+            period_label="Final",
         )
     }
 

@@ -8,6 +8,7 @@ I/O; the async protocol methods only fetch and delegate.
 ``League.provider_key`` is the ESPN sport/league URL fragment (e.g.
 ``"basketball/nba"``); ``Team.provider_key`` is the ESPN team id.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -75,9 +76,7 @@ _STAT_LINE_CONCURRENCY = 6
 # miss every live evening game.
 _SCOREBOARD_TZ = ZoneInfo("America/New_York")
 
-_BASEBALL_HALF_RE = re.compile(
-    r"\b(top|bottom|bot|mid|middle|end)\b[^0-9]*?(\d+)", re.IGNORECASE
-)
+_BASEBALL_HALF_RE = re.compile(r"\b(top|bottom|bot|mid|middle|end)\b[^0-9]*?(\d+)", re.IGNORECASE)
 
 # Hockey shootouts as ESPN spells them in status detail/altDetail:
 # "Final/SO", altDetail "SO" (verified live).  Word-bounded so it never
@@ -88,6 +87,7 @@ _HOCKEY_SHOOTOUT_RE = re.compile(r"\bSO\b")
 # ---------------------------------------------------------------------------
 # Low-level coercion helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_espn_datetime(value: Any) -> datetime | None:
     """Parse ESPN's ISO-ish timestamps (e.g. ``2026-06-11T23:30Z``)."""
@@ -208,6 +208,7 @@ def _linescore_periods(competitors: list[Any]) -> int:
 # Status / period normalization
 # ---------------------------------------------------------------------------
 
+
 def _map_phase(state: str, type_name: str) -> GamePhase:
     upper = type_name.upper()
     if "POSTPON" in upper:
@@ -288,10 +289,10 @@ def _normalize_period(
         # Between-period breaks: live + an END_PERIOD-style status name,
         # or a detail like "End of 1st Period".  (Defensive: the live
         # intermission shape is unverified until the next live window.)
-        intermission = live and not shootout and (
-            "END_PERIOD" in upper
-            or "END_OF_PERIOD" in upper
-            or "END OF" in upper_detail
+        intermission = (
+            live
+            and not shootout
+            and ("END_PERIOD" in upper or "END_OF_PERIOD" in upper or "END OF" in upper_detail)
         )
         label = "SO" if shootout else _hockey_label(period)
         clock = display_clock if (live and not intermission) else None
@@ -405,6 +406,7 @@ def _build_state(
 # Pure parsers (take already-fetched JSON, never raise on bad records)
 # ---------------------------------------------------------------------------
 
+
 def _parse_event(event: Any, league: League, team: Team | None = None) -> Game | None:
     """Parse a single scoreboard/schedule event; None (+warning) if malformed."""
     try:
@@ -478,9 +480,7 @@ def _parse_event(event: Any, league: League, team: Team | None = None) -> Game |
             state=state,
         )
     except Exception:
-        logger.warning(
-            "Skipping malformed ESPN event for league %s", league.id, exc_info=True
-        )
+        logger.warning("Skipping malformed ESPN event for league %s", league.id, exc_info=True)
         return None
 
 
@@ -495,9 +495,7 @@ def _parse_schedule(data: Any, league: League, team: Team) -> list[Game]:
     events = data.get("events") if isinstance(data, dict) else None
     if not isinstance(events, list):
         return []
-    return [
-        game for event in events if (game := _parse_event(event, league, team)) is not None
-    ]
+    return [game for event in events if (game := _parse_event(event, league, team)) is not None]
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +511,7 @@ def _parse_schedule(data: Any, league: League, team: Team) -> list[Game]:
 #   * UFC bouts carry NO ``homeAway`` and NO per-fight start time — order
 #     1 -> home, 2 -> away, and every bout inherits the card's start time.
 # ---------------------------------------------------------------------------
+
 
 def _athlete_name(competitor: dict[str, Any]) -> str | None:
     athlete = competitor.get("athlete")
@@ -610,11 +609,7 @@ def _sets_won(competitor: dict[str, Any]) -> int:
     linescores = competitor.get("linescores")
     if not isinstance(linescores, list):
         return 0
-    return sum(
-        1
-        for entry in linescores
-        if isinstance(entry, dict) and entry.get("winner") is True
-    )
+    return sum(1 for entry in linescores if isinstance(entry, dict) and entry.get("winner") is True)
 
 
 def _round_label(competition: dict[str, Any]) -> str | None:
@@ -821,9 +816,7 @@ def _parse_mma_events(
     return games
 
 
-def _parse_individual_scoreboard(
-    data: Any, league: League, team: Team | None = None
-) -> list[Game]:
+def _parse_individual_scoreboard(data: Any, league: League, team: Team | None = None) -> list[Game]:
     """Dispatch a tennis/MMA scoreboard payload to its sport parser."""
     if league.sport is Sport.TENNIS:
         return _parse_tennis_events(data, league, team)
@@ -832,11 +825,7 @@ def _parse_individual_scoreboard(
 
 def _games_for_athlete(games: Iterable[Game], team: Team) -> list[Game]:
     """Keep only the games where ``team`` (an athlete) is a competitor."""
-    return [
-        game
-        for game in games
-        if game.home_team_id == team.id or game.away_team_id == team.id
-    ]
+    return [game for game in games if game.home_team_id == team.id or game.away_team_id == team.id]
 
 
 # ---------------------------------------------------------------------------
@@ -992,9 +981,7 @@ def _leaderboard(competitors: list[Any], phase: GamePhase) -> tuple[LeaderRow, .
     # Count how many golfers share each display score so ties can be marked.
     score_counts: dict[str, int] = {}
     for competitor in valid:
-        score_counts[_golf_score(competitor)] = (
-            score_counts.get(_golf_score(competitor), 0) + 1
-        )
+        score_counts[_golf_score(competitor)] = score_counts.get(_golf_score(competitor), 0) + 1
 
     rows: list[LeaderRow] = []
     for competitor in valid:
@@ -1022,20 +1009,17 @@ def _parse_golf_event(event: Any, league: League) -> Event | None:
 
         competitions = event.get("competitions")
         competition: dict[str, Any] = {}
-        if isinstance(competitions, list) and competitions and isinstance(
-            competitions[0], dict
-        ):
+        if isinstance(competitions, list) and competitions and isinstance(competitions[0], dict):
             competition = competitions[0]
 
-        start_time = (
-            _parse_espn_datetime(competition.get("date"))
-            or _parse_espn_datetime(event.get("date"))
+        start_time = _parse_espn_datetime(competition.get("date")) or _parse_espn_datetime(
+            event.get("date")
         )
         if start_time is None:
             raise ValueError("missing or invalid start time")
-        end_time = _parse_espn_datetime(
-            competition.get("endDate")
-        ) or _parse_espn_datetime(event.get("endDate"))
+        end_time = _parse_espn_datetime(competition.get("endDate")) or _parse_espn_datetime(
+            event.get("endDate")
+        )
 
         status = competition.get("status")
         if not isinstance(status, dict):
@@ -1045,14 +1029,10 @@ def _parse_golf_event(event: Any, league: League) -> Event | None:
         stype: dict[str, Any] = raw_type if isinstance(raw_type, dict) else {}
         phase = _map_phase(str(stype.get("state") or ""), str(stype.get("name") or ""))
         period = _coerce_int(status.get("period")) or 0
-        round_label = (
-            _golf_round_label(status, period) if phase is not GamePhase.SCHEDULED else ""
-        )
+        round_label = _golf_round_label(status, period) if phase is not GamePhase.SCHEDULED else ""
 
         competitors = competition.get("competitors")
-        leaderboard = (
-            _leaderboard(competitors, phase) if isinstance(competitors, list) else ()
-        )
+        leaderboard = _leaderboard(competitors, phase) if isinstance(competitors, list) else ()
 
         raw_venue = competition.get("venue")
         venue = raw_venue.get("fullName") if isinstance(raw_venue, dict) else None
@@ -1072,9 +1052,7 @@ def _parse_golf_event(event: Any, league: League) -> Event | None:
             last_update=timeutil.utcnow(),
         )
     except Exception:
-        logger.warning(
-            "Skipping malformed ESPN golf event for league %s", league.id, exc_info=True
-        )
+        logger.warning("Skipping malformed ESPN golf event for league %s", league.id, exc_info=True)
         return None
 
 
@@ -1083,9 +1061,7 @@ def _parse_golf_scoreboard(data: Any, league: League) -> list[Event]:
     events = data.get("events") if isinstance(data, dict) else None
     if not isinstance(events, list):
         return []
-    return [
-        event for raw in events if (event := _parse_golf_event(raw, league)) is not None
-    ]
+    return [event for raw in events if (event := _parse_golf_event(raw, league)) is not None]
 
 
 def _event_overlaps_window(event: Event, start: date, end: date) -> bool:
@@ -1172,9 +1148,7 @@ _SCHEDULE_PARAM_SETS: dict[Sport, tuple[dict[str, str] | None, ...]] = {
 }
 
 
-def _parse_summary_state(
-    data: Any, league: League, provider_game_key: str
-) -> GameState | None:
+def _parse_summary_state(data: Any, league: League, provider_game_key: str) -> GameState | None:
     if not isinstance(data, dict):
         return None
     header = data.get("header")
@@ -1190,9 +1164,7 @@ def _parse_summary_state(
     try:
         return _build_state(f"espn:{provider_game_key}", league, competitions[0])
     except Exception:
-        logger.warning(
-            "Failed to parse ESPN summary for game %s", provider_game_key, exc_info=True
-        )
+        logger.warning("Failed to parse ESPN summary for game %s", provider_game_key, exc_info=True)
         return None
 
 
@@ -1207,6 +1179,7 @@ def _parse_summary_state(
 # raises — the provider returns ``None`` on any failure (see
 # ``get_game_summary``).
 # ---------------------------------------------------------------------------
+
 
 def _box_period_label(sport: Sport, index: int, count: int) -> str:
     """Column label for the ``index``-th period (0-based) of ``count`` total.
@@ -1241,9 +1214,7 @@ def _box_period_label(sport: Sport, index: int, count: int) -> str:
     return str(number)
 
 
-def _parse_period_scores(
-    competition: dict[str, Any], sport: Sport
-) -> list[PeriodScore]:
+def _parse_period_scores(competition: dict[str, Any], sport: Sport) -> list[PeriodScore]:
     """Per-period line scores for both sides from the summary header.
 
     ESPN ships one ``linescores`` entry per period on each competitor; the
@@ -1452,9 +1423,7 @@ def _parse_team_stats(boxscore: Any, sport: Sport) -> list[TeamStat]:
     return out
 
 
-def _parse_performers(
-    data: dict[str, Any], competition: dict[str, Any]
-) -> list[Performer]:
+def _parse_performers(data: dict[str, Any], competition: dict[str, Any]) -> list[Performer]:
     """Top performers from the summary's top-level ``leaders[]`` block.
 
     Each ``leaders[]`` entry is one team's leaders; the team carries no
@@ -1474,9 +1443,7 @@ def _parse_performers(
                 continue
             side = competitor.get("homeAway")
             raw_team = competitor.get("team")
-            team_id = (
-                str(raw_team.get("id")) if isinstance(raw_team, dict) else None
-            )
+            team_id = str(raw_team.get("id")) if isinstance(raw_team, dict) else None
             if side in ("home", "away") and team_id:
                 side_by_team_id[team_id] = side
 
@@ -1626,16 +1593,8 @@ def _parse_plays(data: Any, sport: Sport) -> list[GamePlay]:
                     GamePlay(
                         text=text,
                         period_label=_play_period_label(event.get("period")),
-                        clock=(
-                            clock.get("displayValue")
-                            if isinstance(clock, dict)
-                            else None
-                        ),
-                        team=(
-                            team_obj.get("displayName")
-                            if isinstance(team_obj, dict)
-                            else None
-                        ),
+                        clock=(clock.get("displayValue") if isinstance(clock, dict) else None),
+                        team=(team_obj.get("displayName") if isinstance(team_obj, dict) else None),
                         scoring=bool(event.get("scoringPlay")),
                     )
                 )
@@ -1664,11 +1623,7 @@ def _parse_plays(data: Any, sport: Sport) -> list[GamePlay]:
                         if isinstance(play.get("clock"), dict)
                         else None
                     ),
-                    team=(
-                        team_obj.get("displayName")
-                        if isinstance(team_obj, dict)
-                        else None
-                    ),
+                    team=(team_obj.get("displayName") if isinstance(team_obj, dict) else None),
                     home_score=_coerce_int(play.get("homeScore")),
                     away_score=_coerce_int(play.get("awayScore")),
                     scoring=bool(play.get("scoringPlay")),
@@ -1679,9 +1634,7 @@ def _parse_plays(data: Any, sport: Sport) -> list[GamePlay]:
 
 def _parse_pickcenter(
     data: Any,
-) -> tuple[
-    str | None, str | None, int | None, int | None, float | None, float | None
-]:
+) -> tuple[str | None, str | None, int | None, int | None, float | None, float | None]:
     """Read a sportsbook line off a summary payload's ``pickcenter``.
 
     Returns ``(provider, details, home_moneyline, away_moneyline, spread,
@@ -1767,9 +1720,7 @@ def _odds_has_signal(odds: GameOdds) -> bool:
     )
 
 
-def _parse_game_summary(
-    data: Any, league: League, provider_game_key: str
-) -> GameSummary | None:
+def _parse_game_summary(data: Any, league: League, provider_game_key: str) -> GameSummary | None:
     """Build a :class:`GameSummary` from a fetched ESPN summary payload.
 
     Period lines come from the header competitors' linescores; totals from
@@ -2011,9 +1962,7 @@ def _parse_standings(
                             sub_block.get("entries"), list
                         ):
                             subgroup = _standing_group_label(grandchild)
-                            blocks.append(
-                                (group, subgroup, sub_block["entries"])
-                            )
+                            blocks.append((group, subgroup, sub_block["entries"]))
 
     rows: list[StandingRow] = []
     for group, subgroup, entries in blocks:
@@ -2024,9 +1973,7 @@ def _parse_standings(
                 parsed.append(result)
         # Within each (finest) group: rank-ordered first (unranked last),
         # then by wins.
-        parsed.sort(
-            key=lambda item: (item[0] <= 0, item[0], -item[1].wins, item[1].team_name)
-        )
+        parsed.sort(key=lambda item: (item[0] <= 0, item[0], -item[1].wins, item[1].team_name))
         rows.extend(
             replace(row, rank=index + 1, group=group, subgroup=subgroup)
             for index, (_, row) in enumerate(parsed)
@@ -2101,10 +2048,7 @@ def _parse_tennis_rankings(
             if result is not None:
                 parsed.append(result)
     parsed.sort(key=lambda item: (item[0] <= 0, item[0], item[1].team_name))
-    rows = tuple(
-        replace(row, rank=index + 1, group=group)
-        for index, (_, row) in enumerate(parsed)
-    )
+    rows = tuple(replace(row, rank=index + 1, group=group) for index, (_, row) in enumerate(parsed))
     return Standings(
         league_id=league.id,
         season=_parse_season(data),
@@ -2199,9 +2143,7 @@ def _parse_athlete(athlete: dict[str, Any], team: Team) -> Player | None:
             photo_url=photo_url,
         )
     except Exception:
-        logger.warning(
-            "Skipping malformed ESPN athlete for team %s", team.id, exc_info=True
-        )
+        logger.warning("Skipping malformed ESPN athlete for team %s", team.id, exc_info=True)
         return None
 
 
@@ -2273,9 +2215,7 @@ def _overview_stat_split(data: Any) -> dict[str, Any] | None:
             continue
         label = str(split.get("displayName") or "")
         mapping = {
-            str(name): values[index]
-            for index, name in enumerate(names)
-            if index < len(values)
+            str(name): values[index] for index, name in enumerate(names) if index < len(values)
         }
         if label.lower() == "regular season":
             return mapping
@@ -2309,11 +2249,7 @@ def _overview_career_split(data: Any) -> dict[str, Any] | None:
             continue
         if str(split.get("displayName") or "").lower() != "career":
             continue
-        return {
-            str(name): values[index]
-            for index, name in enumerate(names)
-            if index < len(values)
-        }
+        return {str(name): values[index] for index, name in enumerate(names) if index < len(values)}
     return None
 
 
@@ -2331,6 +2267,7 @@ def _format_stat_line(sport: Sport, stats: Mapping[str, Any]) -> str | None:
     Format mirrors the contract examples; ``None`` when the split lacks
     the stats a line needs (e.g. a defender's offensive-only block).
     """
+
     def has(*names: str) -> bool:
         return any(_trim_number(stats.get(name)) is not None for name in names)
 
@@ -2431,9 +2368,7 @@ def _format_stat_line(sport: Sport, stats: Mapping[str, Any]) -> str | None:
         return None
 
     if sport is Sport.SOCCER:
-        goals, assists = get("totalGoals") or get("goals"), get("goalAssists") or get(
-            "assists"
-        )
+        goals, assists = get("totalGoals") or get("goals"), get("goalAssists") or get("assists")
         parts = []
         if goals is not None:
             parts.append(f"{goals} G")
@@ -2576,9 +2511,7 @@ def _parse_article(
             league_id=league_id,
         )
     except Exception:
-        logger.warning(
-            "Skipping malformed ESPN article for %s", scope, exc_info=True
-        )
+        logger.warning("Skipping malformed ESPN article for %s", scope, exc_info=True)
         return None
 
 
@@ -2618,9 +2551,7 @@ def _venue_geocode_query(venue: dict[str, Any]) -> str | None:
     return ", ".join(parts)
 
 
-def _parse_team_location(
-    data: Any, provider_key: str | None = None
-) -> TeamLocation | None:
+def _parse_team_location(data: Any, provider_key: str | None = None) -> TeamLocation | None:
     """Home-venue location for the map view from a ``/teams/{id}`` payload.
 
     ESPN keeps the home venue in different places by sport: US franchise
@@ -2658,9 +2589,7 @@ def _parse_team_location(
     return TeamLocation(venue=query, lat=None, lon=None)
 
 
-def _home_venue_from_next_event(
-    team: dict[str, Any], provider_key: str | None
-) -> str | None:
+def _home_venue_from_next_event(team: dict[str, Any], provider_key: str | None) -> str | None:
     """Geocodable home-venue string from ``team.nextEvent``, when this team hosts.
 
     A competition's ``venue`` is the home side's stadium, so this is only
@@ -2714,6 +2643,7 @@ def _is_home_competitor(competition: dict[str, Any], provider_key: str) -> bool:
 # Provider
 # ---------------------------------------------------------------------------
 
+
 class EspnProvider:
     """``SportsProvider`` adapter for ESPN's public site API."""
 
@@ -2740,9 +2670,7 @@ class EspnProvider:
             )
         return self._client
 
-    async def _get_json(
-        self, url: str, params: dict[str, str] | None = None
-    ) -> dict[str, Any]:
+    async def _get_json(self, url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         settings = get_settings()
         response = await get_with_retry(
             self._get_client(),
@@ -2756,18 +2684,14 @@ class EspnProvider:
         data = response.json()
         return data if isinstance(data, dict) else {}
 
-    async def get_schedule(
-        self, league: League, team: Team, start: date, end: date
-    ) -> list[Game]:
+    async def get_schedule(self, league: League, team: Team, start: date, end: date) -> list[Game]:
         self._register(league, team)
         if league.sport in INDIVIDUAL_SPORTS:
             # An athlete has no ``/teams/{id}/schedule`` endpoint; scan the
             # tour/card scoreboard for the competitions they appear in.
             games = await self._get_individual_schedule(league, team, start, end)
         else:
-            url = (
-                f"{_SITE_BASE}/{league.provider_key}/teams/{team.provider_key}/schedule"
-            )
+            url = f"{_SITE_BASE}/{league.provider_key}/teams/{team.provider_key}/schedule"
             param_sets = _SCHEDULE_PARAM_SETS.get(league.sport)
             if param_sets is not None:
                 games = await self._get_merged_schedule(url, league, team, param_sets)
@@ -2813,9 +2737,7 @@ class EspnProvider:
         return _games_for_athlete(_merge_games(*batches), team)
 
     @staticmethod
-    def _individual_scoreboard_params(
-        sport: Sport, start: date, end: date
-    ) -> list[dict[str, str]]:
+    def _individual_scoreboard_params(sport: Sport, start: date, end: date) -> list[dict[str, str]]:
         """Scoreboard ``dates`` params covering ``[start, end]`` per sport.
 
         Tennis uses ranged ``YYYYMMDD-YYYYMMDD`` dates (chunked by month
@@ -2831,9 +2753,7 @@ class EspnProvider:
             return params
         return [
             {
-                "dates": (
-                    f"{chunk_start.strftime('%Y%m%d')}-{chunk_end.strftime('%Y%m%d')}"
-                ),
+                "dates": (f"{chunk_start.strftime('%Y%m%d')}-{chunk_end.strftime('%Y%m%d')}"),
                 "limit": "400",
             }
             for chunk_start, chunk_end in _chunk_date_range(start, end)
@@ -2880,9 +2800,7 @@ class EspnProvider:
             # cards.  live_tick matches the returned games to followed rows
             # by id, so scanning the whole scoreboard is fine (no team scope).
             now = timeutil.utcnow().astimezone(_SCOREBOARD_TZ)
-            dates = (
-                now.strftime("%Y%m") if league.sport is Sport.MMA else now.strftime("%Y%m%d")
-            )
+            dates = now.strftime("%Y%m") if league.sport is Sport.MMA else now.strftime("%Y%m%d")
             data = await self._get_json(url, params={"dates": dates, "limit": "400"})
             return _parse_individual_scoreboard(data, league)
         today = timeutil.utcnow().astimezone(_SCOREBOARD_TZ).strftime("%Y%m%d")
@@ -2891,9 +2809,7 @@ class EspnProvider:
         data = await self._get_json(url, params={"dates": today, "limit": "400"})
         return _parse_scoreboard(data, league)
 
-    async def get_competition_schedule(
-        self, league: League, start: date, end: date
-    ) -> list[Game]:
+    async def get_competition_schedule(self, league: League, start: date, end: date) -> list[Game]:
         """Every fixture in ``league`` between ``[start, end]`` (UTC dates).
 
         Whole-competition follows (``League.follow_all``) have no team to
@@ -2920,8 +2836,7 @@ class EspnProvider:
                 data = await self._get_json(url, params={"dates": dates, "limit": "400"})
             except Exception as exc:
                 logger.warning(
-                    "ESPN competition scoreboard call failed for league %s "
-                    "(dates=%s): %s",
+                    "ESPN competition scoreboard call failed for league %s (dates=%s): %s",
                     league.id,
                     dates,
                     exc,
@@ -2937,9 +2852,7 @@ class EspnProvider:
             key=lambda game: game.start_time,
         )
 
-    async def get_events(
-        self, league: League, start: date, end: date
-    ) -> list[Event]:
+    async def get_events(self, league: League, start: date, end: date) -> list[Event]:
         """Leaderboard tournaments in ``[start, end]`` for a golf league.
 
         Golf is the only leaderboard sport today; every other sport returns
@@ -2981,16 +2894,10 @@ class EspnProvider:
         for batch in batches:
             for event in batch:
                 merged.setdefault(event.id, event)
-        kept = [
-            event
-            for event in merged.values()
-            if _event_overlaps_window(event, start, end)
-        ]
+        kept = [event for event in merged.values() if _event_overlaps_window(event, start, end)]
         return sorted(kept, key=lambda event: event.start_time)
 
-    async def get_event_state(
-        self, league: League, provider_event_key: str
-    ) -> Event | None:
+    async def get_event_state(self, league: League, provider_event_key: str) -> Event | None:
         """Current state of a single golf tournament, or None if unknown.
 
         Golf's ``/summary`` endpoint is unreliable (returns a non-JSON error
@@ -3008,9 +2915,7 @@ class EspnProvider:
                 return event
         return None
 
-    async def get_game_state(
-        self, league: League, provider_game_key: str
-    ) -> GameState | None:
+    async def get_game_state(self, league: League, provider_game_key: str) -> GameState | None:
         if league.sport in INDIVIDUAL_SPORTS:
             return await self._get_individual_game_state(league, provider_game_key)
         url = f"{_SITE_BASE}/{league.provider_key}/summary"
@@ -3044,9 +2949,7 @@ class EspnProvider:
                 return game.state
         return None
 
-    async def get_game_summary(
-        self, league: League, provider_game_key: str
-    ) -> GameSummary | None:
+    async def get_game_summary(self, league: League, provider_game_key: str) -> GameSummary | None:
         """On-demand box score (period lines + performers) for one game.
 
         Reuses the same ``/summary`` endpoint as ``get_game_state`` and
@@ -3072,9 +2975,7 @@ class EspnProvider:
             return None
         return _parse_game_summary(data, league, provider_game_key)
 
-    async def get_game_odds(
-        self, league: League, provider_game_key: str
-    ) -> GameOdds | None:
+    async def get_game_odds(self, league: League, provider_game_key: str) -> GameOdds | None:
         """On-demand betting lines + win-probability for one game.
 
         Odds come from the same ``/summary`` payload as the box score
@@ -3098,8 +2999,8 @@ class EspnProvider:
             return_exceptions=True,
         )
         if isinstance(summary_data, dict):
-            provider, details, home_ml, away_ml, spread, over_under = (
-                _parse_pickcenter(summary_data)
+            provider, details, home_ml, away_ml, spread, over_under = _parse_pickcenter(
+                summary_data
             )
         else:
             if isinstance(summary_data, TransientProviderError):
@@ -3130,9 +3031,7 @@ class EspnProvider:
             # Tennis "standings" are the tour ranking (rank + points).
             url = f"{_SITE_BASE}/{league.provider_key}/rankings"
             data = await self._get_json(url)
-            return _parse_tennis_rankings(
-                data, league, self._known_teams.get(league.id)
-            )
+            return _parse_tennis_rankings(data, league, self._known_teams.get(league.id))
         if league.sport is Sport.MMA:
             # MMA has no league table; expose an empty Standings.
             return Standings(
@@ -3242,15 +3141,11 @@ class EspnProvider:
         try:
             data = await self._get_json(url, params={"limit": "50"})
         except httpx.HTTPError as exc:
-            logger.warning(
-                "ESPN league news call failed for league %s: %s", league.id, exc
-            )
+            logger.warning("ESPN league news call failed for league %s: %s", league.id, exc)
             return []
         return _parse_news(data, league_id=league.id)
 
-    async def get_team_location(
-        self, league: League, team: Team
-    ) -> TeamLocation | None:
+    async def get_team_location(self, league: League, team: Team) -> TeamLocation | None:
         """Home venue for the map view via ``/teams/{provider_key}``.
 
         Returns a ``TeamLocation`` carrying the venue name (plus city/state

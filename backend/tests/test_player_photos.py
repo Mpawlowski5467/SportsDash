@@ -1,4 +1,5 @@
 """Unit tests for the TheSportsDB keyless player-headshot lookup."""
+
 from __future__ import annotations
 
 import httpx
@@ -51,9 +52,7 @@ async def test_lookup_photo_returns_cutout_with_team_disambiguation(
         return httpx.Response(200, json=payload)
 
     install_tsdb_handler(monkeypatch, handler)
-    url = await player_photos.lookup_photo(
-        "Cole Palmer", team_name="Chelsea", sport="soccer"
-    )
+    url = await player_photos.lookup_photo("Cole Palmer", team_name="Chelsea", sport="soccer")
     assert url == "https://img/palmer.png"
 
 
@@ -77,10 +76,7 @@ async def test_lookup_photo_none_when_no_match(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     install_tsdb_handler(monkeypatch, lambda r: httpx.Response(200, json={"player": None}))
-    assert (
-        await player_photos.lookup_photo("Nobody", team_name="Chelsea", sport="soccer")
-        is None
-    )
+    assert await player_photos.lookup_photo("Nobody", team_name="Chelsea", sport="soccer") is None
 
 
 async def test_lookup_photo_transient_429_is_not_cached(
@@ -96,9 +92,7 @@ async def test_lookup_photo_transient_429_is_not_cached(
 
     monkeypatch.setattr(player_photos.cache, "cache_set_json", _set)
     install_tsdb_handler(monkeypatch, lambda r: httpx.Response(429, text="rate limited"))
-    result = await player_photos.lookup_photo(
-        "Cole Palmer", team_name="Chelsea", sport="soccer"
-    )
+    result = await player_photos.lookup_photo("Cole Palmer", team_name="Chelsea", sport="soccer")
     assert result is None
     assert saved == []  # transient failure left uncached
 

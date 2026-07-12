@@ -6,6 +6,7 @@ the frontend).  SQLite returns naive datetimes even for
 ``DateTime(timezone=True)`` columns, so anything read from the DB must
 pass through :func:`ensure_utc` before being compared or serialized.
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone

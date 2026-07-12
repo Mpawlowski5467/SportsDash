@@ -7,6 +7,7 @@ league isn't a supported sport or isn't currently in its playoffs (e.g. MLB
 in June) — the frontend shows a clean "no active bracket" state then.
 Cached in Redis since playoff series change only between games.
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,9 +34,7 @@ _CACHE_TTL_SECONDS = 1800
 
 
 @router.get("/bracket/{league_id}", response_model=BracketOut)
-async def bracket(
-    league_id: str, session: AsyncSession = Depends(get_session)
-) -> BracketOut:
+async def bracket(league_id: str, session: AsyncSession = Depends(get_session)) -> BracketOut:
     league = await repository.get_league(session, league_id)
     if league is None:
         raise HTTPException(status_code=404, detail="Unknown league")

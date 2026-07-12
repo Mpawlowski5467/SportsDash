@@ -13,6 +13,7 @@ Best-effort throughout: with no Redis configured every read is a miss and
 every write a no-op, so the map still works from the host table + the
 in-memory index — it just won't gain the geocoded away grounds.
 """
+
 from __future__ import annotations
 
 import re
@@ -39,9 +40,7 @@ def normalize(venue: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", stripped.casefold()).strip()
 
 
-def build_index(
-    teams: list, stadiums: list
-) -> dict[str, tuple[float, float]]:
+def build_index(teams: list, stadiums: list) -> dict[str, tuple[float, float]]:
     """Map ``normalize(venue)`` → ``(lat, lon)`` from located teams + stadiums.
 
     Pure: takes the already-fetched ``TeamORM`` rows (with ``home_venue`` +
@@ -102,5 +101,7 @@ async def set_coords(venue: str | None, coords: tuple[float, float] | None) -> N
         await cache.cache_set_json(_key(venue), {"miss": True}, _MISS_TTL_SECONDS)  # type: ignore[arg-type]
     else:
         await cache.cache_set_json(
-            _key(venue), {"lat": coords[0], "lon": coords[1]}, _HIT_TTL_SECONDS  # type: ignore[arg-type]
+            _key(venue),
+            {"lat": coords[0], "lon": coords[1]},
+            _HIT_TTL_SECONDS,  # type: ignore[arg-type]
         )

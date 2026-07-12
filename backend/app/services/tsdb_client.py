@@ -15,6 +15,7 @@ like ``http_util.get_with_retry`` (``TransientProviderError`` on
 exhausted retries, non-retryable responses returned as-is), and each
 caller keeps wrapping that in its own never-raise / fail-fast contract.
 """
+
 from __future__ import annotations
 
 import asyncio

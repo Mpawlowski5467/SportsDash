@@ -11,6 +11,7 @@ database.  Providers are exercised through a fake registered via the real
 registry, so this test depends on no other agent's adapter.  All fixture
 data is fictional.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -36,18 +37,18 @@ from app.timeutil import utcnow
 PROVIDER_ID = "faketest"
 
 # League ids (real-app data is normally fine, but tests stay fictional).
-PRIMARY_LEAGUE = "harborline-soccer"        # national team's home competition
-SIBLING_LEAGUE = "coastal-cup"              # extra competition it also plays in
-FOLLOW_ALL_LEAGUE = "continental-open"      # whole-competition follow
-BROKEN_FOLLOW_ALL = "tempest-trophy"        # follow_all league whose fetch raises
+PRIMARY_LEAGUE = "harborline-soccer"  # national team's home competition
+SIBLING_LEAGUE = "coastal-cup"  # extra competition it also plays in
+FOLLOW_ALL_LEAGUE = "continental-open"  # whole-competition follow
+BROKEN_FOLLOW_ALL = "tempest-trophy"  # follow_all league whose fetch raises
 
 TEAM_ID = "harborline-northshore-united"
 
 # Golf (leaderboard Event model) fixtures.
-GOLF_LEAGUE = "fairway-masters-tour"        # a followed golfer's tour
-GOLF_FOLLOW_ALL = "links-invitational"      # whole-field golf follow
+GOLF_LEAGUE = "fairway-masters-tour"  # a followed golfer's tour
+GOLF_FOLLOW_ALL = "links-invitational"  # whole-field golf follow
 GOLFER_TEAM_ID = "fairway-masters-tour-rowan-ashgrove"
-GOLFER_ESPN_ID = "espn-athlete-7781"        # carried on LeaderRow.player_id by the provider
+GOLFER_ESPN_ID = "espn-athlete-7781"  # carried on LeaderRow.player_id by the provider
 
 
 def _league(league_id: str, *, follow_all: bool = False) -> domain.League:
@@ -253,9 +254,7 @@ class FakeProvider:
 
 @pytest.fixture
 async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:", poolclass=StaticPool
-    )
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     try:
@@ -265,9 +264,7 @@ async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
 
 @pytest.fixture
-def patched_scope(
-    db: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def patched_scope(db: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch) -> None:
     """Point ``jobs.session_scope`` at the throwaway database."""
 
     @asynccontextmanager
@@ -358,9 +355,7 @@ async def test_follow_all_league_gets_whole_fixture_set(
 ) -> None:
     """A ``follow_all`` league is fetched via get_competition_schedule, team ids null."""
     async with db() as session:
-        await repository.upsert_league(
-            session, _league(FOLLOW_ALL_LEAGUE, follow_all=True)
-        )
+        await repository.upsert_league(session, _league(FOLLOW_ALL_LEAGUE, follow_all=True))
         await session.commit()
 
     fake_provider.competition[FOLLOW_ALL_LEAGUE] = [
@@ -398,12 +393,8 @@ async def test_one_failing_source_does_not_stop_the_others(
     async with db() as session:
         await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
         await repository.upsert_league(session, _league(SIBLING_LEAGUE))
-        await repository.upsert_league(
-            session, _league(FOLLOW_ALL_LEAGUE, follow_all=True)
-        )
-        await repository.upsert_league(
-            session, _league(BROKEN_FOLLOW_ALL, follow_all=True)
-        )
+        await repository.upsert_league(session, _league(FOLLOW_ALL_LEAGUE, follow_all=True))
+        await repository.upsert_league(session, _league(BROKEN_FOLLOW_ALL, follow_all=True))
         await repository.upsert_team(
             session,
             domain.Team(
@@ -508,9 +499,7 @@ async def test_refresh_schedules_fetches_golf_follow_all_league(
     """A golf ``follow_all`` league is fetched via get_events with no followed
     golfer; every leaderboard row stays untagged (player_id None)."""
     async with db() as session:
-        await repository.upsert_league(
-            session, _golf_league(GOLF_FOLLOW_ALL, follow_all=True)
-        )
+        await repository.upsert_league(session, _golf_league(GOLF_FOLLOW_ALL, follow_all=True))
         await session.commit()
 
     fake_provider.events[GOLF_FOLLOW_ALL] = [
@@ -783,9 +772,7 @@ async def test_live_tick_refreshes_standings_when_a_game_goes_final(
     game_id = f"{PROVIDER_ID}:nsu-vs-rivals"
     async with db() as session:
         await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
-        await repository.upsert_team(
-            session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global")
-        )
+        await repository.upsert_team(session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global"))
         await session.commit()
     await _seed_in_progress_game(db, game_id, PRIMARY_LEAGUE, team_id=TEAM_ID)
 
@@ -804,9 +791,7 @@ async def test_live_tick_refreshes_standings_when_a_game_goes_final(
     fake_provider.standings[PRIMARY_LEAGUE] = domain.Standings(
         league_id=PRIMARY_LEAGUE,
         season="2026",
-        rows=(
-            domain.StandingRow(rank=1, team_name="Northshore United", wins=10, losses=2),
-        ),
+        rows=(domain.StandingRow(rank=1, team_name="Northshore United", wins=10, losses=2),),
         fetched_at=utcnow(),
     )
 
@@ -835,9 +820,7 @@ async def test_live_tick_no_final_does_not_refresh_standings(
     game_id = f"{PROVIDER_ID}:nsu-still-playing"
     async with db() as session:
         await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
-        await repository.upsert_team(
-            session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global")
-        )
+        await repository.upsert_team(session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global"))
         await session.commit()
     await _seed_in_progress_game(db, game_id, PRIMARY_LEAGUE, team_id=TEAM_ID)
 
@@ -871,20 +854,14 @@ async def test_live_tick_coalesces_one_refresh_per_league(
     game_b = f"{PROVIDER_ID}:nsu-game-b"
     async with db() as session:
         await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
-        await repository.upsert_team(
-            session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global")
-        )
+        await repository.upsert_team(session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global"))
         await session.commit()
     await _seed_in_progress_game(db, game_a, PRIMARY_LEAGUE, team_id=TEAM_ID)
     await _seed_in_progress_game(db, game_b, PRIMARY_LEAGUE, team_id=TEAM_ID)
 
     fake_provider.live_games[PRIMARY_LEAGUE] = [
-        _live_game(
-            game_a, PRIMARY_LEAGUE, phase=domain.GamePhase.FINAL, home_team_id=TEAM_ID
-        ),
-        _live_game(
-            game_b, PRIMARY_LEAGUE, phase=domain.GamePhase.FINAL, home_team_id=TEAM_ID
-        ),
+        _live_game(game_a, PRIMARY_LEAGUE, phase=domain.GamePhase.FINAL, home_team_id=TEAM_ID),
+        _live_game(game_b, PRIMARY_LEAGUE, phase=domain.GamePhase.FINAL, home_team_id=TEAM_ID),
     ]
 
     await jobs.live_tick()
@@ -904,16 +881,12 @@ async def test_live_tick_standings_failure_does_not_raise(
     game_id = f"{PROVIDER_ID}:nsu-final-bad-standings"
     async with db() as session:
         await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
-        await repository.upsert_team(
-            session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global")
-        )
+        await repository.upsert_team(session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global"))
         await session.commit()
     await _seed_in_progress_game(db, game_id, PRIMARY_LEAGUE, team_id=TEAM_ID)
 
     fake_provider.live_games[PRIMARY_LEAGUE] = [
-        _live_game(
-            game_id, PRIMARY_LEAGUE, phase=domain.GamePhase.FINAL, home_team_id=TEAM_ID
-        )
+        _live_game(game_id, PRIMARY_LEAGUE, phase=domain.GamePhase.FINAL, home_team_id=TEAM_ID)
     ]
     fake_provider.standings[PRIMARY_LEAGUE] = FakeProvider.RAISES
 
@@ -962,9 +935,7 @@ async def test_refresh_locations_stores_provider_coords_and_geocodes_the_rest(
     """
     async with db() as session:
         await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
-        await repository.upsert_team(
-            session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global")
-        )
+        await repository.upsert_team(session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global"))
         await repository.upsert_team(
             session, _plain_team(TEAM_WITH_VENUE, PRIMARY_LEAGUE, "rangers-global")
         )
@@ -1025,13 +996,9 @@ async def test_refresh_locations_skips_already_resolved_teams(
     """A team that already has coordinates is neither re-fetched nor re-geocoded."""
     async with db() as session:
         await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
-        await repository.upsert_team(
-            session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global")
-        )
+        await repository.upsert_team(session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global"))
         # Pre-resolve it: the cached coords mean the job should leave it be.
-        await repository.set_team_location(
-            session, TEAM_ID, "Northshore Park", 53.4084, -2.9916
-        )
+        await repository.set_team_location(session, TEAM_ID, "Northshore Park", 53.4084, -2.9916)
         await session.commit()
 
     async def fail_geocode(query: str) -> tuple[float, float] | None:
@@ -1097,9 +1064,7 @@ async def test_refresh_locations_enrichment_rescues_offseason_soccer_club(
     await jobs.refresh_locations()
 
     async with db() as session:
-        located = {
-            row.id: row for row in await repository.list_teams_with_location(session)
-        }
+        located = {row.id: row for row in await repository.list_teams_with_location(session)}
     assert set(located) == {TEAM_WITH_VENUE}
     row = located[TEAM_WITH_VENUE]
     assert row.home_venue == "Emirates Stadium, Holloway, London"
@@ -1129,12 +1094,17 @@ async def test_attach_player_photos_backfills_missing_only_and_caps(
     monkeypatch.setattr(jobs.player_photos, "lookup_photo", fake_lookup_photo)
 
     team = domain.Team(
-        id="chelsea", league_id="eng.1", name="Chelsea",
-        abbreviation="CHE", provider_key="363",
+        id="chelsea",
+        league_id="eng.1",
+        name="Chelsea",
+        abbreviation="CHE",
+        provider_key="363",
     )
     players = (
         domain.Player(
-            id="p0", team_id="chelsea", name="Has Photo",
+            id="p0",
+            team_id="chelsea",
+            name="Has Photo",
             photo_url="https://espn/x.jpg",
         ),
         domain.Player(id="p1", team_id="chelsea", name="No Article"),

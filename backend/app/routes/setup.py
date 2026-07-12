@@ -9,6 +9,7 @@ The catalog accessor and the refresh kick are called through their
 modules (``espn_catalog.…`` / ``jobs.…``) — never imported as bare
 names — so tests can monkeypatch them at the source.
 """
+
 from __future__ import annotations
 
 import logging
@@ -49,16 +50,12 @@ _ONBOARDED_VALUE = "1"
 
 def _slugify(name: str) -> str:
     """Lowercase ASCII slug for internal team ids (``nba-harborlight-pelicans``)."""
-    ascii_name = (
-        unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
-    )
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
     return slug or "team"
 
 
-def _teams_out(
-    leagues: Sequence[domain.League], teams: Sequence[domain.Team]
-) -> TeamsOut:
+def _teams_out(leagues: Sequence[domain.League], teams: Sequence[domain.Team]) -> TeamsOut:
     """Shape a ``TeamsOut`` from exactly what was just written."""
     return TeamsOut(
         leagues=[
@@ -90,9 +87,7 @@ async def _fetch_catalog_teams(league: CatalogLeague) -> list[CatalogTeam]:
         return await espn_catalog.get_league_teams(league)
     except EspnCatalogError:
         logger.exception("Catalog team fetch failed for league %r", league.id)
-        raise HTTPException(
-            status_code=502, detail="Failed to fetch teams from ESPN"
-        ) from None
+        raise HTTPException(status_code=502, detail="Failed to fetch teams from ESPN") from None
 
 
 @router.get("/setup/status", response_model=SetupStatusOut)
@@ -101,9 +96,7 @@ async def setup_status(
 ) -> SetupStatusOut:
     onboarded = await repository.get_meta(session, _ONBOARDED_KEY)
     teams = await repository.list_teams(session)
-    return SetupStatusOut(
-        onboarded=onboarded == _ONBOARDED_VALUE, followed_team_count=len(teams)
-    )
+    return SetupStatusOut(onboarded=onboarded == _ONBOARDED_VALUE, followed_team_count=len(teams))
 
 
 @router.get("/setup/leagues", response_model=CatalogLeaguesOut)
@@ -119,9 +112,12 @@ async def setup_leagues() -> CatalogLeaguesOut:
                 national=league.national,
                 supports_follow_all=league.supports_follow_all,
                 entity_noun=(
-                    "player" if league.sport is domain.Sport.TENNIS
-                    else "fighter" if league.sport is domain.Sport.MMA
-                    else "golfer" if league.sport is domain.Sport.GOLF
+                    "player"
+                    if league.sport is domain.Sport.TENNIS
+                    else "fighter"
+                    if league.sport is domain.Sport.MMA
+                    else "golfer"
+                    if league.sport is domain.Sport.GOLF
                     else "team"
                 ),
                 logo_url=getattr(league, "logo_url", None),
@@ -199,8 +195,7 @@ async def setup_follow(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Unknown team key(s) for league {selection.league_id!r}: "
-                    + ", ".join(unknown)
+                    f"Unknown team key(s) for league {selection.league_id!r}: " + ", ".join(unknown)
                 ),
             )
 

@@ -7,6 +7,7 @@ look-ups the detail modal already makes.  Best-effort throughout — a side
 that isn't a followed team simply comes back with empty lineup/injuries,
 and any sub-fetch failure degrades that field rather than the request.
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_FORM_GAMES = 6        # recent results per side in the form strip
-_H2H_GAMES = 5         # past meetings to show
+_FORM_GAMES = 6  # recent results per side in the form strip
+_H2H_GAMES = 5  # past meetings to show
 
 
 def _outcome(row: GameORM, name: str) -> str | None:
@@ -46,19 +47,13 @@ def _outcome(row: GameORM, name: str) -> str | None:
     return "D"
 
 
-async def _form(
-    session: AsyncSession, league_id: str, name: str
-) -> list[str]:
+async def _form(session: AsyncSession, league_id: str, name: str) -> list[str]:
     """Recent-results strip (W/L/D, newest first) for a side by name."""
-    games = await repository.recent_finals_for_name(
-        session, league_id, name, _FORM_GAMES
-    )
+    games = await repository.recent_finals_for_name(session, league_id, name, _FORM_GAMES)
     return [o for o in (_outcome(g, name) for g in games) if o is not None]
 
 
-async def _injuries(
-    session: AsyncSession, team_id: str | None
-) -> list[PlayerOut]:
+async def _injuries(session: AsyncSession, team_id: str | None) -> list[PlayerOut]:
     """A followed team's non-active players (injured / day-to-day / out)."""
     if team_id is None:
         return []
@@ -71,15 +66,11 @@ async def _injuries(
 
 
 @router.get("/matchup/{game_id}", response_model=MatchupOut)
-async def matchup(
-    game_id: str, session: AsyncSession = Depends(get_session)
-) -> MatchupOut:
+async def matchup(game_id: str, session: AsyncSession = Depends(get_session)) -> MatchupOut:
     row: GameORM | None = await repository.get_game(session, game_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Unknown game: {game_id}")
-    league_row: LeagueORM | None = await repository.get_league(
-        session, row.league_id
-    )
+    league_row: LeagueORM | None = await repository.get_league(session, row.league_id)
     if league_row is None:
         raise HTTPException(status_code=404, detail="Game has no league")
 

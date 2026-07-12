@@ -1,4 +1,5 @@
 """Circuit-breaker state machine + registry guard tests."""
+
 from __future__ import annotations
 
 import asyncio
@@ -36,9 +37,7 @@ def test_success_resets_failures() -> None:
 
 
 def test_half_open_probe_then_recovers() -> None:
-    breaker = CircuitBreaker(
-        name="t", failure_threshold=1, reset_after=timedelta(seconds=30)
-    )
+    breaker = CircuitBreaker(name="t", failure_threshold=1, reset_after=timedelta(seconds=30))
     breaker.record_failure("down")
     assert breaker.state is CircuitState.OPEN
     # Elapse the cooldown — the next allow() arms a half-open probe.
@@ -51,9 +50,7 @@ def test_half_open_probe_then_recovers() -> None:
 
 
 def test_half_open_probe_failure_reopens() -> None:
-    breaker = CircuitBreaker(
-        name="t", failure_threshold=1, reset_after=timedelta(seconds=30)
-    )
+    breaker = CircuitBreaker(name="t", failure_threshold=1, reset_after=timedelta(seconds=30))
     breaker.record_failure("down")
     breaker.opened_at = breaker.opened_at - timedelta(seconds=31)  # type: ignore[operator]
     assert breaker.allow() is True  # half-open

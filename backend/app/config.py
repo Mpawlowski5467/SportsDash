@@ -3,6 +3,7 @@
 All variables use the ``SPORTSDASH_`` prefix, e.g.
 ``SPORTSDASH_DATABASE_URL``, ``SPORTSDASH_TIMEZONE``.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -13,9 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env", env_prefix="SPORTSDASH_", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="SPORTSDASH_", extra="ignore")
 
     # Infrastructure.  The sqlite default keeps local dev / tests zero-setup;
     # docker-compose overrides it with the postgres URL.
@@ -36,7 +35,7 @@ class Settings(BaseSettings):
 
     # Polling cadence.
     live_poll_seconds: int = 45
-    live_lead_minutes: int = 20     # begin fast polling this long before tip-off
+    live_lead_minutes: int = 20  # begin fast polling this long before tip-off
     starting_soon_minutes: int = 15
     # A FINAL notification whose first send failed is re-attempted by the next
     # live/events tick, but only while the game/event is this recent — so a
@@ -47,7 +46,7 @@ class Settings(BaseSettings):
     # Locale for the auto-generated Google News feed per team, as
     # "lang-COUNTRY" (e.g. "pl-PL" for Polish-language coverage).
     news_locale: str = "en-US"
-    daily_refresh_hour: int = 5     # local hour for schedule/standings/roster refresh
+    daily_refresh_hour: int = 5  # local hour for schedule/standings/roster refresh
 
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
@@ -55,18 +54,18 @@ class Settings(BaseSettings):
     # a short forecast on outdoor scheduled games; best-effort and cached.
     weather_enabled: bool = True
     weather_units: Literal["metric", "imperial"] = "metric"
-    weather_cache_minutes: int = 45     # weather changes slowly; cache generously
+    weather_cache_minutes: int = 45  # weather changes slowly; cache generously
 
     # Club "About" enrichment via Wikipedia (keyless).  Fallback prose for the
     # team page when TheSportsDB has no description; best-effort and cached
     # with a long TTL (a club's history changes rarely).
     wiki_enabled: bool = True
     wiki_lang: str = "en"
-    wiki_cache_minutes: int = 10080     # 7 days
+    wiki_cache_minutes: int = 10080  # 7 days
 
     # Provider HTTP resilience (retry/backoff around upstream calls).
     provider_timeout_seconds: float = 15.0
-    provider_max_retries: int = 3       # attempts beyond the first, on transient errors
+    provider_max_retries: int = 3  # attempts beyond the first, on transient errors
     provider_backoff_base: float = 0.5  # seconds; doubled each retry (+ jitter)
     # Read data whose last refresh is older than this is flagged ``is_stale``
     # so the UI can warn (e.g. when the provider has been down for a while).

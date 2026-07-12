@@ -5,6 +5,7 @@ here define provider- and storage-agnostic endpoints.  Read-only routes
 never commit; the setup routes are the lone writers (they commit
 explicitly).
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter

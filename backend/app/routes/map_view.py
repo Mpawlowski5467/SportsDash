@@ -26,6 +26,7 @@ relevant coalesced background refresh so the missing pins start resolving
 — it never blocks the response on a multi-source resolve, returning what
 is already located and letting the rest fill in on a later poll.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -61,6 +62,7 @@ _WEATHER_SPORT_VALUES = {sport.value for sport in WEATHER_SPORTS}
 @dataclass(frozen=True)
 class _NextMatch:
     """Where a team plays next (or most recently), for the host-venue pin."""
+
     venue: str | None
     opponent: str
     start_time: datetime
@@ -77,7 +79,7 @@ def _next_match_by_team(games: list[GameORM]) -> dict[str, _NextMatch]:
     the info panel can read "vs {opponent}".
     """
     upcoming: dict[str, _NextMatch] = {}  # earliest still-to-play, per team
-    past: dict[str, _NextMatch] = {}      # latest already-played, per team
+    past: dict[str, _NextMatch] = {}  # latest already-played, per team
     for game in games:
         start = timeutil.ensure_utc(game.start_time)
         if start is None:
@@ -168,9 +170,7 @@ async def map_view(
 
     # 3. Upcoming games (within `days`) placed at their venue coordinates —
     # the map's "games" mode. Independent of the home-stadium pins above.
-    out_games, game_venues_pending = await _upcoming_games(
-        session, league_by_id, days
-    )
+    out_games, game_venues_pending = await _upcoming_games(session, league_by_id, days)
 
     # On-demand resolves (coalesced, never blocking): a just-followed team,
     # a just-activated competition, or an upcoming game at an unlocated venue
@@ -211,12 +211,8 @@ async def _upcoming_games(
         return [], False
 
     located_teams = await repository.list_teams_with_location(session)
-    index = venue_coords.build_index(
-        located_teams, await repository.list_located_stadiums(session)
-    )
-    followed_coords = {
-        team.id: (team.venue_lat, team.venue_lon) for team in located_teams
-    }
+    index = venue_coords.build_index(located_teams, await repository.list_located_stadiums(session))
+    followed_coords = {team.id: (team.venue_lat, team.venue_lon) for team in located_teams}
     # Per-league standings-group lookups + per-request Redis cache, both built
     # lazily (a venue can host many games; a league's groups load once).
     group_cache: dict[str, dict[str, str]] = {}

@@ -2,6 +2,7 @@
 unset, unreachable, or erroring — every function must silently no-op.
 That contract is easy to break without noticing, so it gets pinned here.
 """
+
 from __future__ import annotations
 
 import pytest

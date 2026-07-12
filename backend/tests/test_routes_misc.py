@@ -5,6 +5,7 @@ Same harness style as test_api.py: an in-memory SQLite app with the
 ``get_session`` dependency overridden, requests through ASGITransport,
 fictional names only.
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -32,9 +33,7 @@ EVENT_ID = "mock:gl-open"
 
 @pytest.fixture
 async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:", poolclass=StaticPool
-    )
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     try:
@@ -106,9 +105,7 @@ async def seeded(db: async_sessionmaker[AsyncSession]) -> None:
 
 
 @pytest.fixture
-async def client(
-    db: async_sessionmaker[AsyncSession], seeded: None
-) -> AsyncIterator[AsyncClient]:
+async def client(db: async_sessionmaker[AsyncSession], seeded: None) -> AsyncIterator[AsyncClient]:
     application = FastAPI()
     application.include_router(api_router, prefix="/api")
 
@@ -124,6 +121,7 @@ async def client(
 
 # --- /events ---------------------------------------------------------------
 
+
 async def test_events_lists_events_in_default_window(client: AsyncClient) -> None:
     response = await client.get("/api/events")
     assert response.status_code == 200
@@ -134,9 +132,7 @@ async def test_events_lists_events_in_default_window(client: AsyncClient) -> Non
 
 
 async def test_events_respects_explicit_window(client: AsyncClient) -> None:
-    response = await client.get(
-        "/api/events", params={"start": "2000-01-01", "end": "2000-01-02"}
-    )
+    response = await client.get("/api/events", params={"start": "2000-01-01", "end": "2000-01-02"})
     assert response.status_code == 200
     assert response.json() == []
 
@@ -151,6 +147,7 @@ async def test_event_detail_and_404(client: AsyncClient) -> None:
 
 
 # --- /scorers ----------------------------------------------------------------
+
 
 async def test_scorers_unknown_league_404(client: AsyncClient) -> None:
     response = await client.get("/api/scorers/unknown-league")
@@ -171,6 +168,7 @@ async def test_scorers_unregistered_provider_degrades_to_empty(
 
 # --- /nation -----------------------------------------------------------------
 
+
 async def test_nation_unknown_league_404(client: AsyncClient) -> None:
     response = await client.get("/api/nation/unknown-league/Glimmer%20Foxes")
     assert response.status_code == 404
@@ -187,6 +185,7 @@ async def test_nation_reads_standing_from_stored_rows(client: AsyncClient) -> No
 
 # --- /bracket ------------------------------------------------------------------
 
+
 async def test_bracket_unknown_league_404(client: AsyncClient) -> None:
     response = await client.get("/api/bracket/unknown-league")
     assert response.status_code == 404
@@ -201,6 +200,7 @@ async def test_bracket_non_espn_provider_is_empty(client: AsyncClient) -> None:
 
 
 # --- /leaders -----------------------------------------------------------------
+
 
 async def test_leaders_unknown_league_404(client: AsyncClient) -> None:
     response = await client.get("/api/leaders/unknown-league")

@@ -5,6 +5,7 @@ anywhere.  TheSportsDB's free tier is sparse and rate-limited, so the
 provider must degrade to empty/None on failure and never raise out — the
 async tests exercise that contract by monkeypatching ``_get_json``.
 """
+
 from __future__ import annotations
 
 import json
@@ -82,6 +83,7 @@ def team_data() -> dict[str, Any]:
 # Time parsing (the UTC assumption)
 # ---------------------------------------------------------------------------
 
+
 def test_parse_event_datetime_combines_date_and_time_as_utc() -> None:
     event = {"dateEvent": "2026-06-09", "strTime": "18:00:00"}
     parsed = _parse_event_datetime(event)
@@ -108,6 +110,7 @@ def test_parse_event_datetime_missing_date_is_none() -> None:
 # ---------------------------------------------------------------------------
 # Phase mapping
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     ("status", "expected"),
@@ -137,6 +140,7 @@ def test_map_phase_empty_status_infers_from_score() -> None:
 # ---------------------------------------------------------------------------
 # State building: sets won, "Set n" labels, no clock
 # ---------------------------------------------------------------------------
+
 
 def test_build_state_final_three_one() -> None:
     state = _build_state(
@@ -180,6 +184,7 @@ def test_build_state_in_progress_uses_set_in_play() -> None:
 # ---------------------------------------------------------------------------
 # Event parsing
 # ---------------------------------------------------------------------------
+
 
 def test_parse_events_finished_match(events_data: dict[str, Any]) -> None:
     games = {g.id: g for g in _parse_events(events_data, VOLLEYBALL_LEAGUE)}
@@ -242,6 +247,7 @@ def test_parse_events_tolerates_malformed_payloads() -> None:
 # Standings
 # ---------------------------------------------------------------------------
 
+
 def test_parse_standings_wins_losses_points(table_data: dict[str, Any]) -> None:
     standings = _parse_standings(table_data, VOLLEYBALL_LEAGUE, "2026")
     assert standings.league_id == VOLLEYBALL_LEAGUE.id
@@ -275,6 +281,7 @@ def test_parse_standings_empty_table_is_empty() -> None:
 # ---------------------------------------------------------------------------
 # Roster
 # ---------------------------------------------------------------------------
+
 
 def test_parse_roster_players_and_statuses(players_data: dict[str, Any]) -> None:
     roster = _parse_roster(players_data, SPIKERS)
@@ -334,6 +341,7 @@ def test_parse_player_extracts_photo_prefers_cutout() -> None:
 # Provider methods
 # ---------------------------------------------------------------------------
 
+
 async def test_get_schedule_merges_past_and_next_and_filters(
     events_data: dict[str, Any],
 ) -> None:
@@ -360,9 +368,7 @@ async def test_get_schedule_merges_past_and_next_and_filters(
         "thesportsdb:3300003",
         "thesportsdb:3300002",
     ]
-    assert all(
-        g.home_team_id == SPIKERS.id or g.away_team_id == SPIKERS.id for g in games
-    )
+    assert all(g.home_team_id == SPIKERS.id or g.away_team_id == SPIKERS.id for g in games)
 
 
 async def test_get_schedule_filters_to_window(events_data: dict[str, Any]) -> None:
@@ -531,6 +537,7 @@ async def test_get_roster_empty_on_failure() -> None:
 # Team location (map view): lookupteam.php venue parsing
 # ---------------------------------------------------------------------------
 
+
 def test_parse_team_location_combines_stadium_and_location(
     team_data: dict[str, Any],
 ) -> None:
@@ -567,7 +574,9 @@ def test_parse_team_location_returns_present_coordinates() -> None:
 
 def test_parse_team_location_zero_coordinates_are_treated_as_missing() -> None:
     """TheSportsDB uses "0"/"" as a no-data sentinel for coordinates."""
-    data = {"teams": [{"strStadium": "Null Island Hall", "strStadiumLat": "0", "strStadiumLng": "0"}]}
+    data = {
+        "teams": [{"strStadium": "Null Island Hall", "strStadiumLat": "0", "strStadiumLng": "0"}]
+    }
     location = _parse_team_location(data)
     assert location is not None
     assert location.venue == "Null Island Hall"
@@ -627,9 +636,12 @@ async def test_leaderboard_methods_and_news_are_empty() -> None:
     assert await provider.get_events(VOLLEYBALL_LEAGUE, date(2026, 6, 1), date(2026, 6, 30)) == []
     assert await provider.get_event_state(VOLLEYBALL_LEAGUE, "3300001") is None
     assert await provider.get_news(VOLLEYBALL_LEAGUE, SPIKERS) == []
-    assert await provider.get_competition_schedule(
-        VOLLEYBALL_LEAGUE, date(2026, 6, 1), date(2026, 6, 30)
-    ) == []
+    assert (
+        await provider.get_competition_schedule(
+            VOLLEYBALL_LEAGUE, date(2026, 6, 1), date(2026, 6, 30)
+        )
+        == []
+    )
 
 
 async def test_get_json_raises_transient_on_rate_limited_429(
@@ -652,9 +664,7 @@ async def test_get_json_raises_transient_on_rate_limited_429(
 
     provider = TheSportsDbProvider()
     transport = httpx.MockTransport(
-        lambda request: httpx.Response(
-            429, text="<!doctype html><html>rate limited</html>"
-        )
+        lambda request: httpx.Response(429, text="<!doctype html><html>rate limited</html>")
     )
     provider._client = httpx.AsyncClient(base_url="https://example.test/", transport=transport)
     try:
@@ -755,7 +765,7 @@ def test_parse_dms_map_none_when_no_coordinates() -> None:
 
 def test_coerce_int_strips_commas_and_rejects_zero() -> None:
     assert stadiums._coerce_int("41,798") == 41798
-    assert stadiums._coerce_int("0") is None      # free-tier "unknown" sentinel
+    assert stadiums._coerce_int("0") is None  # free-tier "unknown" sentinel
     assert stadiums._coerce_int("") is None
     assert stadiums._coerce_int(None) is None
     assert stadiums._coerce_int("not a number") is None
@@ -786,7 +796,7 @@ async def test_lookup_stadium_enriches_with_venue_record(
     assert location is not None
     assert location.venue == "Tidewater Ground, Fulwater, Saltmarsh"
     assert location.capacity == 41798
-    assert location.opened == 1877                      # from the venue record
+    assert location.opened == 1877  # from the venue record
     assert location.image_url == "https://images.example.com/venues/90301-thumb.jpg"
     assert location.location == "Fulwater, Saltmarsh"
     assert location.lat == 51.48167
@@ -796,9 +806,7 @@ async def test_lookup_stadium_enriches_with_venue_record(
     assert ("lookupvenue.php", {"id": "90301"}) in calls
 
 
-async def test_lookup_stadium_filters_by_sport(
-    searchteams_data: dict[str, Any]
-) -> None:
+async def test_lookup_stadium_filters_by_sport(searchteams_data: dict[str, Any]) -> None:
     """A basketball lookup must pick the Basketball hit, not the soccer one."""
 
     async def fake_get_json(endpoint: str, params: dict[str, str]):
@@ -813,9 +821,7 @@ async def test_lookup_stadium_filters_by_sport(
     assert location.capacity == 8400
 
 
-async def test_lookup_stadium_works_without_venue_record(
-    searchteams_data: dict[str, Any]
-) -> None:
+async def test_lookup_stadium_works_without_venue_record(searchteams_data: dict[str, Any]) -> None:
     """When the venue lookup yields nothing, the search facts still come back.
 
     Coordinates stay None (the caller geocodes the venue name), but the

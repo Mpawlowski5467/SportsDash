@@ -1,4 +1,5 @@
 """Team roster (last fetched snapshot), players ordered by name."""
+
 from __future__ import annotations
 
 import logging
@@ -18,21 +19,13 @@ router = APIRouter()
 
 
 @router.get("/roster/{team_id}", response_model=RosterOut)
-async def roster(
-    team_id: str, session: AsyncSession = Depends(get_session)
-) -> RosterOut:
+async def roster(team_id: str, session: AsyncSession = Depends(get_session)) -> RosterOut:
     team = await repository.get_team(session, team_id)
     if team is None:
         raise HTTPException(status_code=404, detail="Unknown team")
 
-    players = sorted(
-        await repository.get_roster(session, team_id), key=lambda p: p.name
-    )
-    fetched_at = (
-        ensure_utc(team.roster_updated_at)
-        if team.roster_updated_at is not None
-        else None
-    )
+    players = sorted(await repository.get_roster(session, team_id), key=lambda p: p.name)
+    fetched_at = ensure_utc(team.roster_updated_at) if team.roster_updated_at is not None else None
     return RosterOut(
         team_id=team.id,
         team_name=team.name,

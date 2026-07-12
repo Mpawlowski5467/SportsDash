@@ -4,6 +4,7 @@ Startup: create tables, seed leagues/teams from YAML, start the
 APScheduler, and kick one immediate full refresh in the background so a
 fresh install has data within seconds without blocking startup.
 """
+
 from __future__ import annotations
 
 import asyncio

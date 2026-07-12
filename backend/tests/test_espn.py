@@ -2,6 +2,7 @@
 
 All payloads are fictional ESPN-shaped JSON; no network I/O anywhere.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -180,6 +181,7 @@ def _status(
 # Scoreboard fixture
 # ---------------------------------------------------------------------------
 
+
 def test_scoreboard_parses_two_games_and_skips_malformed(scoreboard_data: dict[str, Any]) -> None:
     games = _parse_scoreboard(scoreboard_data, BASKETBALL_LEAGUE)
     assert [game.id for game in games] == ["espn:9100001", "espn:9100002"]
@@ -280,6 +282,7 @@ def test_scoreboard_final_game(scoreboard_data: dict[str, Any]) -> None:
 # Status / period normalization across sports
 # ---------------------------------------------------------------------------
 
+
 def test_basketball_overtime_labels() -> None:
     event = _event(
         event_id="9100010",
@@ -288,9 +291,7 @@ def test_basketball_overtime_labels() -> None:
         away=("42", "Telmark Foxes", "TLM"),
         home_score="119",
         away_score="117",
-        status=_status(
-            state="in", name="STATUS_IN_PROGRESS", period=6, display_clock="2:11"
-        ),
+        status=_status(state="in", name="STATUS_IN_PROGRESS", period=6, display_clock="2:11"),
     )
     games = _parse_scoreboard({"events": [event]}, BASKETBALL_LEAGUE)
     assert games[0].state is not None
@@ -306,9 +307,7 @@ def test_soccer_halftime_is_intermission() -> None:
         away=("13", "Pellwick Rangers", "PLW"),
         home_score="1",
         away_score="0",
-        status=_status(
-            state="in", name="STATUS_HALFTIME", period=1, display_clock="45'"
-        ),
+        status=_status(state="in", name="STATUS_HALFTIME", period=1, display_clock="45'"),
     )
     games = _parse_scoreboard({"events": [event]}, SOCCER_LEAGUE)
     state = games[0].state
@@ -328,9 +327,7 @@ def test_soccer_second_half_clock() -> None:
         away=("13", "Pellwick Rangers", "PLW"),
         home_score="1",
         away_score="2",
-        status=_status(
-            state="in", name="STATUS_IN_PROGRESS", period=2, display_clock="67'"
-        ),
+        status=_status(state="in", name="STATUS_IN_PROGRESS", period=2, display_clock="67'"),
     )
     games = _parse_scoreboard({"events": [event]}, SOCCER_LEAGUE)
     state = games[0].state
@@ -484,6 +481,7 @@ def test_postponed_and_canceled_from_status_name() -> None:
 # Hockey normalization (fixture mirrors live NHL scoreboard shapes)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def hockey_scoreboard_data() -> dict[str, Any]:
     with (FIXTURES / "espn_hockey_scoreboard.json").open(encoding="utf-8") as handle:
@@ -613,6 +611,7 @@ def test_hockey_live_shootout_status_name() -> None:
 # Football normalization
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def football_scoreboard_data() -> dict[str, Any]:
     with (FIXTURES / "espn_football_scoreboard.json").open(encoding="utf-8") as handle:
@@ -660,6 +659,7 @@ def test_football_halftime_is_intermission(football_games: dict[str, Any]) -> No
 # Team schedule
 # ---------------------------------------------------------------------------
 
+
 def test_schedule_sets_internal_team_id_on_matching_side_only() -> None:
     team = Team(
         id="gravenford-owls",
@@ -686,9 +686,7 @@ def test_schedule_sets_internal_team_id_on_matching_side_only() -> None:
         away_score={"value": 96.0, "displayValue": "96"},
         status=_status(state="post", name="STATUS_FINAL", period=4),
     )
-    games = _parse_schedule(
-        {"events": [home_event, away_event]}, BASKETBALL_LEAGUE, team
-    )
+    games = _parse_schedule({"events": [home_event, away_event]}, BASKETBALL_LEAGUE, team)
     assert len(games) == 2
 
     as_home = next(g for g in games if g.id == "espn:9400001")
@@ -812,9 +810,7 @@ async def test_soccer_schedule_raises_when_both_calls_fail() -> None:
 
     provider._get_json = fake_get_json  # type: ignore[method-assign]
     with pytest.raises(httpx.ConnectError):
-        await provider.get_schedule(
-            SOCCER_LEAGUE, SOCCER_TEAM, date(2026, 5, 1), date(2026, 7, 1)
-        )
+        await provider.get_schedule(SOCCER_LEAGUE, SOCCER_TEAM, date(2026, 5, 1), date(2026, 7, 1))
 
 
 async def test_non_soccer_schedule_makes_single_bare_call() -> None:
@@ -833,9 +829,7 @@ async def test_non_soccer_schedule_makes_single_bare_call() -> None:
         return {"events": []}
 
     provider._get_json = fake_get_json  # type: ignore[method-assign]
-    await provider.get_schedule(
-        BASKETBALL_LEAGUE, team, date(2026, 5, 1), date(2026, 7, 1)
-    )
+    await provider.get_schedule(BASKETBALL_LEAGUE, team, date(2026, 5, 1), date(2026, 7, 1))
     assert calls == [None]
 
 
@@ -976,6 +970,7 @@ async def test_hockey_schedule_survives_one_failed_seasontype_call() -> None:
 # Summary (single game state)
 # ---------------------------------------------------------------------------
 
+
 def test_parse_summary_state() -> None:
     data = {
         "header": {
@@ -1042,18 +1037,14 @@ def _final_summary(
                             "id": "55",
                             "homeAway": "home",
                             "score": home_score,
-                            "linescores": [
-                                {"displayValue": value} for value in home_linescores
-                            ],
+                            "linescores": [{"displayValue": value} for value in home_linescores],
                             "team": {"id": "55", "displayName": "Crestfall Lynx"},
                         },
                         {
                             "id": "77",
                             "homeAway": "away",
                             "score": away_score,
-                            "linescores": [
-                                {"displayValue": value} for value in away_linescores
-                            ],
+                            "linescores": [{"displayValue": value} for value in away_linescores],
                             "team": {"id": "77", "displayName": "Rivermont Gulls"},
                         },
                     ],
@@ -1130,6 +1121,7 @@ def test_summary_full_time_soccer_recovers_second_half() -> None:
 # Game summary / box-score drill-down (Phase 7b)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def basketball_summary_data() -> dict[str, Any]:
     with (FIXTURES / "espn_basketball_summary.json").open(encoding="utf-8") as handle:
@@ -1144,7 +1136,7 @@ def basketball_summary_no_boxscore_data() -> dict[str, Any]:
 
 
 def test_game_summary_basketball_periods_and_performers(
-    basketball_summary_data: dict[str, Any]
+    basketball_summary_data: dict[str, Any],
 ) -> None:
     summary = _parse_game_summary(basketball_summary_data, BASKETBALL_LEAGUE, "9100200")
     assert summary is not None
@@ -1262,11 +1254,9 @@ def test_parse_team_stats_empty_without_two_sides() -> None:
 
 
 def test_game_summary_no_boxscore_yields_empty_periods(
-    basketball_summary_no_boxscore_data: dict[str, Any]
+    basketball_summary_no_boxscore_data: dict[str, Any],
 ) -> None:
-    summary = _parse_game_summary(
-        basketball_summary_no_boxscore_data, BASKETBALL_LEAGUE, "9100201"
-    )
+    summary = _parse_game_summary(basketball_summary_no_boxscore_data, BASKETBALL_LEAGUE, "9100201")
     # A valid header with no linescores/leaders: a summary with empty
     # periods/performers (the detail modal shows scores only), not None.
     assert summary is not None
@@ -1335,7 +1325,7 @@ def test_game_summary_baseball_inning_columns_pad_short_side() -> None:
 
 
 async def test_provider_get_game_summary_parses_fixture(
-    basketball_summary_data: dict[str, Any]
+    basketball_summary_data: dict[str, Any],
 ) -> None:
     provider = EspnProvider()
     calls: list[dict[str, str] | None] = []
@@ -1409,6 +1399,7 @@ async def test_get_game_summary_propagates_transient_but_swallows_404() -> None:
 # ---------------------------------------------------------------------------
 # Win-probability series + play-by-play (on the game summary)
 # ---------------------------------------------------------------------------
+
 
 def test_parse_win_probability_scales_and_orders() -> None:
     data = {
@@ -1530,19 +1521,13 @@ _PICKCENTER_SAMPLE = {
 }
 
 _PREDICTOR_SAMPLE = {
-    "homeTeam": {
-        "statistics": [{"name": "gameProjection", "displayValue": "63.0"}]
-    },
-    "awayTeam": {
-        "statistics": [{"name": "gameProjection", "displayValue": "37.0"}]
-    },
+    "homeTeam": {"statistics": [{"name": "gameProjection", "displayValue": "63.0"}]},
+    "awayTeam": {"statistics": [{"name": "gameProjection", "displayValue": "37.0"}]},
 }
 
 
 def test_parse_pickcenter_reads_line() -> None:
-    provider, details, home_ml, away_ml, spread, over_under = _parse_pickcenter(
-        _PICKCENTER_SAMPLE
-    )
+    provider, details, home_ml, away_ml, spread, over_under = _parse_pickcenter(_PICKCENTER_SAMPLE)
     assert provider == "Summit Sportsbook"
     assert details == "CRS -150"
     assert home_ml == -150
@@ -1580,9 +1565,7 @@ async def test_provider_get_game_odds_combines_line_and_projection() -> None:
     provider = EspnProvider()
     seen_urls: list[str] = []
 
-    async def fake_get_json(
-        url: str, params: dict[str, str] | None = None
-    ) -> dict[str, Any]:
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         seen_urls.append(url)
         if "predictor" in url:
             return _PREDICTOR_SAMPLE
@@ -1608,9 +1591,7 @@ async def test_provider_get_game_odds_none_for_individual_sports() -> None:
     provider = EspnProvider()
     called = False
 
-    async def fake_get_json(
-        url: str, params: dict[str, str] | None = None
-    ) -> dict[str, Any]:
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         nonlocal called
         called = True
         return {}
@@ -1625,9 +1606,7 @@ async def test_provider_get_game_odds_predictor_404_keeps_line() -> None:
     """A missing projection (404) still yields the betting line."""
     provider = EspnProvider()
 
-    async def fake_get_json(
-        url: str, params: dict[str, str] | None = None
-    ) -> dict[str, Any]:
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         if "predictor" in url:
             raise httpx.HTTPStatusError(
                 "404",
@@ -1648,9 +1627,7 @@ async def test_provider_get_game_odds_soccer_line_absent_uses_projection() -> No
     """No pickcenter (typical soccer) but a projection — odds carry win-prob only."""
     provider = EspnProvider()
 
-    async def fake_get_json(
-        url: str, params: dict[str, str] | None = None
-    ) -> dict[str, Any]:
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         if "predictor" in url:
             return _PREDICTOR_SAMPLE
         return {"pickcenter": []}
@@ -1666,9 +1643,7 @@ async def test_provider_get_game_odds_soccer_line_absent_uses_projection() -> No
 async def test_provider_get_game_odds_all_empty_is_none() -> None:
     provider = EspnProvider()
 
-    async def fake_get_json(
-        url: str, params: dict[str, str] | None = None
-    ) -> dict[str, Any]:
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         return {}
 
     provider._get_json = fake_get_json  # type: ignore[method-assign]
@@ -1680,9 +1655,7 @@ async def test_provider_get_game_odds_propagates_transient() -> None:
 
     provider = EspnProvider()
 
-    async def transient(
-        url: str, params: dict[str, str] | None = None
-    ) -> dict[str, Any]:
+    async def transient(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         raise TransientProviderError("odds endpoint timed out")
 
     provider._get_json = transient  # type: ignore[method-assign]
@@ -1693,6 +1666,7 @@ async def test_provider_get_game_odds_propagates_transient() -> None:
 # ---------------------------------------------------------------------------
 # Standings
 # ---------------------------------------------------------------------------
+
 
 def _standing_entry(name: str, stats: dict[str, float]) -> dict[str, Any]:
     return {
@@ -1763,9 +1737,7 @@ def test_parse_standings_carries_team_logo_abbr_color() -> None:
                         "displayName": "Gravenford Owls",
                         "abbreviation": "GVO",
                         "color": "1d428a",
-                        "logos": [
-                            {"href": "https://cdn.example/gvo.png", "rel": ["default"]}
-                        ],
+                        "logos": [{"href": "https://cdn.example/gvo.png", "rel": ["default"]}],
                     },
                     "stats": [
                         {"name": "rank", "value": 1},
@@ -2023,15 +1995,11 @@ def test_parse_standings_division_nested_children_of_children() -> None:
     Each row gets group=conference + subgroup=division, ranks restart per
     the finest (division) grouping, and groups stay in payload order.
     """
-    with (FIXTURES / "espn_basketball_standings_divisions.json").open(
-        encoding="utf-8"
-    ) as handle:
+    with (FIXTURES / "espn_basketball_standings_divisions.json").open(encoding="utf-8") as handle:
         data = json.load(handle)
     standings = _parse_standings(data, BASKETBALL_LEAGUE)
     assert standings.season == "2025-26"
-    assert [
-        (row.group, row.subgroup, row.rank, row.team_name) for row in standings.rows
-    ] == [
+    assert [(row.group, row.subgroup, row.rank, row.team_name) for row in standings.rows] == [
         ("Eastreach Conference", "Tidewater Division", 1, "Telmark Foxes"),
         ("Eastreach Conference", "Tidewater Division", 2, "Gravenford Owls"),
         ("Eastreach Conference", "Highland Division", 1, "Bellharbor Manticores"),
@@ -2067,6 +2035,7 @@ async def test_get_standings_requests_division_depth() -> None:
 # Roster
 # ---------------------------------------------------------------------------
 
+
 def test_parse_roster_grouped_athletes_and_injuries() -> None:
     team = Team(
         id="gravenford-owls",
@@ -2092,9 +2061,7 @@ def test_parse_roster_grouped_athletes_and_injuries() -> None:
                         "fullName": "Bram Hollowell",
                         "jersey": 23,
                         "position": {"abbreviation": "SG"},
-                        "injuries": [
-                            {"status": "Out", "details": {"type": "Ankle"}}
-                        ],
+                        "injuries": [{"status": "Out", "details": {"type": "Ankle"}}],
                     },
                 ],
             },
@@ -2230,6 +2197,7 @@ def test_parse_roster_status_type_fallback_without_injuries() -> None:
 # Player stat lines (athlete "overview" -> Player.stat_line)
 # ---------------------------------------------------------------------------
 
+
 def test_format_stat_line_per_sport() -> None:
     # Basketball: PPG · REB · AST, in roster order.
     assert (
@@ -2268,7 +2236,9 @@ def test_format_stat_line_per_sport() -> None:
     )
     # Innings ``27.2`` is 27 + 2/3 IP, not 27.2 decimal: 12 ER -> 3.90 ERA.
     assert (
-        _format_stat_line(Sport.BASEBALL, {"innings": "27.2", "earnedRuns": "12", "strikeouts": "33"})
+        _format_stat_line(
+            Sport.BASEBALL, {"innings": "27.2", "earnedRuns": "12", "strikeouts": "33"}
+        )
         == "3.90 ERA · 33 K"
     )
     # Football QB: TD · INT · YDS (commas in the YDS display preserved).
@@ -2295,9 +2265,7 @@ def test_format_stat_line_pass_catcher_with_trick_play_carries() -> None:
         "rushingYards": "8",
         "rushingTouchdowns": "0",
     }
-    assert (
-        _format_stat_line(Sport.FOOTBALL, kmet_career) == "288 REC · 2,939 YDS · 21 TD"
-    )
+    assert _format_stat_line(Sport.FOOTBALL, kmet_career) == "288 REC · 2,939 YDS · 21 TD"
     # A true running back (rushing >> receiving) still shows the rushing line.
     rb = {
         "rushingAttempts": "240",
@@ -2431,7 +2399,9 @@ async def test_get_roster_attaches_stat_lines_and_tolerates_missing() -> None:
     assert len(by_id) == 4
     # The overview is fetched once per athlete (using the league's
     # basketball/crestline path) — the bare athlete id, no espn: prefix.
-    assert any(url.endswith("/basketball/crestline/athletes/9001/overview") for url in overview_urls)
+    assert any(
+        url.endswith("/basketball/crestline/athletes/9001/overview") for url in overview_urls
+    )
 
     assert by_id["espn:9001"].stat_line == "24.1 PPG · 7.8 REB · 5.2 AST"
     assert by_id["espn:9002"].stat_line == "24.1 PPG · 7.8 REB · 5.2 AST"
@@ -2466,6 +2436,7 @@ async def test_get_roster_individual_sport_skips_stat_lines() -> None:
 # ---------------------------------------------------------------------------
 # News
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def news_data() -> dict[str, Any]:
@@ -2523,7 +2494,9 @@ def test_parse_news_tolerates_malformed_payloads() -> None:
     assert _parse_news(None, team=NEWS_TEAM) == []
     assert _parse_news({}, team=NEWS_TEAM) == []
     assert _parse_news({"articles": "nope"}, team=NEWS_TEAM) == []
-    assert _parse_news({"articles": ["not-an-article", {"headline": "No link"}]}, team=NEWS_TEAM) == []
+    assert (
+        _parse_news({"articles": ["not-an-article", {"headline": "No link"}]}, team=NEWS_TEAM) == []
+    )
 
 
 async def test_get_news_queries_team_endpoint(news_data: dict[str, Any]) -> None:
@@ -2561,9 +2534,7 @@ def team_venue_data() -> dict[str, Any]:
         return json.load(handle)
 
 
-def test_parse_team_location_reads_franchise_venue(
-    team_venue_data: dict[str, Any]
-) -> None:
+def test_parse_team_location_reads_franchise_venue(team_venue_data: dict[str, Any]) -> None:
     """US franchise sports carry the venue under team.franchise.venue.
 
     The geocode query combines the full name with the address city/state/
@@ -2679,9 +2650,7 @@ def test_parse_team_location_falls_back_to_short_name() -> None:
     assert location.venue == "The Hollow"
 
 
-async def test_get_team_location_queries_team_endpoint(
-    team_venue_data: dict[str, Any]
-) -> None:
+async def test_get_team_location_queries_team_endpoint(team_venue_data: dict[str, Any]) -> None:
     provider = EspnProvider()
     captured: dict[str, Any] = {}
 
@@ -2713,6 +2682,7 @@ async def test_get_team_location_returns_none_on_http_failure() -> None:
 # ---------------------------------------------------------------------------
 # Provider object
 # ---------------------------------------------------------------------------
+
 
 async def test_live_games_scoreboard_passes_limit(scoreboard_data: dict[str, Any]) -> None:
     """ESPN silently caps scoreboards at 100 events; limit=400 must be sent."""
@@ -2768,23 +2738,31 @@ async def test_provider_close_without_use_is_safe() -> None:
 # Catalog
 # ---------------------------------------------------------------------------
 
+
 def test_catalog_includes_nhl_and_nfl() -> None:
     nhl = get_catalog_league("nhl")
     assert nhl is not None
     assert (nhl.name, nhl.sport, nhl.provider, nhl.provider_key) == (
-        "NHL", Sport.HOCKEY, "espn", "hockey/nhl",
+        "NHL",
+        Sport.HOCKEY,
+        "espn",
+        "hockey/nhl",
     )
 
     nfl = get_catalog_league("nfl")
     assert nfl is not None
     assert (nfl.name, nfl.sport, nfl.provider, nfl.provider_key) == (
-        "NFL", Sport.FOOTBALL, "espn", "football/nfl",
+        "NFL",
+        Sport.FOOTBALL,
+        "espn",
+        "football/nfl",
     )
 
 
 # ---------------------------------------------------------------------------
 # Whole-competition schedule (follow_all): ranged scoreboard + chunking
 # ---------------------------------------------------------------------------
+
 
 def test_chunk_date_range_short_range_is_single_chunk() -> None:
     """A range within the 45-day budget is fetched in one call."""
@@ -2848,9 +2826,7 @@ def test_competition_scoreboard_parses_multi_event_fixture(
     # Whole-competition games carry no internal team ids (no team scope).
     assert all(g.home_team_id is None and g.away_team_id is None for g in games)
     # All starts are tz-aware UTC.
-    assert all(
-        g.start_time.utcoffset() == timedelta(0) for g in games
-    )
+    assert all(g.start_time.utcoffset() == timedelta(0) for g in games)
 
 
 async def test_get_competition_schedule_filters_to_window(
@@ -2922,6 +2898,7 @@ async def test_get_competition_schedule_survives_one_failed_chunk(
     """One failing chunk logs and is skipped; surviving chunks still
     contribute their games (a partial schedule beats none)."""
     provider = EspnProvider()
+
     # Only the May chunk returns the fixtures payload; June fails, July
     # is empty.  In real ESPN traffic each ranged call returns only its
     # own window, so a dropped chunk means losing only that window's
@@ -3005,6 +2982,7 @@ def tennis_rankings_data() -> dict[str, Any]:
 # Period normalization: Set n / R n
 # ---------------------------------------------------------------------------
 
+
 def _individual_competition(
     *,
     competition_id: str,
@@ -3025,6 +3003,7 @@ def _individual_competition(
     per-set/round ``winner`` flags so set/round counts are derivable.  When
     ``homeaway`` is False the competitors carry only ``order`` (UFC shape).
     """
+
     def competitor(
         athlete_id: str, name: str, order: int, side: str, won: list[bool] | None
     ) -> dict[str, Any]:
@@ -3140,7 +3119,7 @@ def test_mma_no_homeaway_uses_order_and_card_name(
     games = {g.id: g for g in _parse_individual_scoreboard(ufc_scoreboard_data, MMA_LEAGUE)}
     bout = games["espn:9910001"]
     assert bout.home_name == "Cassius Dunmore"  # order 1
-    assert bout.away_name == "Bryce Harlow"     # order 2
+    assert bout.away_name == "Bryce Harlow"  # order 2
     assert bout.series == "SFC 250: Dunmore vs. Harlow"
     # All bouts share the card start time.
     assert bout.start_time == datetime(2026, 6, 13, 0, 0, tzinfo=timezone.utc)
@@ -3161,6 +3140,7 @@ def test_mma_scoreboard_skips_one_sided_bout(ufc_scoreboard_data: dict[str, Any]
 # ---------------------------------------------------------------------------
 # Tennis rankings -> Standings
 # ---------------------------------------------------------------------------
+
 
 def test_tennis_rankings_parse_rank_and_points(
     tennis_rankings_data: dict[str, Any],
@@ -3200,6 +3180,7 @@ def test_tennis_rankings_tolerates_malformed_payload() -> None:
 # ---------------------------------------------------------------------------
 # Provider methods for an athlete "team"
 # ---------------------------------------------------------------------------
+
 
 async def test_tennis_schedule_scans_draw_for_followed_player(
     tennis_scoreboard_data: dict[str, Any],

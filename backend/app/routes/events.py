@@ -4,6 +4,7 @@ Mirrors the schedule route's date handling: ``start``/``end`` are local
 calendar days, inclusive on both ends, translated to a UTC window in the
 configured timezone.
 """
+
 from __future__ import annotations
 
 import logging
@@ -45,16 +46,12 @@ async def events(
     end_utc = local_day_bounds(end, tz)[1]  # end day inclusive
 
     rows = await repository.events_between(session, start_utc, end_utc)
-    leagues_by_id = {
-        league.id: league for league in await repository.list_leagues(session)
-    }
+    leagues_by_id = {league.id: league for league in await repository.list_leagues(session)}
     return events_to_out(rows, leagues_by_id)
 
 
 @router.get("/events/{event_id}", response_model=EventOut)
-async def event_detail(
-    event_id: str, session: AsyncSession = Depends(get_session)
-) -> EventOut:
+async def event_detail(event_id: str, session: AsyncSession = Depends(get_session)) -> EventOut:
     row = await repository.get_event(session, event_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Unknown event: {event_id}")

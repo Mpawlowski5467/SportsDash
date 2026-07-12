@@ -5,6 +5,7 @@ venue string, because the service fails on an over-specified
 "Stadium, Street, District, City" string yet resolves the bare stadium name.
 The underlying ``geocode`` is stubbed so these tests make no network calls.
 """
+
 from __future__ import annotations
 
 from app.services import geocode

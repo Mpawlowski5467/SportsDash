@@ -7,6 +7,7 @@ monkeypatched out at the module the routes call through:
 ``espn_catalog.get_league_teams`` (no network) and
 ``jobs.kick_daily_refresh`` (spy instead of a background refresh).
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -108,9 +109,7 @@ CATALOG_TEAMS: dict[str, list[CatalogTeam]] = {
 
 @pytest.fixture
 async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:", poolclass=StaticPool
-    )
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     try:
@@ -266,26 +265,64 @@ async def test_setup_leagues_static_shape(client: AsyncClient) -> None:
     leagues = resp.json()["leagues"]
 
     assert [league["id"] for league in leagues] == [
-        "nba", "wnba", "mlb", "nhl", "nfl", "epl", "laliga",
-        "bundesliga", "seriea", "ligue1", "mls", "ucl",
+        "nba",
+        "wnba",
+        "mlb",
+        "nhl",
+        "nfl",
+        "epl",
+        "laliga",
+        "bundesliga",
+        "seriea",
+        "ligue1",
+        "mls",
+        "ucl",
         # Phase 3a: 17 added soccer codes (national, club, domestic).
-        "worldcup", "womens-worldcup", "euros", "nations-league",
-        "copa-america", "europa", "conference", "club-world-cup",
-        "championship", "scottish-prem", "eredivisie", "liga-portugal",
-        "super-lig", "liga-mx", "bundesliga-2", "laliga-2", "ligue-2",
+        "worldcup",
+        "womens-worldcup",
+        "euros",
+        "nations-league",
+        "copa-america",
+        "europa",
+        "conference",
+        "club-world-cup",
+        "championship",
+        "scottish-prem",
+        "eredivisie",
+        "liga-portugal",
+        "super-lig",
+        "liga-mx",
+        "bundesliga-2",
+        "laliga-2",
+        "ligue-2",
         # Phase 9: more leagues — lower English, South America, more Europe,
         # NA cups (live-verified ESPN soccer codes; ukr.1 404'd, skipped).
-        "league-one", "league-two", "brasileirao", "liga-argentina",
-        "libertadores", "sudamericana", "belgian-pro", "greek-super",
-        "austrian-bundesliga", "swiss-super", "danish-superliga",
-        "eliteserien", "allsvenskan", "russian-premier",
-        "us-open-cup", "concacaf-champions",
+        "league-one",
+        "league-two",
+        "brasileirao",
+        "liga-argentina",
+        "libertadores",
+        "sudamericana",
+        "belgian-pro",
+        "greek-super",
+        "austrian-bundesliga",
+        "swiss-super",
+        "danish-superliga",
+        "eliteserien",
+        "allsvenskan",
+        "russian-premier",
+        "us-open-cup",
+        "concacaf-champions",
         # Phase 4: individual sports (tennis tours + UFC).
-        "atp", "wta", "ufc",
+        "atp",
+        "wta",
+        "ufc",
         # Phase 5: golf (leaderboard events).
         "pga",
         # Phase 6: volleyball (second provider — TheSportsDB).
-        "cev-euro-men", "evl-men", "evl-women",
+        "cev-euro-men",
+        "evl-men",
+        "evl-women",
     ]
     # Every league is ESPN-served except the TheSportsDB volleyball catalog.
     assert all(
@@ -296,8 +333,14 @@ async def test_setup_leagues_static_shape(client: AsyncClient) -> None:
     assert all(
         set(league)
         == {
-            "id", "name", "sport", "provider",
-            "national", "supports_follow_all", "entity_noun", "logo_url",
+            "id",
+            "name",
+            "sport",
+            "provider",
+            "national",
+            "supports_follow_all",
+            "entity_noun",
+            "logo_url",
         }
         for league in leagues
     )
@@ -356,9 +399,22 @@ async def test_setup_leagues_carry_league_logos(client: AsyncClient) -> None:
     # Every major team-sport + top-5 European soccer league has a logo, each
     # an https ESPN CDN league-logo URL.
     for league_id in (
-        "nba", "wnba", "mlb", "nhl", "nfl",
-        "epl", "laliga", "bundesliga", "seriea", "ligue1", "mls", "ucl",
-        "worldcup", "euros", "ufc", "pga",
+        "nba",
+        "wnba",
+        "mlb",
+        "nhl",
+        "nfl",
+        "epl",
+        "laliga",
+        "bundesliga",
+        "seriea",
+        "ligue1",
+        "mls",
+        "ucl",
+        "worldcup",
+        "euros",
+        "ufc",
+        "pga",
     ):
         logo = by_id[league_id]["logo_url"]
         assert isinstance(logo, str) and logo.startswith("https://a.espncdn.com/"), (
@@ -388,15 +444,15 @@ async def test_setup_teams_unknown_league_404(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-async def test_setup_teams_lists_catalog(
-    client: AsyncClient, fake_catalog: dict[str, int]
-) -> None:
+async def test_setup_teams_lists_catalog(client: AsyncClient, fake_catalog: dict[str, int]) -> None:
     resp = await client.get("/api/setup/teams/nba")
     assert resp.status_code == 200
     data = resp.json()
     assert data["league_id"] == "nba"
     assert [team["name"] for team in data["teams"]] == [
-        "Harborlight Pelicans", "Stonegate Drifters", "Larkspur Brigade",
+        "Harborlight Pelicans",
+        "Stonegate Drifters",
+        "Larkspur Brigade",
     ]
     pelicans = data["teams"][0]
     assert pelicans == {
@@ -501,9 +557,7 @@ async def test_follow_all_competition_no_teams(
     resp = await client.post(
         "/api/setup/follow",
         json={
-            "selections": [
-                {"league_id": "worldcup", "team_provider_keys": [], "follow_all": True}
-            ]
+            "selections": [{"league_id": "worldcup", "team_provider_keys": [], "follow_all": True}]
         },
     )
     assert resp.status_code == 200
@@ -536,11 +590,7 @@ async def test_follow_national_team_attaches_sibling_competitions(
     """Following a nation in a national comp also schedules its siblings."""
     resp = await client.post(
         "/api/setup/follow",
-        json={
-            "selections": [
-                {"league_id": "euros", "team_provider_keys": ["478"]}
-            ]
-        },
+        json={"selections": [{"league_id": "euros", "team_provider_keys": ["478"]}]},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -551,17 +601,23 @@ async def test_follow_national_team_attaches_sibling_competitions(
     # friendlies — all upserted as leagues.  ESPN national-team ids are global,
     # so each sibling reuses the same provider_key (478).
     expected_slate = {
-        "euros", "euroq", "nations-league",
-        "worldcup", "worldq-uefa", "worldq-conmebol", "worldq-concacaf",
-        "worldq-afc", "worldq-caf", "worldq-ofc", "friendly",
+        "euros",
+        "euroq",
+        "nations-league",
+        "worldcup",
+        "worldq-uefa",
+        "worldq-conmebol",
+        "worldq-concacaf",
+        "worldq-afc",
+        "worldq-caf",
+        "worldq-ofc",
+        "friendly",
     }
     assert {league["id"] for league in data["leagues"]} == expected_slate
     assert [team["id"] for team in data["teams"]] == ["euros-verdania"]
 
     async with db() as session:
-        league_ids = {
-            row.id for row in (await session.execute(select(LeagueORM))).scalars()
-        }
+        league_ids = {row.id for row in (await session.execute(select(LeagueORM))).scalars()}
         assert league_ids == expected_slate
 
         # The followed nation gets a sibling-competition row (reusing its
@@ -660,11 +716,7 @@ async def test_follow_unknown_league_400(
 ) -> None:
     resp = await client.post(
         "/api/setup/follow",
-        json={
-            "selections": [
-                {"league_id": "starlight-cup", "team_provider_keys": ["101"]}
-            ]
-        },
+        json={"selections": [{"league_id": "starlight-cup", "team_provider_keys": ["101"]}]},
     )
     assert resp.status_code == 400
     assert kick_spy == []
@@ -682,11 +734,7 @@ async def test_follow_unknown_provider_key_400(
 ) -> None:
     resp = await client.post(
         "/api/setup/follow",
-        json={
-            "selections": [
-                {"league_id": "nba", "team_provider_keys": ["101", "999"]}
-            ]
-        },
+        json={"selections": [{"league_id": "nba", "team_provider_keys": ["101", "999"]}]},
     )
     assert resp.status_code == 400
     assert "999" in resp.json()["detail"]
@@ -694,8 +742,6 @@ async def test_follow_unknown_provider_key_400(
     async with db() as session:
         assert await _count(session, TeamORM) == 0
         assert await repository.get_meta(session, "onboarded") is None
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1018,6 +1064,7 @@ async def test_tsdb_catalog_upstream_failure_raises_catalog_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """HTTP/decode failure surfaces as EspnCatalogError (route → 502)."""
+
     async def boom(url: str, params: dict[str, str], league_id: str) -> object:
         raise EspnCatalogError("thesportsdb down")
 
@@ -1032,6 +1079,7 @@ async def test_tsdb_catalog_empty_payload_is_empty_picker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The free tier may return {"teams": null}; yield an empty list, no crash."""
+
     async def fake_fetch(url: str, params: dict[str, str], league_id: str) -> object:
         return {"teams": None}
 

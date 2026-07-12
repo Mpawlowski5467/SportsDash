@@ -5,6 +5,7 @@ unreachable, or any call fails, every function silently no-ops (returns
 ``None``) and logs at debug level.  The app must behave identically
 with or without Redis.
 """
+
 from __future__ import annotations
 
 import json

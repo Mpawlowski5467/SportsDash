@@ -4,6 +4,7 @@ Datetime columns are ``DateTime(timezone=True)`` and always hold UTC.
 Note: SQLite hands back naive datetimes on read — normalize anything
 read from these columns with ``app.timeutil.ensure_utc`` before use.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -138,9 +139,7 @@ class EventORM(Base):
     league_id: Mapped[str] = mapped_column(ForeignKey("leagues.id"), index=True)
     name: Mapped[str] = mapped_column(String(256))
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    end_time: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     venue: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     phase: Mapped[str] = mapped_column(String(16), default="scheduled", index=True)
@@ -185,9 +184,7 @@ class NewsORM(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)  # hash of url
     # team_id for a followed-team article; league_id for a whole-competition
     # (follow_all) article, which has no TeamORM row. Exactly one is set.
-    team_id: Mapped[str | None] = mapped_column(
-        ForeignKey("teams.id"), index=True, nullable=True
-    )
+    team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), index=True, nullable=True)
     league_id: Mapped[str | None] = mapped_column(
         ForeignKey("leagues.id"), index=True, nullable=True
     )

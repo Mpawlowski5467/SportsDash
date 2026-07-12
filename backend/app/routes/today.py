@@ -1,4 +1,5 @@
 """Today's slate of games for the configured local timezone."""
+
 from __future__ import annotations
 
 import logging
@@ -26,9 +27,7 @@ async def today(session: AsyncSession = Depends(get_session)) -> TodayOut:
     start_utc, end_utc = local_day_bounds(day, tz)
 
     rows = await repository.games_between(session, start_utc, end_utc)
-    leagues_by_id = {
-        league.id: league for league in await repository.list_leagues(session)
-    }
+    leagues_by_id = {league.id: league for league in await repository.list_leagues(session)}
     games = sorted(games_to_out(rows, leagues_by_id), key=lambda g: g.start_time)
 
     # Leaderboard events (golf, …) run for multiple days; surface any that
@@ -40,6 +39,4 @@ async def today(session: AsyncSession = Depends(get_session)) -> TodayOut:
     )
     events = events_to_out(event_rows, leagues_by_id)
 
-    return TodayOut(
-        date=day.isoformat(), timezone=settings.timezone, games=games, events=events
-    )
+    return TodayOut(date=day.isoformat(), timezone=settings.timezone, games=games, events=events)

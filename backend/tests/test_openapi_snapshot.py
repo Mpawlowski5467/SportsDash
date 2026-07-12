@@ -13,6 +13,7 @@ To accept an intentional change:
 then commit the updated tests/openapi_snapshot.json (and mirror the
 change into frontend/src/types.ts).
 """
+
 from __future__ import annotations
 
 import json

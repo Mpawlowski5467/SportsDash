@@ -1,4 +1,5 @@
 """World Cup host-venue resolution + next-match selection for the map."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -37,9 +38,7 @@ def test_resolve_non_host_venue_is_none() -> None:
 
 
 def _game(home: str, away: str, venue: str, start: datetime, phase: str) -> GameORM:
-    return GameORM(
-        home_name=home, away_name=away, venue=venue, start_time=start, phase=phase
-    )
+    return GameORM(home_name=home, away_name=away, venue=venue, start_time=start, phase=phase)
 
 
 def test_next_match_prefers_earliest_upcoming() -> None:

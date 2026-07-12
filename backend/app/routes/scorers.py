@@ -7,6 +7,7 @@ per player (own goals excluded), and ranks them.  The result is cached
 (Redis, short TTL) because the walk is N summary fetches — the first
 request after a cache miss pays for it, the rest are instant.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,16 +28,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _CACHE_TTL_SECONDS = 1800  # 30 min — scorers only change as matches finish
-_MAX_CONCURRENCY = 8       # parallel summary fetches per request
+_MAX_CONCURRENCY = 8  # parallel summary fetches per request
 
 
 _league_from_row = convert.league_from_row
 
 
 @router.get("/scorers/{league_id}", response_model=ScorersOut)
-async def scorers(
-    league_id: str, session: AsyncSession = Depends(get_session)
-) -> ScorersOut:
+async def scorers(league_id: str, session: AsyncSession = Depends(get_session)) -> ScorersOut:
     league_row = await repository.get_league(session, league_id)
     if league_row is None:
         raise HTTPException(status_code=404, detail="Unknown league")
@@ -70,9 +69,7 @@ async def scorers(
     try:
         provider = registry.get_provider(league.provider)
     except KeyError:
-        return ScorersOut(
-            league_id=league.id, league_name=league.name, games_counted=0
-        )
+        return ScorersOut(league_id=league.id, league_name=league.name, games_counted=0)
 
     semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
 

@@ -11,6 +11,7 @@ caller's timeout/headers and closed once at shutdown.
 Tests can install a ``httpx.MockTransport``-backed client with
 ``monkeypatch.setitem(http_client._clients, "<name>", mock_client)``.
 """
+
 from __future__ import annotations
 
 import logging

@@ -14,6 +14,7 @@ recently-renamed Mexican grounds.  ``resolve`` returns ``None`` for any
 venue not in this set, so non-host competitions fall back to the normal
 home-stadium resolution untouched.
 """
+
 from __future__ import annotations
 
 import re
@@ -22,11 +23,11 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class HostVenue:
-    name: str          # canonical stadium name
+    name: str  # canonical stadium name
     lat: float
     lon: float
-    location: str      # "City, Region, Country" for the info panel
-    capacity: int      # approximate 2026 World Cup configuration
+    location: str  # "City, Region, Country" for the info panel
+    capacity: int  # approximate 2026 World Cup configuration
 
 
 # The 16 host venues, keyed by their ESPN fixture venue name.
@@ -36,11 +37,15 @@ _VENUES: tuple[HostVenue, ...] = (
     HostVenue("AT&T Stadium", 32.7473, -97.0945, "Arlington, Texas, USA", 80_000),
     HostVenue("Mercedes-Benz Stadium", 33.7555, -84.4008, "Atlanta, Georgia, USA", 71_000),
     HostVenue("NRG Stadium", 29.6847, -95.4107, "Houston, Texas, USA", 72_000),
-    HostVenue("GEHA Field at Arrowhead Stadium", 39.0489, -94.4839, "Kansas City, Missouri, USA", 76_400),
+    HostVenue(
+        "GEHA Field at Arrowhead Stadium", 39.0489, -94.4839, "Kansas City, Missouri, USA", 76_400
+    ),
     HostVenue("SoFi Stadium", 33.9534, -118.3391, "Inglewood, California, USA", 70_000),
     HostVenue("Hard Rock Stadium", 25.9580, -80.2389, "Miami Gardens, Florida, USA", 65_000),
     HostVenue("Gillette Stadium", 42.0909, -71.2643, "Foxborough, Massachusetts, USA", 65_000),
-    HostVenue("Lincoln Financial Field", 39.9008, -75.1674, "Philadelphia, Pennsylvania, USA", 69_000),
+    HostVenue(
+        "Lincoln Financial Field", 39.9008, -75.1674, "Philadelphia, Pennsylvania, USA", 69_000
+    ),
     HostVenue("Levi's Stadium", 37.4030, -121.9700, "Santa Clara, California, USA", 68_500),
     HostVenue("Lumen Field", 47.5952, -122.3316, "Seattle, Washington, USA", 69_000),
     # --- Canada (2) ---

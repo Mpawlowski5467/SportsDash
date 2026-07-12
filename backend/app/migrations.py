@@ -10,6 +10,7 @@ OR ``NOT NULL`` with a ``DEFAULT`` (both sqlite and postgres can add
 either in place; a bare NOT NULL without a default would fail on
 non-empty tables).
 """
+
 from __future__ import annotations
 
 import logging

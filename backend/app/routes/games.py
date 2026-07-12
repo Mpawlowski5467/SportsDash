@@ -9,6 +9,7 @@ failing the whole request.  The fetch helpers live in
 ``app.services.game_detail`` (shared with the matchup, odds, and
 schedule routes).
 """
+
 from __future__ import annotations
 
 import logging

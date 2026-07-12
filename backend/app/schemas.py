@@ -3,6 +3,7 @@
 ``frontend/src/types.ts`` mirrors these shapes field-for-field; change
 them together.  All datetimes serialize as ISO 8601 UTC.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -14,7 +15,7 @@ class LeagueOut(BaseModel):
     id: str
     sport: str
     name: str
-    follow_all: bool = False   # followed as a whole competition (no team picks)
+    follow_all: bool = False  # followed as a whole competition (no team picks)
 
 
 class TeamOut(BaseModel):
@@ -32,12 +33,12 @@ class TeamsOut(BaseModel):
 
 
 class GameSideOut(BaseModel):
-    team_id: str | None = None   # internal slug when this side is a followed team
+    team_id: str | None = None  # internal slug when this side is a followed team
     name: str
     abbreviation: str | None = None
     logo_url: str | None = None  # crest / nation flag (every side, not just followed)
-    color: str | None = None     # "#"-prefixed hex, when the provider has one
-    score: int | None = None     # None until the game has started
+    color: str | None = None  # "#"-prefixed hex, when the provider has one
+    score: int | None = None  # None until the game has started
 
 
 class GameOut(BaseModel):
@@ -46,10 +47,10 @@ class GameOut(BaseModel):
     sport: str
     home: GameSideOut
     away: GameSideOut
-    start_time: datetime         # UTC
+    start_time: datetime  # UTC
     venue: str | None = None
-    series: str | None = None    # tournament/round or fight card (individual sports)
-    phase: str                   # scheduled | in_progress | final | postponed | canceled
+    series: str | None = None  # tournament/round or fight card (individual sports)
+    phase: str  # scheduled | in_progress | final | postponed | canceled
     period: int
     period_label: str
     clock: str | None = None
@@ -71,7 +72,7 @@ class EventOut(BaseModel):
     league_id: str
     sport: str
     name: str
-    start_time: datetime         # UTC
+    start_time: datetime  # UTC
     end_time: datetime | None = None
     phase: str
     round_label: str
@@ -88,19 +89,19 @@ class PeriodScoreOut(BaseModel):
 
 class PerformerOut(BaseModel):
     name: str
-    side: str                    # "home" | "away"
+    side: str  # "home" | "away"
     detail: str
 
 
 class TeamStatOut(BaseModel):
-    label: str                   # e.g. "Possession", "Shots on Target"
-    home: str                    # display string (e.g. "53.7%", "15")
+    label: str  # e.g. "Possession", "Shots on Target"
+    home: str  # display string (e.g. "53.7%", "15")
     away: str
 
 
 class GoalOut(BaseModel):
     player: str
-    team: str                    # scoring team's display name
+    team: str  # scoring team's display name
     minute: str | None = None
     own_goal: bool = False
     penalty: bool = False
@@ -131,23 +132,23 @@ class GameSummaryOut(BaseModel):
 
 
 class WeatherOut(BaseModel):
-    temperature: float           # current temperature, in `units`
-    condition: str               # human label, e.g. "Partly cloudy"
-    code: int                    # WMO weather code (drives the frontend icon)
-    wind_speed: float            # current wind speed, in `units`
-    units: str                   # "metric" | "imperial"
-    high: float | None = None    # today's forecast high
-    low: float | None = None     # today's forecast low
+    temperature: float  # current temperature, in `units`
+    condition: str  # human label, e.g. "Partly cloudy"
+    code: int  # WMO weather code (drives the frontend icon)
+    wind_speed: float  # current wind speed, in `units`
+    units: str  # "metric" | "imperial"
+    high: float | None = None  # today's forecast high
+    low: float | None = None  # today's forecast low
     precip_chance: int | None = None  # % chance of precipitation
 
 
 class GameOddsOut(BaseModel):
-    provider: str | None = None        # sportsbook name, e.g. "DraftKings"
-    details: str | None = None         # display line, e.g. "ATL -175"
+    provider: str | None = None  # sportsbook name, e.g. "DraftKings"
+    details: str | None = None  # display line, e.g. "ATL -175"
     home_moneyline: int | None = None  # American odds
     away_moneyline: int | None = None
-    spread: float | None = None        # home point spread (negative = favored)
-    over_under: float | None = None    # game total
+    spread: float | None = None  # home point spread (negative = favored)
+    over_under: float | None = None  # game total
     home_win_pct: float | None = None  # 0–100
     away_win_pct: float | None = None  # 0–100
 
@@ -191,7 +192,7 @@ class MapTeamOut(BaseModel):
     # set when the pin is a next-match host venue rather than a home ground.
     next_opponent: str | None = None
     next_match_time: datetime | None = None  # UTC
-    group: str | None = None     # standings group (e.g. "Group A"), for map filtering
+    group: str | None = None  # standings group (e.g. "Group A"), for map filtering
     # "followed" = a team you follow; "competition" = plotted because you
     # follow its whole competition (shown only while that competition runs).
     source: str = "followed"
@@ -201,6 +202,7 @@ class MapTeamOut(BaseModel):
 
 class MapGameOut(BaseModel):
     """An upcoming game placed at its venue's coordinates (map "games" mode)."""
+
     game_id: str
     league_id: str
     league_name: str | None = None
@@ -210,26 +212,26 @@ class MapGameOut(BaseModel):
     lon: float
     home: GameSideOut
     away: GameSideOut
-    start_time: datetime         # UTC
-    phase: str                   # scheduled | in_progress
+    start_time: datetime  # UTC
+    phase: str  # scheduled | in_progress
     period_label: str = ""
-    group: str | None = None     # standings group (e.g. "Group A"), when known
-    followed: bool = False       # involves a team you follow directly
+    group: str | None = None  # standings group (e.g. "Group A"), when known
+    followed: bool = False  # involves a team you follow directly
     # Why it's on the map: "followed" (a team you follow) vs "competition"
     # (a whole tournament/league you follow). Mirrors MapTeamOut.source.
     source: str = "followed"
 
 
 class MapOut(BaseModel):
-    teams: list[MapTeamOut]      # followed teams with resolved coordinates
-    games: list[MapGameOut] = [] # upcoming games (within `days`) at venue coords
-    days: int = 3                # the upcoming-games window reflected by `games`
+    teams: list[MapTeamOut]  # followed teams with resolved coordinates
+    games: list[MapGameOut] = []  # upcoming games (within `days`) at venue coords
+    days: int = 3  # the upcoming-games window reflected by `games`
 
 
 class TodayOut(BaseModel):
-    date: str                    # local calendar day, YYYY-MM-DD
+    date: str  # local calendar day, YYYY-MM-DD
     timezone: str
-    games: list[GameOut]         # sorted by start_time ascending
+    games: list[GameOut]  # sorted by start_time ascending
     events: list[EventOut] = []  # active/today leaderboard events (golf, …)
 
 
@@ -237,9 +239,9 @@ class StandingRowOut(BaseModel):
     rank: int
     team_name: str
     team_id: str | None = None
-    logo_url: str | None = None      # team crest/flag (every row, not just followed)
+    logo_url: str | None = None  # team crest/flag (every row, not just followed)
     abbreviation: str | None = None  # short code for the fallback chip
-    color: str | None = None         # "#"-prefixed brand hex, when known
+    color: str | None = None  # "#"-prefixed brand hex, when known
     wins: int
     losses: int
     draws: int | None = None
@@ -247,9 +249,9 @@ class StandingRowOut(BaseModel):
     goal_diff: int | None = None
     win_pct: float | None = None
     games_back: float | None = None
-    ot_losses: int | None = None    # hockey W-L-OTL
-    group: str | None = None        # top grouping: conference / league / table
-    subgroup: str | None = None     # nested grouping: division
+    ot_losses: int | None = None  # hockey W-L-OTL
+    group: str | None = None  # top grouping: conference / league / table
+    subgroup: str | None = None  # nested grouping: division
 
 
 class StandingsOut(BaseModel):
@@ -269,7 +271,7 @@ class PlayerOut(BaseModel):
     name: str
     position: str | None = None
     jersey_number: str | None = None
-    status: str                  # active | day_to_day | injured | out
+    status: str  # active | day_to_day | injured | out
     status_detail: str | None = None
     stat_line: str | None = None  # compact season stats, sport-formatted
     career_stat_line: str | None = None  # same format, career totals/averages
@@ -285,9 +287,9 @@ class RosterOut(BaseModel):
 
 class LineupSlotOut(BaseModel):
     player: PlayerOut
-    role: str                    # position label on the slot ("GK","PG","SS","OH")
-    unit: str                    # coarse layout group (sport-specific: GK/DEF/MID/FWD, …)
-    order: int | None = None     # 1-based sequence within the lineup, when meaningful
+    role: str  # position label on the slot ("GK","PG","SS","OH")
+    unit: str  # coarse layout group (sport-specific: GK/DEF/MID/FWD, …)
+    order: int | None = None  # 1-based sequence within the lineup, when meaningful
 
 
 class TeamLineupOut(BaseModel):
@@ -302,6 +304,7 @@ class GameLineupOut(BaseModel):
     Either side is null when that team has no stored roster (an unfollowed
     opponent / a whole-competition team).
     """
+
     home: TeamLineupOut | None = None
     away: TeamLineupOut | None = None
 
@@ -321,6 +324,7 @@ class MatchupOut(BaseModel):
     are not active.  Sides that aren't followed teams (e.g. World Cup
     nations) simply come back with empty lineups/injuries.
     """
+
     game: GameOut
     odds: GameOddsOut | None = None
     weather: WeatherOut | None = None
@@ -337,14 +341,14 @@ class StatLeaderOut(BaseModel):
     player_id: str
     name: str
     position: str | None = None
-    team_id: str = ""            # internal slug when on a followed team, else ""
+    team_id: str = ""  # internal slug when on a followed team, else ""
     team_name: str
     team_logo_url: str | None = None
     team_color: str | None = None
-    value: float                 # the ranked headline-stat value
-    stat_label: str              # the headline stat's unit (e.g. "G", "PPG")
-    detail: str                  # the player's full stat_line
-    highlighted: bool = False    # the player is on a team you follow
+    value: float  # the ranked headline-stat value
+    stat_label: str  # the headline stat's unit (e.g. "G", "PPG")
+    detail: str  # the player's full stat_line
+    highlighted: bool = False  # the player is on a team you follow
 
 
 class StatLeadersOut(BaseModel):
@@ -363,13 +367,13 @@ class ScorerOut(BaseModel):
     team: str
     team_logo_url: str | None = None
     goals: int
-    highlighted: bool = False    # the scorer plays for a team you follow
+    highlighted: bool = False  # the scorer plays for a team you follow
 
 
 class ScorersOut(BaseModel):
     league_id: str
     league_name: str
-    games_counted: int           # finished matches the tally is built from
+    games_counted: int  # finished matches the tally is built from
     rows: list[ScorerOut] = []
 
 
@@ -391,7 +395,7 @@ class BracketSideOut(BaseModel):
 class BracketSeriesOut(BaseModel):
     team1: BracketSideOut
     team2: BracketSideOut
-    summary: str                 # human series status, e.g. "NY leads series 3-0"
+    summary: str  # human series status, e.g. "NY leads series 3-0"
     # "East" / "West" for two-sided placement; None for the league
     # championship (center) and sports without conferences.
     conference: str | None = None
@@ -405,7 +409,7 @@ class BracketRoundOut(BaseModel):
 class BracketOut(BaseModel):
     league_id: str
     league_name: str
-    rounds: list[BracketRoundOut] = []   # empty when the league has no playoffs
+    rounds: list[BracketRoundOut] = []  # empty when the league has no playoffs
 
 
 class NationOut(BaseModel):
@@ -413,6 +417,7 @@ class NationOut(BaseModel):
 
     Built by name, since whole-competition teams have no followed-team row.
     """
+
     league_id: str
     league_name: str
     name: str
@@ -421,14 +426,14 @@ class NationOut(BaseModel):
     color: str | None = None
     group: str | None = None
     standing: NationStandingOut | None = None
-    fixtures: list[GameOut] = []     # upcoming (scheduled / in progress)
-    results: list[GameOut] = []      # finished, most recent first
+    fixtures: list[GameOut] = []  # upcoming (scheduled / in progress)
+    results: list[GameOut] = []  # finished, most recent first
 
 
 class NewsItemOut(BaseModel):
     id: str
-    team_id: str | None = None      # set for a followed-team article
-    league_id: str | None = None    # set for a whole-competition article
+    team_id: str | None = None  # set for a followed-team article
+    league_id: str | None = None  # set for a whole-competition article
     title: str
     url: str
     source: str
@@ -439,6 +444,7 @@ class NewsItemOut(BaseModel):
 
 class NewsRefreshOut(BaseModel):
     """Result of a manual ``POST /api/news/refresh``."""
+
     inserted: int
 
 
@@ -463,10 +469,10 @@ class CatalogLeagueOut(BaseModel):
     name: str
     sport: str
     provider: str
-    national: bool = False      # national-team competition (wizard grouping)
+    national: bool = False  # national-team competition (wizard grouping)
     supports_follow_all: bool = False  # offer "follow the whole competition"
-    entity_noun: str = "team"   # what a pickable item is: team | player | fighter
-    logo_url: str | None = None # league logo for the picker
+    entity_noun: str = "team"  # what a pickable item is: team | player | fighter
+    logo_url: str | None = None  # league logo for the picker
 
 
 class CatalogLeaguesOut(BaseModel):
@@ -489,7 +495,7 @@ class CatalogTeamsOut(BaseModel):
 class FollowSelection(BaseModel):
     league_id: str
     team_provider_keys: list[str] = []
-    follow_all: bool = False    # follow the entire competition (no team picks needed)
+    follow_all: bool = False  # follow the entire competition (no team picks needed)
 
 
 class FollowRequest(BaseModel):
@@ -502,14 +508,14 @@ class FollowRequest(BaseModel):
 
 
 class NotificationPrefOut(BaseModel):
-    scope: str                  # "global" | "team:{id}" | "league:{id}"
-    label: str                  # human label (team/league name or "All notifications")
+    scope: str  # "global" | "team:{id}" | "league:{id}"
+    label: str  # human label (team/league name or "All notifications")
     muted: bool
-    events: dict[str, bool]     # event_type -> enabled
+    events: dict[str, bool]  # event_type -> enabled
 
 
 class NotificationPrefsOut(BaseModel):
-    event_types: list[str]      # the orderable set of notifiable event types
+    event_types: list[str]  # the orderable set of notifiable event types
     prefs: list[NotificationPrefOut]
 
 

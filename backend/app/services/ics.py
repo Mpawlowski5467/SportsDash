@@ -4,6 +4,7 @@ Only the small subset of the spec we need: a single ``VCALENDAR`` with one
 ``VEVENT`` per game, UTC timestamps in basic format, TEXT escaping, CRLF
 line endings, and folding of lines longer than 75 octets.
 """
+
 from __future__ import annotations
 
 import logging
@@ -96,18 +97,13 @@ def _event_lines(row: GameORM, league: LeagueORM | None, dtstamp: str) -> list[s
     if row.venue:
         lines.append(f"LOCATION:{_escape_text(row.venue)}")
     if row.phase == "final":
-        description = (
-            f"Final: {row.away_name} {row.away_score}, "
-            f"{row.home_name} {row.home_score}"
-        )
+        description = f"Final: {row.away_name} {row.away_score}, {row.home_name} {row.home_score}"
         lines.append(f"DESCRIPTION:{_escape_text(description)}")
     lines.append("END:VEVENT")
     return lines
 
 
-def games_to_ics(
-    rows: Sequence[GameORM], leagues_by_id: Mapping[str, LeagueORM]
-) -> str:
+def games_to_ics(rows: Sequence[GameORM], leagues_by_id: Mapping[str, LeagueORM]) -> str:
     """Render games as an iCalendar document (CRLF-terminated string)."""
     dtstamp = _format_utc(utcnow())
     lines: list[str] = [

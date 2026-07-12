@@ -1,4 +1,5 @@
 """Aggregated team news (from each team's RSS feeds), newest first."""
+
 from __future__ import annotations
 
 import logging
@@ -24,9 +25,7 @@ async def news(
     limit: int = Query(default=50, ge=1),
     session: AsyncSession = Depends(get_session),
 ) -> list[NewsItemOut]:
-    items = await repository.list_news(
-        session, team_id=team_id, league_id=league_id, limit=limit
-    )
+    items = await repository.list_news(session, team_id=team_id, league_id=league_id, limit=limit)
     return [
         NewsItemOut(
             id=item.id,
@@ -35,11 +34,7 @@ async def news(
             title=item.title,
             url=item.url,
             source=item.source,
-            published_at=(
-                ensure_utc(item.published_at)
-                if item.published_at is not None
-                else None
-            ),
+            published_at=(ensure_utc(item.published_at) if item.published_at is not None else None),
             summary=item.summary,
             image_url=item.image_url,
         )

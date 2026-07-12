@@ -1,4 +1,5 @@
 """Followed leagues and teams."""
+
 from __future__ import annotations
 
 import logging

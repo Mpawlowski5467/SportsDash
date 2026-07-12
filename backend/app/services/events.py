@@ -11,6 +11,7 @@ the notification-worthy transitions in rule order.  Every event carries
 a ``dedupe_key`` so callers can guarantee at-most-once delivery across
 polls.
 """
+
 from __future__ import annotations
 
 import logging
@@ -59,9 +60,7 @@ def diff_states(
     game_id = new.game_id
 
     # GAME_START: scheduled -> in_progress, or first sighting is live.
-    if new.phase is GamePhase.IN_PROGRESS and (
-        prev is None or prev.phase is GamePhase.SCHEDULED
-    ):
+    if new.phase is GamePhase.IN_PROGRESS and (prev is None or prev.phase is GamePhase.SCHEDULED):
         events.append(
             GameEvent(
                 type=EventType.GAME_START,
@@ -77,10 +76,7 @@ def diff_states(
     # snapshot — there is nothing to compare against on first sighting.
     if (
         prev is not None
-        and (
-            prev.phase is GamePhase.IN_PROGRESS
-            or new.phase is GamePhase.IN_PROGRESS
-        )
+        and (prev.phase is GamePhase.IN_PROGRESS or new.phase is GamePhase.IN_PROGRESS)
         and new.period > prev.period
         and new.period > 1
     ):
@@ -118,9 +114,7 @@ def diff_states(
         )
 
     # FINAL: the game ended, coming from anything non-final.
-    if new.phase is GamePhase.FINAL and (
-        prev is None or prev.phase is not GamePhase.FINAL
-    ):
+    if new.phase is GamePhase.FINAL and (prev is None or prev.phase is not GamePhase.FINAL):
         score = _score_line(new, home_name=home_name, away_name=away_name)
         events.append(
             GameEvent(

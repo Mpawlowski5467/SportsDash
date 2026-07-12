@@ -1,4 +1,5 @@
 """Playoff bracket helpers: round-name normalization + sport support."""
+
 from __future__ import annotations
 
 from app.models.domain import Sport
@@ -8,10 +9,7 @@ from app.providers import espn_playoffs
 def test_round_name_strips_conference_and_game_suffix() -> None:
     assert espn_playoffs._round_name("East 1st Round - Game 5", None) == "1st Round"
     assert espn_playoffs._round_name("West Semifinals - Game 2", None) == "Semifinals"
-    assert (
-        espn_playoffs._round_name("Western Conference Finals", None)
-        == "Conference Finals"
-    )
+    assert espn_playoffs._round_name("Western Conference Finals", None) == "Conference Finals"
     # The championship round keeps its name (no conference prefix).
     assert espn_playoffs._round_name("NBA Finals - Game 5", None) == "NBA Finals"
     assert espn_playoffs._round_name("", "Stanley Cup Final") == "Stanley Cup Final"

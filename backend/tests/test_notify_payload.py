@@ -3,6 +3,7 @@
 test_notify_prefs.py only ever spies on send_event, so a malformed
 notification body would previously ship unnoticed.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -63,9 +64,7 @@ async def test_send_posts_topic_body_and_headers(
 async def test_send_carries_bearer_token_when_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        notify, "get_settings", lambda: _settings(ntfy_token="fictional-token")
-    )
+    monkeypatch.setattr(notify, "get_settings", lambda: _settings(ntfy_token="fictional-token"))
     seen = _capture(monkeypatch)
 
     assert await notify.send("Hello", "body") is True
@@ -91,9 +90,7 @@ async def test_send_failure_returns_false_never_raises(
 async def test_send_disabled_short_circuits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        notify, "get_settings", lambda: _settings(notifications_enabled=False)
-    )
+    monkeypatch.setattr(notify, "get_settings", lambda: _settings(notifications_enabled=False))
     seen = _capture(monkeypatch)
     assert await notify.send("Hello", "body") is True
     assert seen == []

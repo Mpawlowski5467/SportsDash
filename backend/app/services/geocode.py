@@ -13,6 +13,7 @@ relies on the never-raise contract (one un-geocodable venue must not abort
 a whole refresh).  Results are cached on the team row by the scheduler, so
 a resolved team is never geocoded again.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -54,9 +55,7 @@ async def geocode(query: str) -> tuple[float, float] | None:
     try:
         async with _rate_lock:
             await _respect_rate_limit()
-            client = http_client.get_client(
-                "geocode", timeout=_TIMEOUT, headers=_HEADERS
-            )
+            client = http_client.get_client("geocode", timeout=_TIMEOUT, headers=_HEADERS)
             response = await client.get(_NOMINATIM_URL, params=params)
             _mark_request()
             response.raise_for_status()

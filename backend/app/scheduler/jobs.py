@@ -10,6 +10,7 @@ Writes go through ``app.services.repository`` inside
 short write scope per source so a failing source can't poison the
 transaction of a healthy one.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -158,6 +159,7 @@ def _provider_for(league: domain.League):
 # Leaderboard (golf) helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_golf(league: domain.League) -> bool:
     return league.sport is Sport.GOLF
 
@@ -179,9 +181,7 @@ def _golfer_id_map(teams: list[domain.Team], leagues: dict[str, domain.League]) 
     return mapping
 
 
-def _tag_followed_golfers(
-    event: domain.Event, espn_to_internal: dict[str, str]
-) -> domain.Event:
+def _tag_followed_golfers(event: domain.Event, espn_to_internal: dict[str, str]) -> domain.Event:
     """Rewrite each leaderboard row's ``player_id`` to the internal id.
 
     The provider carries the ESPN athlete id transiently in
@@ -202,6 +202,7 @@ def _tag_followed_golfers(
 # Refresh jobs
 # ---------------------------------------------------------------------------
 
+
 async def _fetch_and_upsert_schedule(provider, league, team, start, end, *, label: str) -> None:
     """Fetch a team's schedule in one league and merge it; isolate failures.
 
@@ -216,7 +217,9 @@ async def _fetch_and_upsert_schedule(provider, league, team, start, end, *, labe
             touched = await repository.upsert_games(session, games)
         logger.info(
             "refresh_schedules: %s — %d game(s) fetched, %d row(s) touched",
-            label, len(games), touched,
+            label,
+            len(games),
+            touched,
         )
     except Exception:
         logger.exception("refresh_schedules: failed for %s — skipping", label)
@@ -252,16 +255,15 @@ async def refresh_schedules() -> None:
                 continue
             provider = _provider_for(league)
             if provider is not None:
-                await _fetch_and_upsert_schedule(
-                    provider, league, team, start, end, label=team.id
-                )
+                await _fetch_and_upsert_schedule(provider, league, team, start, end, label=team.id)
 
             for sib_league_id, provider_key in competitions.get(team.id, ()):
                 sib_league = leagues.get(sib_league_id)
                 if sib_league is None:
                     logger.error(
                         "Team %r references unknown competition %r — skipping",
-                        team.id, sib_league_id,
+                        team.id,
+                        sib_league_id,
                     )
                     continue
                 sib_provider = _provider_for(sib_league)
@@ -271,7 +273,11 @@ async def refresh_schedules() -> None:
                 # ESPN nations) — keep its own slug/league for id-merging.
                 sib_team = replace(team, league_id=sib_league_id, provider_key=provider_key)
                 await _fetch_and_upsert_schedule(
-                    sib_provider, sib_league, sib_team, start, end,
+                    sib_provider,
+                    sib_league,
+                    sib_team,
+                    start,
+                    end,
                     label=f"{team.id}@{sib_league_id}",
                 )
 
@@ -295,7 +301,9 @@ async def refresh_schedules() -> None:
                     touched = await repository.upsert_games(session, games)
                 logger.info(
                     "refresh_schedules: competition %s — %d game(s) fetched, %d row(s) touched",
-                    league.id, len(games), touched,
+                    league.id,
+                    len(games),
+                    touched,
                 )
             except Exception:
                 logger.exception(
@@ -356,7 +364,9 @@ async def _refresh_events(
                 touched = await repository.upsert_events(session, tagged)
             logger.info(
                 "refresh_schedules: events %s — %d event(s) fetched, %d row(s) touched",
-                league_id, len(events), touched,
+                league_id,
+                len(events),
+                touched,
             )
         except Exception:
             logger.exception(
@@ -382,9 +392,7 @@ async def refresh_standings_for_league(league: domain.League) -> None:
         standings = await provider.get_standings(league)
         async with session_scope() as session:
             await repository.save_standings(session, standings)
-        logger.info(
-            "refresh_standings: %s — %d row(s)", league.id, len(standings.rows)
-        )
+        logger.info("refresh_standings: %s — %d row(s)", league.id, len(standings.rows))
     except Exception:
         logger.exception("refresh_standings: failed for league %r — skipping", league.id)
 
@@ -419,13 +427,9 @@ async def _attach_player_photos(
 
     async def fetch(player: domain.Player) -> str | None:
         try:
-            return await player_photos.lookup_photo(
-                player.name, team_name=team.name, sport=sport
-            )
+            return await player_photos.lookup_photo(player.name, team_name=team.name, sport=sport)
         except Exception:
-            logger.exception(
-                "refresh_rosters: photo lookup failed for %r — skipping", player.name
-            )
+            logger.exception("refresh_rosters: photo lookup failed for %r — skipping", player.name)
             return None
 
     photos = await asyncio.gather(*(fetch(player) for player in targets))
@@ -462,9 +466,7 @@ async def refresh_rosters() -> None:
                     roster = await _attach_player_photos(roster, team, league.sport.value)
                 async with session_scope() as session:
                     await repository.replace_roster(session, roster)
-                logger.info(
-                    "refresh_rosters: %s — %d player(s)", team.id, len(roster.players)
-                )
+                logger.info("refresh_rosters: %s — %d player(s)", team.id, len(roster.players))
             except Exception:
                 logger.exception("refresh_rosters: failed for team %r — skipping", team.id)
     except Exception:
@@ -533,9 +535,7 @@ async def _resolve_team_location(
     try:
         location = await provider.get_team_location(league, team)
     except Exception:
-        logger.exception(
-            "refresh_locations: get_team_location failed for %s — continuing", team.id
-        )
+        logger.exception("refresh_locations: get_team_location failed for %s — continuing", team.id)
 
     # (2) TheSportsDB enrichment by team name (venue + facts + often coords).
     enrichment = await stadiums.lookup_stadium(team.name, sport=league.sport.value)
@@ -552,16 +552,15 @@ async def _resolve_team_location(
         async with session_scope() as session:
             venue = await repository.most_common_home_venue(session, team.id)
     if not venue:
-        logger.info(
-            "refresh_locations: no venue known for %s — skipping for now", team.id
-        )
+        logger.info("refresh_locations: no venue known for %s — skipping for now", team.id)
         return None
 
     coords = await geocode.geocode_venue(venue)
     if coords is None:
         logger.info(
             "refresh_locations: could not geocode venue %r for %s — skipping",
-            venue, team.id,
+            venue,
+            team.id,
         )
         return None
     lat, lon = coords
@@ -597,7 +596,8 @@ async def refresh_locations() -> None:
             if league is None:
                 logger.error(
                     "refresh_locations: team %r references unknown league %r — skipping",
-                    team.id, team.league_id,
+                    team.id,
+                    team.league_id,
                 )
                 continue
             provider = _provider_for(league)
@@ -623,15 +623,17 @@ async def refresh_locations() -> None:
                 resolved += 1
                 logger.info(
                     "refresh_locations: %s located at %r (%.4f, %.4f)",
-                    team.id, location.venue, location.lat, location.lon,
+                    team.id,
+                    location.venue,
+                    location.lat,
+                    location.lon,
                 )
             except Exception:
-                logger.exception(
-                    "refresh_locations: failed for team %r — skipping", team.id
-                )
+                logger.exception("refresh_locations: failed for team %r — skipping", team.id)
         logger.info(
             "refresh_locations: resolved %d of %d pending team(s)",
-            resolved, len(pending),
+            resolved,
+            len(pending),
         )
     except Exception:
         logger.exception("refresh_locations failed")
@@ -670,11 +672,7 @@ async def refresh_team_info() -> None:
         leagues, _ = await _load_leagues_and_teams()
         async with session_scope() as session:
             team_rows = await repository.list_teams(session)
-            pending = [
-                _team_from_row(row)
-                for row in team_rows
-                if row.description is None
-            ]
+            pending = [_team_from_row(row) for row in team_rows if row.description is None]
 
         resolved = 0
         for team in pending:
@@ -694,12 +692,11 @@ async def refresh_team_info() -> None:
                     )
                 resolved += 1
             except Exception:
-                logger.exception(
-                    "refresh_team_info: failed for team %r — skipping", team.id
-                )
+                logger.exception("refresh_team_info: failed for team %r — skipping", team.id)
         logger.info(
             "refresh_team_info: resolved %d of %d pending team(s)",
-            resolved, len(pending),
+            resolved,
+            len(pending),
         )
     except Exception:
         logger.exception("refresh_team_info failed")
@@ -708,6 +705,7 @@ async def refresh_team_info() -> None:
 # ---------------------------------------------------------------------------
 # Whole-competition stadium cache (map view)
 # ---------------------------------------------------------------------------
+
 
 def _competition_active_window(now=None) -> tuple[datetime, datetime]:
     """The near window a ``follow_all`` league must have a game in to be active."""
@@ -730,14 +728,10 @@ async def active_follow_all_leagues() -> list[domain.League]:
         rows = await repository.list_follow_all_leagues(session)
         for row in rows:
             try:
-                if await repository.league_has_games_in_window(
-                    session, row.id, start, end
-                ):
+                if await repository.league_has_games_in_window(session, row.id, start, end):
                     active.append(_league_from_row(row))
             except Exception:
-                logger.exception(
-                    "active_follow_all_leagues: bad league row %r — skipping", row.id
-                )
+                logger.exception("active_follow_all_leagues: bad league row %r — skipping", row.id)
     return active
 
 
@@ -758,9 +752,7 @@ async def all_follow_all_leagues() -> list[domain.League]:
         try:
             leagues.append(_league_from_row(row))
         except Exception:
-            logger.exception(
-                "all_follow_all_leagues: bad league row %r — skipping", row.id
-            )
+            logger.exception("all_follow_all_leagues: bad league row %r — skipping", row.id)
     return leagues
 
 
@@ -785,20 +777,14 @@ async def _resolve_competition_stadium(
     """
     enrichment: domain.TeamLocation | None = None
     try:
-        enrichment = await stadiums.lookup_stadium(
-            team.name, sport=league.sport.value
-        )
+        enrichment = await stadiums.lookup_stadium(team.name, sport=league.sport.value)
     except Exception:
         logger.exception(
             "refresh_competition_stadiums: enrichment failed for %s — continuing",
             team.name,
         )
 
-    if (
-        enrichment is not None
-        and enrichment.lat is not None
-        and enrichment.lon is not None
-    ):
+    if enrichment is not None and enrichment.lat is not None and enrichment.lon is not None:
         return enrichment
 
     venue = enrichment.venue if enrichment is not None else None
@@ -808,9 +794,7 @@ async def _resolve_competition_stadium(
     try:
         coords = await geocode.geocode_venue(venue)
     except Exception:
-        logger.exception(
-            "refresh_competition_stadiums: geocode failed for %r — skipping", venue
-        )
+        logger.exception("refresh_competition_stadiums: geocode failed for %r — skipping", venue)
         return None
     if coords is None:
         return None
@@ -885,8 +869,7 @@ async def _refresh_competition_stadiums() -> None:
                         cached is not None
                         and cached.resolved
                         and cached.fetched_at is not None
-                        and utcnow() - ensure_utc(cached.fetched_at)
-                        < _STADIUM_MISS_RETRY
+                        and utcnow() - ensure_utc(cached.fetched_at) < _STADIUM_MISS_RETRY
                     ):
                         # Missed recently (often a transient TheSportsDB 429,
                         # not a real "no stadium") — retry after the cooldown
@@ -914,14 +897,17 @@ async def _refresh_competition_stadiums() -> None:
                 except Exception:
                     logger.exception(
                         "refresh_competition_stadiums: failed resolving %s (%s) — skipping",
-                        team.name, key,
+                        team.name,
+                        key,
                     )
                 # Pace external calls regardless of outcome.
                 await asyncio.sleep(_COMPETITION_RESOLVE_DELAY_SECONDS)
 
             logger.info(
                 "refresh_competition_stadiums: %s — %d/%d team stadium(s) located",
-                league.id, resolved, len(teams),
+                league.id,
+                resolved,
+                len(teams),
             )
     except Exception:
         logger.exception("refresh_competition_stadiums failed")
@@ -948,9 +934,7 @@ async def refresh_game_venue_coords() -> None:
             league_ids = await repository.map_relevant_league_ids(session)
             if not league_ids:
                 return
-            games = await repository.upcoming_games_for_leagues(
-                session, league_ids, now, end
-            )
+            games = await repository.upcoming_games_for_leagues(session, league_ids, now, end)
             index = venue_coords.build_index(
                 await repository.list_teams_with_location(session),
                 await repository.list_located_stadiums(session),
@@ -975,9 +959,7 @@ async def refresh_game_venue_coords() -> None:
             coords = await geocode.geocode_venue(venue)
             await venue_coords.set_coords(venue, coords)
         if pending:
-            logger.info(
-                "refresh_game_venue_coords: geocoded %d game venue(s)", len(pending)
-            )
+            logger.info("refresh_game_venue_coords: geocoded %d game venue(s)", len(pending))
     except Exception:
         logger.exception("refresh_game_venue_coords failed")
 
@@ -1182,6 +1164,7 @@ def kick_standings_refresh(leagues: list[domain.League]) -> None:
 # Live polling
 # ---------------------------------------------------------------------------
 
+
 async def _notify_once(session, event: GameEvent) -> None:
     """Send an event unless already sent; record it only on confirmed delivery."""
     try:
@@ -1232,20 +1215,14 @@ async def _resend_missed_finals(session, prefs, now) -> None:
         try:
             state = repository.state_from_row(row)
             team_ids = _row_team_ids(row)
-            for event in diff_states(
-                None, state, home_name=row.home_name, away_name=row.away_name
-            ):
+            for event in diff_states(None, state, home_name=row.home_name, away_name=row.away_name):
                 if event.type is not EventType.FINAL:
                     continue
-                if not notify_prefs.decide(
-                    prefs, event.type.value, team_ids, row.league_id
-                ):
+                if not notify_prefs.decide(prefs, event.type.value, team_ids, row.league_id):
                     continue
                 await _notify_once(session, event)
         except Exception:
-            logger.exception(
-                "live_tick: resending final for %r failed — skipping", row.id
-            )
+            logger.exception("live_tick: resending final for %r failed — skipping", row.id)
     await session.commit()
 
 
@@ -1350,12 +1327,9 @@ async def live_tick() -> None:
                     # overdue to start but listed under a different scoreboard
                     # day than the one we queried.
                     overdue = (
-                        row.phase == GamePhase.SCHEDULED.value
-                        and ensure_utc(row.start_time) <= now
+                        row.phase == GamePhase.SCHEDULED.value and ensure_utc(row.start_time) <= now
                     )
-                    if new_state is None and (
-                        row.phase == GamePhase.IN_PROGRESS.value or overdue
-                    ):
+                    if new_state is None and (row.phase == GamePhase.IN_PROGRESS.value or overdue):
                         try:
                             new_state = await provider.get_game_state(
                                 league, _provider_game_key(row.id)
@@ -1392,15 +1366,10 @@ async def live_tick() -> None:
                         # standings get one near-real-time refresh.  Recorded
                         # only after the commit so a rolled-back game can't
                         # trigger a refresh on stale data.
-                        if (
-                            prev.phase is not GamePhase.FINAL
-                            and new_state.phase is GamePhase.FINAL
-                        ):
+                        if prev.phase is not GamePhase.FINAL and new_state.phase is GamePhase.FINAL:
                             finalized_leagues.setdefault(league.id, league)
                     except Exception:
-                        logger.exception(
-                            "live_tick: failed processing %r — skipping", row.id
-                        )
+                        logger.exception("live_tick: failed processing %r — skipping", row.id)
                         await session.rollback()
                         continue
 
@@ -1415,6 +1384,7 @@ async def live_tick() -> None:
 # ---------------------------------------------------------------------------
 # Leaderboard (golf) live polling
 # ---------------------------------------------------------------------------
+
 
 def _event_provider_key(event_id: str) -> str:
     return event_id.split(":", 1)[1] if ":" in event_id else event_id
@@ -1490,9 +1460,7 @@ async def _resend_missed_event_finals(session, prefs, now) -> None:
     settings = get_settings()
     lookback = timedelta(hours=settings.resend_final_lookback_hours)
     try:
-        rows = await repository.event_finals_missing_notification(
-            session, now, lookback
-        )
+        rows = await repository.event_finals_missing_notification(session, now, lookback)
     except Exception:
         logger.exception("events_tick: querying missed finals failed — skipping resend")
         return
@@ -1504,18 +1472,12 @@ async def _resend_missed_event_finals(session, prefs, now) -> None:
             event = _final_event(event_obj)
             if event is None:
                 continue
-            followed_ids = [
-                r.player_id for r in event_obj.leaderboard if r.player_id is not None
-            ]
-            if not notify_prefs.decide(
-                prefs, event.type.value, followed_ids, row.league_id
-            ):
+            followed_ids = [r.player_id for r in event_obj.leaderboard if r.player_id is not None]
+            if not notify_prefs.decide(prefs, event.type.value, followed_ids, row.league_id):
                 continue
             await _notify_once(session, event)
         except Exception:
-            logger.exception(
-                "events_tick: resending final for %r failed — skipping", row.id
-            )
+            logger.exception("events_tick: resending final for %r failed — skipping", row.id)
     await session.commit()
 
 
@@ -1561,7 +1523,8 @@ async def events_tick() -> None:
                 if league is None:
                     logger.error(
                         "events_tick: event %r references unknown league %r — skipping",
-                        row.id, row.league_id,
+                        row.id,
+                        row.league_id,
                     )
                     continue
                 provider = _provider_for(league)
@@ -1569,9 +1532,7 @@ async def events_tick() -> None:
                     continue
 
                 try:
-                    fresh = await provider.get_event_state(
-                        league, _event_provider_key(row.id)
-                    )
+                    fresh = await provider.get_event_state(league, _event_provider_key(row.id))
                 except Exception:
                     logger.exception(
                         "events_tick: get_event_state failed for %r — skipping", row.id
@@ -1589,9 +1550,7 @@ async def events_tick() -> None:
                         event = _final_event(tagged)
                         if event is not None:
                             followed_ids = [
-                                r.player_id
-                                for r in tagged.leaderboard
-                                if r.player_id is not None
+                                r.player_id for r in tagged.leaderboard if r.player_id is not None
                             ]
                             if notify_prefs.decide(
                                 prefs, event.type.value, followed_ids, row.league_id
@@ -1604,9 +1563,7 @@ async def events_tick() -> None:
                     if tagged.phase is GamePhase.FINAL:
                         finalized_leagues.setdefault(league.id, league)
                 except Exception:
-                    logger.exception(
-                        "events_tick: failed processing %r — skipping", row.id
-                    )
+                    logger.exception("events_tick: failed processing %r — skipping", row.id)
                     await session.rollback()
                     continue
 
@@ -1619,6 +1576,7 @@ async def events_tick() -> None:
 # ---------------------------------------------------------------------------
 # Scheduler wiring
 # ---------------------------------------------------------------------------
+
 
 def setup_scheduler() -> AsyncIOScheduler:
     """Build the scheduler with all jobs registered.  Caller starts it."""

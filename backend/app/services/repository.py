@@ -9,6 +9,7 @@ single-user app with no write concurrency, so the portable approach is
 preferred over dialect-specific ``ON CONFLICT`` clauses (must run on
 both sqlite and postgres).
 """
+
 from __future__ import annotations
 
 import logging
@@ -69,9 +70,7 @@ async def list_leagues(session: AsyncSession) -> list[LeagueORM]:
     return list(result.scalars().all())
 
 
-async def list_teams(
-    session: AsyncSession, league_id: str | None = None
-) -> list[TeamORM]:
+async def list_teams(session: AsyncSession, league_id: str | None = None) -> list[TeamORM]:
     stmt = select(TeamORM).order_by(TeamORM.id)
     if league_id is not None:
         stmt = stmt.where(TeamORM.league_id == league_id)
@@ -370,9 +369,7 @@ async def upsert_games(session: AsyncSession, games: Sequence[domain.Game]) -> i
     return touched
 
 
-async def apply_game_state(
-    session: AsyncSession, state: domain.GameState
-) -> GameORM | None:
+async def apply_game_state(session: AsyncSession, state: domain.GameState) -> GameORM | None:
     row = await session.get(GameORM, state.game_id)
     if row is None:
         return None
@@ -391,9 +388,7 @@ def state_from_row(row: GameORM) -> domain.GameState:
         clock=row.clock,
         is_intermission=row.is_intermission,
         last_update=(
-            ensure_utc(row.state_updated_at)
-            if row.state_updated_at is not None
-            else None
+            ensure_utc(row.state_updated_at) if row.state_updated_at is not None else None
         ),
     )
 
@@ -518,9 +513,7 @@ async def games_between(
         .order_by(GameORM.start_time.asc(), GameORM.id.asc())
     )
     if team_id is not None:
-        stmt = stmt.where(
-            or_(GameORM.home_team_id == team_id, GameORM.away_team_id == team_id)
-        )
+        stmt = stmt.where(or_(GameORM.home_team_id == team_id, GameORM.away_team_id == team_id))
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
@@ -560,9 +553,7 @@ async def upcoming_games_for_leagues(
     return list(result.scalars().all())
 
 
-async def list_league_games(
-    session: AsyncSession, league_id: str
-) -> list[GameORM]:
+async def list_league_games(session: AsyncSession, league_id: str) -> list[GameORM]:
     """Every stored game for a league, oldest first.
 
     Used by the map to place each whole-competition team at the venue of
@@ -577,9 +568,7 @@ async def list_league_games(
     return list(result.scalars().all())
 
 
-async def results_for_team(
-    session: AsyncSession, team_id: str, limit: int = 25
-) -> list[GameORM]:
+async def results_for_team(session: AsyncSession, team_id: str, limit: int = 25) -> list[GameORM]:
     stmt = (
         select(GameORM)
         .where(
@@ -640,9 +629,7 @@ async def recent_finals_for_name(
     return list(result.scalars().all())
 
 
-async def most_common_home_venue(
-    session: AsyncSession, team_id: str
-) -> str | None:
+async def most_common_home_venue(session: AsyncSession, team_id: str) -> str | None:
     """The venue a team hosts at most often, from stored home games.
 
     A geocode fallback for the location job: when a provider yields no
@@ -857,9 +844,7 @@ async def save_standings(session: AsyncSession, standings: domain.Standings) -> 
     # follow so stored rows never point at deleted teams.  (Queried
     # before the StandingsORM row is added — autoflush would otherwise
     # flush a half-built row.)
-    known_ids = set(
-        (await session.execute(select(TeamORM.id))).scalars().all()
-    )
+    known_ids = set((await session.execute(select(TeamORM.id))).scalars().all())
     row = await session.get(StandingsORM, standings.league_id)
     if row is None:
         row = StandingsORM(league_id=standings.league_id)
@@ -867,17 +852,14 @@ async def save_standings(session: AsyncSession, standings: domain.Standings) -> 
     row.season = standings.season
     row.rows = [
         _standing_row_to_dict(
-            r if (r.team_id is None or r.team_id in known_ids)
-            else replace(r, team_id=None)
+            r if (r.team_id is None or r.team_id in known_ids) else replace(r, team_id=None)
         )
         for r in standings.rows
     ]
     row.fetched_at = ensure_utc(standings.fetched_at)
 
 
-async def get_standings(
-    session: AsyncSession, league_id: str
-) -> StandingsORM | None:
+async def get_standings(session: AsyncSession, league_id: str) -> StandingsORM | None:
     return await session.get(StandingsORM, league_id)
 
 
@@ -909,11 +891,7 @@ async def replace_roster(session: AsyncSession, roster: domain.Roster) -> None:
 
 
 async def get_roster(session: AsyncSession, team_id: str) -> list[PlayerORM]:
-    stmt = (
-        select(PlayerORM)
-        .where(PlayerORM.team_id == team_id)
-        .order_by(PlayerORM.name.asc())
-    )
+    stmt = select(PlayerORM).where(PlayerORM.team_id == team_id).order_by(PlayerORM.name.asc())
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
@@ -943,9 +921,7 @@ async def upsert_news(session: AsyncSession, items: Sequence[domain.NewsItem]) -
                 url=item.url,
                 source=_clip(item.source, 128) or "",
                 published_at=(
-                    ensure_utc(item.published_at)
-                    if item.published_at is not None
-                    else None
+                    ensure_utc(item.published_at) if item.published_at is not None else None
                 ),
                 summary=item.summary,
                 image_url=item.image_url,
@@ -1043,9 +1019,7 @@ async def replace_followed(
         await upsert_team(session, team)
     for team_id, league_id, provider_key in competitions or ():
         session.add(
-            TeamCompetitionORM(
-                team_id=team_id, league_id=league_id, provider_key=provider_key
-            )
+            TeamCompetitionORM(team_id=team_id, league_id=league_id, provider_key=provider_key)
         )
 
 
@@ -1074,9 +1048,7 @@ async def map_relevant_league_ids(session: AsyncSession) -> list[str]:
     at least one followed team — i.e. the user follows games there in whole
     or in part.  Sorted, de-duplicated.
     """
-    follow_all = await session.execute(
-        select(LeagueORM.id).where(LeagueORM.follow_all.is_(True))
-    )
+    follow_all = await session.execute(select(LeagueORM.id).where(LeagueORM.follow_all.is_(True)))
     with_teams = await session.execute(select(TeamORM.league_id).distinct())
     ids = set(follow_all.scalars().all()) | set(with_teams.scalars().all())
     return sorted(ids)
@@ -1103,9 +1075,7 @@ async def mark_notified(session: AsyncSession, dedupe_key: str) -> None:
 
 async def get_notification_prefs(session: AsyncSession) -> list[NotificationPrefORM]:
     """Every stored per-scope preference row, ordered by scope."""
-    result = await session.execute(
-        select(NotificationPrefORM).order_by(NotificationPrefORM.scope)
-    )
+    result = await session.execute(select(NotificationPrefORM).order_by(NotificationPrefORM.scope))
     return list(result.scalars().all())
 
 

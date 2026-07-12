@@ -1,0 +1,51 @@
+name: Release desktop app
+
+# Builds the macOS .dmg (PyInstaller-frozen backend sidecar + Tauri
+# shell) and attaches it to the GitHub Release for the tag.
+#
+# NOTE: without an Apple Developer ID the app is unsigned — users must
+# right-click → Open past Gatekeeper (see docs/desktop.md, and the
+# code-signing item on ROADMAP.md).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # create the release + upload the asset
+
+jobs:
+  macos-dmg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+      - name: Build SportsDash.app + .dmg
+        run: ./scripts/build-desktop.sh
+      - name: Locate artifacts
+        id: artifacts
+        run: |
+          dmg=$(ls frontend/src-tauri/target/release/bundle/dmg/*.dmg | head -1)
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.artifacts.outputs.dmg }}
+          generate_release_notes: true
+      - name: Upload workflow artifact (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: SportsDash-dmg
+          path: ${{ steps.artifacts.outputs.dmg }}

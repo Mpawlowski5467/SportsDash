@@ -30,6 +30,7 @@ network call is wrapped so a failure (HTTP error, non-JSON body, timeout)
 is logged and degrades to an empty/None result rather than raising out;
 the scheduler relies on this never-raise contract.
 """
+
 from __future__ import annotations
 
 import logging
@@ -75,6 +76,7 @@ _SCHEDULED_TOKENS = ("NS", "NOT STARTED", "SCHEDULED", "TBD", "PST", "POSTP")
 # ---------------------------------------------------------------------------
 # Low-level coercion helpers
 # ---------------------------------------------------------------------------
+
 
 def _coerce_int(value: Any) -> int | None:
     """Best-effort int from TheSportsDB's string-encoded numbers."""
@@ -151,6 +153,7 @@ def _parse_clock(text: str | None) -> time:
 # Status / phase normalization
 # ---------------------------------------------------------------------------
 
+
 def _map_phase(event: dict[str, Any]) -> GamePhase:
     """Map ``strStatus`` / ``strProgress`` onto a :class:`GamePhase`.
 
@@ -174,9 +177,10 @@ def _map_phase(event: dict[str, Any]) -> GamePhase:
         # marker (a set number, "Set 3", "LIVE", …).
         return GamePhase.IN_PROGRESS
     # No status at all: infer from whether the match has a recorded score.
-    if _coerce_int(event.get("intHomeScore")) is not None or _coerce_int(
-        event.get("intAwayScore")
-    ) is not None:
+    if (
+        _coerce_int(event.get("intHomeScore")) is not None
+        or _coerce_int(event.get("intAwayScore")) is not None
+    ):
         return GamePhase.FINAL
     return GamePhase.SCHEDULED
 
@@ -230,6 +234,7 @@ def _build_state(game_id: str, event: dict[str, Any]) -> GameState:
 # ---------------------------------------------------------------------------
 # Pure parsers (take already-fetched JSON, never raise on bad records)
 # ---------------------------------------------------------------------------
+
 
 def _parse_event(event: Any, league: League, team: Team | None = None) -> Game | None:
     """Parse a single TheSportsDB event; None (+warning) if malformed."""
@@ -287,9 +292,7 @@ def _parse_events(data: Any, league: League, team: Team | None = None) -> list[G
     events = data.get("events") if isinstance(data, dict) else None
     if not isinstance(events, list):
         return []
-    return [
-        game for event in events if (game := _parse_event(event, league, team)) is not None
-    ]
+    return [game for event in events if (game := _parse_event(event, league, team)) is not None]
 
 
 def _games_for_team(games: list[Game], team: Team) -> list[Game]:
@@ -298,11 +301,7 @@ def _games_for_team(games: list[Game], team: Team) -> list[Game]:
     Matching is by the internal team id (set on the matching side during
     parsing) so it tolerates name changes / aliases.
     """
-    return [
-        game
-        for game in games
-        if game.home_team_id == team.id or game.away_team_id == team.id
-    ]
+    return [game for game in games if game.home_team_id == team.id or game.away_team_id == team.id]
 
 
 def _parse_standing_row(
@@ -341,9 +340,7 @@ def _parse_standing_row(
         return None
 
 
-def _parse_standings(
-    data: Any, league: League, season: str, team: Team | None = None
-) -> Standings:
+def _parse_standings(data: Any, league: League, season: str, team: Team | None = None) -> Standings:
     """Parse a ``lookuptable.php`` payload into :class:`Standings`.
 
     Volleyball tables are flat (no conferences), so ``group`` is always
@@ -359,9 +356,7 @@ def _parse_standings(
             if result is not None:
                 parsed.append(result)
     parsed.sort(key=lambda item: (item[0] <= 0, item[0], -item[1].wins, item[1].team_name))
-    rows = tuple(
-        replace(row, rank=index + 1) for index, (_, row) in enumerate(parsed)
-    )
+    rows = tuple(replace(row, rank=index + 1) for index, (_, row) in enumerate(parsed))
     return Standings(
         league_id=league.id,
         season=season,
@@ -411,9 +406,7 @@ def _parse_player(player: Any, team: Team) -> Player | None:
             photo_url=photo_url,
         )
     except Exception:
-        logger.warning(
-            "Skipping malformed TheSportsDB player for team %s", team.id, exc_info=True
-        )
+        logger.warning("Skipping malformed TheSportsDB player for team %s", team.id, exc_info=True)
         return None
 
 
@@ -510,6 +503,7 @@ def _parse_team_location(data: Any) -> TeamLocation | None:
 # Provider
 # ---------------------------------------------------------------------------
 
+
 class TheSportsDbProvider:
     """``SportsProvider`` adapter for TheSportsDB's free-tier API (volleyball).
 
@@ -562,15 +556,11 @@ class TheSportsDbProvider:
                 return None
             data = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            logger.warning(
-                "TheSportsDB request failed (%s params=%s): %s", endpoint, params, exc
-            )
+            logger.warning("TheSportsDB request failed (%s params=%s): %s", endpoint, params, exc)
             return None
         return data if isinstance(data, dict) else None
 
-    async def get_schedule(
-        self, league: League, team: Team, start: date, end: date
-    ) -> list[Game]:
+    async def get_schedule(self, league: League, team: Team, start: date, end: date) -> list[Game]:
         """``team``'s games in ``[start, end]`` from the league's past + next feeds.
 
         Both ``eventspastleague`` (completed) and ``eventsnextleague``
@@ -612,13 +602,9 @@ class TheSportsDbProvider:
                 continue
             for game in _parse_events(data, league):
                 games.setdefault(game.id, game)
-        return [
-            game for game in games.values() if game.start_time.date() == today
-        ]
+        return [game for game in games.values() if game.start_time.date() == today]
 
-    async def get_competition_schedule(
-        self, league: League, start: date, end: date
-    ) -> list[Game]:
+    async def get_competition_schedule(self, league: League, start: date, end: date) -> list[Game]:
         """Whole-competition follows are not supported here; return ``[]``.
 
         Volleyball leagues are followed by team, not whole-competition, and
@@ -627,9 +613,7 @@ class TheSportsDbProvider:
         """
         return []
 
-    async def get_game_state(
-        self, league: League, provider_game_key: str
-    ) -> GameState | None:
+    async def get_game_state(self, league: League, provider_game_key: str) -> GameState | None:
         """Current state of a single event via ``lookupevent.php``.
 
         Returns None when the event is unknown or the call fails.
@@ -642,9 +626,7 @@ class TheSportsDbProvider:
             return None
         return _build_state(f"thesportsdb:{provider_game_key}", events[0])
 
-    async def get_game_summary(
-        self, league: League, provider_game_key: str
-    ) -> GameSummary | None:
+    async def get_game_summary(self, league: League, provider_game_key: str) -> GameSummary | None:
         """No box-score drill-down on the free tier; always ``None``.
 
         TheSportsDB's free tier exposes no per-period / per-performer box
@@ -653,9 +635,7 @@ class TheSportsDbProvider:
         """
         return None
 
-    async def get_game_odds(
-        self, league: League, provider_game_key: str
-    ) -> GameOdds | None:
+    async def get_game_odds(self, league: League, provider_game_key: str) -> GameOdds | None:
         """No betting lines / win-probability on the free tier; always ``None``."""
         return None
 
@@ -698,16 +678,12 @@ class TheSportsDbProvider:
         National-team rosters are often empty on the free tier; an empty or
         failed response yields an empty Roster, never a crash.
         """
-        data = await self._get_json(
-            "lookup_all_players.php", {"id": str(team.provider_key)}
-        )
+        data = await self._get_json("lookup_all_players.php", {"id": str(team.provider_key)})
         if data is None:
             return Roster(team_id=team.id, players=(), fetched_at=timeutil.utcnow())
         return _parse_roster(data, team)
 
-    async def get_team_location(
-        self, league: League, team: Team
-    ) -> TeamLocation | None:
+    async def get_team_location(self, league: League, team: Team) -> TeamLocation | None:
         """Home venue (+ any coordinates) via ``lookupteam.php``.
 
         Returns the stadium name plus a location string for geocode context
@@ -716,9 +692,7 @@ class TheSportsDbProvider:
         raises: a failed/empty/coord-less response degrades to ``None`` or a
         venue-name-only ``TeamLocation``.
         """
-        data = await self._get_json(
-            "lookupteam.php", {"id": str(team.provider_key)}
-        )
+        data = await self._get_json("lookupteam.php", {"id": str(team.provider_key)})
         if data is None:
             return None
         return _parse_team_location(data)
@@ -727,9 +701,7 @@ class TheSportsDbProvider:
         """Volleyball is not a leaderboard sport; no Events."""
         return []
 
-    async def get_event_state(
-        self, league: League, provider_event_key: str
-    ) -> Event | None:
+    async def get_event_state(self, league: League, provider_event_key: str) -> Event | None:
         """Volleyball is not a leaderboard sport; no Event state."""
         return None
 

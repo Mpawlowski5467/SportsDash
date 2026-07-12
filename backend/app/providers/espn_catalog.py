@@ -10,6 +10,7 @@ for an hour.
 Real league/team names are allowed here — the catalog and whatever the
 user picks from it are live app data, not sample data.
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,27 +42,27 @@ class EspnCatalogError(Exception):
 
 @dataclass(frozen=True)
 class CatalogLeague:
-    id: str                # internal league slug used app-wide once followed
+    id: str  # internal league slug used app-wide once followed
     name: str
     sport: Sport
-    provider: str          # provider id serving this league ("espn")
-    provider_key: str      # ESPN sport/league URL fragment
-    national: bool = False              # national-team competition (wizard grouping)
+    provider: str  # provider id serving this league ("espn")
+    provider_key: str  # ESPN sport/league URL fragment
+    national: bool = False  # national-team competition (wizard grouping)
     # Offer "follow the whole league/competition" (every game, no team picks).
     # Defaults True: ``get_competition_schedule`` works for every provider and
     # sport, so a fan can follow an entire league (NBA, the EPL, …) — not only
     # cups — without choosing a specific team.
     supports_follow_all: bool = True
-    logo_url: str | None = None         # league logo for the picker
+    logo_url: str | None = None  # league logo for the picker
 
 
 @dataclass(frozen=True)
 class CatalogTeam:
-    provider_key: str      # ESPN team id
+    provider_key: str  # ESPN team id
     name: str
     abbreviation: str
     logo_url: str | None = None
-    color: str | None = None   # "#"-prefixed hex
+    color: str | None = None  # "#"-prefixed hex
 
 
 # League ``logo_url`` values are live-verified ESPN CDN league logos
@@ -75,250 +76,390 @@ class CatalogTeam:
 # TheSportsDB volleyball catalog.  http:// hrefs are normalized to https://.
 CATALOG: tuple[CatalogLeague, ...] = (
     CatalogLeague(
-        id="nba", name="NBA", sport=Sport.BASKETBALL,
-        provider="espn", provider_key="basketball/nba",
+        id="nba",
+        name="NBA",
+        sport=Sport.BASKETBALL,
+        provider="espn",
+        provider_key="basketball/nba",
         logo_url="https://a.espncdn.com/i/teamlogos/leagues/500/nba.png",
     ),
     CatalogLeague(
-        id="wnba", name="WNBA", sport=Sport.BASKETBALL,
-        provider="espn", provider_key="basketball/wnba",
+        id="wnba",
+        name="WNBA",
+        sport=Sport.BASKETBALL,
+        provider="espn",
+        provider_key="basketball/wnba",
         logo_url="https://a.espncdn.com/i/teamlogos/leagues/500/wnba.png",
     ),
     CatalogLeague(
-        id="mlb", name="MLB", sport=Sport.BASEBALL,
-        provider="espn", provider_key="baseball/mlb",
+        id="mlb",
+        name="MLB",
+        sport=Sport.BASEBALL,
+        provider="espn",
+        provider_key="baseball/mlb",
         logo_url="https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png",
     ),
     CatalogLeague(
-        id="nhl", name="NHL", sport=Sport.HOCKEY,
-        provider="espn", provider_key="hockey/nhl",
+        id="nhl",
+        name="NHL",
+        sport=Sport.HOCKEY,
+        provider="espn",
+        provider_key="hockey/nhl",
         logo_url="https://a.espncdn.com/i/teamlogos/leagues/500/nhl.png",
     ),
     CatalogLeague(
-        id="nfl", name="NFL", sport=Sport.FOOTBALL,
-        provider="espn", provider_key="football/nfl",
+        id="nfl",
+        name="NFL",
+        sport=Sport.FOOTBALL,
+        provider="espn",
+        provider_key="football/nfl",
         logo_url="https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
     ),
     CatalogLeague(
-        id="epl", name="Premier League", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/eng.1",
+        id="epl",
+        name="Premier League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/eng.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/23.png",
     ),
     CatalogLeague(
-        id="laliga", name="LaLiga", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/esp.1",
+        id="laliga",
+        name="LaLiga",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/esp.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/15.png",
     ),
     CatalogLeague(
-        id="bundesliga", name="Bundesliga", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/ger.1",
+        id="bundesliga",
+        name="Bundesliga",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/ger.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/10.png",
     ),
     CatalogLeague(
-        id="seriea", name="Serie A", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/ita.1",
+        id="seriea",
+        name="Serie A",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/ita.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/12.png",
     ),
     CatalogLeague(
-        id="ligue1", name="Ligue 1", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fra.1",
+        id="ligue1",
+        name="Ligue 1",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/fra.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/9.png",
     ),
     CatalogLeague(
-        id="mls", name="MLS", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/usa.1",
+        id="mls",
+        name="MLS",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/usa.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/19.png",
     ),
     CatalogLeague(
-        id="ucl", name="Champions League", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/uefa.champions",
+        id="ucl",
+        name="Champions League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/uefa.champions",
         supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/2.png",
     ),
     # --- National-team competitions (global ESPN team ids) ---
     CatalogLeague(
-        id="worldcup", name="FIFA World Cup", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fifa.world",
-        national=True, supports_follow_all=True,
+        id="worldcup",
+        name="FIFA World Cup",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/fifa.world",
+        national=True,
+        supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/4.png",
     ),
     CatalogLeague(
-        id="womens-worldcup", name="FIFA Women's World Cup", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fifa.wwc",
-        national=True, supports_follow_all=True,
+        id="womens-worldcup",
+        name="FIFA Women's World Cup",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/fifa.wwc",
+        national=True,
+        supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/60.png",
     ),
     CatalogLeague(
-        id="euros", name="UEFA European Championship", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/uefa.euro",
-        national=True, supports_follow_all=True,
+        id="euros",
+        name="UEFA European Championship",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/uefa.euro",
+        national=True,
+        supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/74.png",
     ),
     CatalogLeague(
-        id="nations-league", name="UEFA Nations League", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/uefa.nations",
-        national=True, supports_follow_all=True,
+        id="nations-league",
+        name="UEFA Nations League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/uefa.nations",
+        national=True,
+        supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/2395.png",
     ),
     CatalogLeague(
-        id="copa-america", name="Copa América", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/conmebol.america",
-        national=True, supports_follow_all=True,
+        id="copa-america",
+        name="Copa América",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/conmebol.america",
+        national=True,
+        supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/83.png",
     ),
     # --- Club competitions (whole-competition follow, not national) ---
     CatalogLeague(
-        id="europa", name="UEFA Europa League", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/uefa.europa",
+        id="europa",
+        name="UEFA Europa League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/uefa.europa",
         supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/2310.png",
     ),
     CatalogLeague(
-        id="conference", name="UEFA Europa Conference League", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/uefa.europa.conf",
+        id="conference",
+        name="UEFA Europa Conference League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/uefa.europa.conf",
         supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/20296.png",
     ),
     CatalogLeague(
-        id="club-world-cup", name="FIFA Club World Cup", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fifa.cwc",
+        id="club-world-cup",
+        name="FIFA Club World Cup",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/fifa.cwc",
         supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/1932.png",
     ),
     # --- Domestic leagues (plain follow) ---
     CatalogLeague(
-        id="championship", name="EFL Championship", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/eng.2",
+        id="championship",
+        name="EFL Championship",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/eng.2",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/24.png",
     ),
     CatalogLeague(
-        id="scottish-prem", name="Scottish Premiership", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/sco.1",
+        id="scottish-prem",
+        name="Scottish Premiership",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/sco.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/45.png",
     ),
     CatalogLeague(
-        id="eredivisie", name="Eredivisie", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/ned.1",
+        id="eredivisie",
+        name="Eredivisie",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/ned.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/11.png",
     ),
     CatalogLeague(
-        id="liga-portugal", name="Liga Portugal", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/por.1",
+        id="liga-portugal",
+        name="Liga Portugal",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/por.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/14.png",
     ),
     CatalogLeague(
-        id="super-lig", name="Süper Lig", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/tur.1",
+        id="super-lig",
+        name="Süper Lig",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/tur.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/18.png",
     ),
     CatalogLeague(
-        id="liga-mx", name="Liga MX", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/mex.1",
+        id="liga-mx",
+        name="Liga MX",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/mex.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/22.png",
     ),
     CatalogLeague(
-        id="bundesliga-2", name="2. Bundesliga", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/ger.2",
+        id="bundesliga-2",
+        name="2. Bundesliga",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/ger.2",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/97.png",
     ),
     CatalogLeague(
-        id="laliga-2", name="LaLiga 2", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/esp.2",
+        id="laliga-2",
+        name="LaLiga 2",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/esp.2",
         # ESPN serves this one over http://; normalized to https://.
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/107.png",
     ),
     CatalogLeague(
-        id="ligue-2", name="Ligue 2", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fra.2",
+        id="ligue-2",
+        name="Ligue 2",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/fra.2",
         # ESPN serves this one over http://; normalized to https://.
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/96.png",
     ),
     # --- Lower English divisions (plain follow) ---
     CatalogLeague(
-        id="league-one", name="EFL League One", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/eng.3",
+        id="league-one",
+        name="EFL League One",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/eng.3",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/25.png",
     ),
     CatalogLeague(
-        id="league-two", name="EFL League Two", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/eng.4",
+        id="league-two",
+        name="EFL League Two",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/eng.4",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/26.png",
     ),
     # --- South American domestic leagues (plain follow) ---
     CatalogLeague(
-        id="brasileirao", name="Brasileirão Série A", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/bra.1",
+        id="brasileirao",
+        name="Brasileirão Série A",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/bra.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/85.png",
     ),
     CatalogLeague(
-        id="liga-argentina", name="Liga Profesional Argentina", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/arg.1",
+        id="liga-argentina",
+        name="Liga Profesional Argentina",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/arg.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/1.png",
     ),
     # --- South American continental cups (whole-competition follow) ---
     CatalogLeague(
-        id="libertadores", name="CONMEBOL Libertadores", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/conmebol.libertadores",
+        id="libertadores",
+        name="CONMEBOL Libertadores",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/conmebol.libertadores",
         supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/58.png",
     ),
     CatalogLeague(
-        id="sudamericana", name="CONMEBOL Sudamericana", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/conmebol.sudamericana",
+        id="sudamericana",
+        name="CONMEBOL Sudamericana",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/conmebol.sudamericana",
         supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/1208.png",
     ),
     # --- More European domestic leagues (plain follow) ---
     CatalogLeague(
-        id="belgian-pro", name="Belgian Pro League", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/bel.1",
+        id="belgian-pro",
+        name="Belgian Pro League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/bel.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/6.png",
     ),
     CatalogLeague(
-        id="greek-super", name="Greek Super League", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/gre.1",
+        id="greek-super",
+        name="Greek Super League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/gre.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/98.png",
     ),
     CatalogLeague(
-        id="austrian-bundesliga", name="Austrian Bundesliga", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/aut.1",
+        id="austrian-bundesliga",
+        name="Austrian Bundesliga",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/aut.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/5.png",
     ),
     CatalogLeague(
-        id="swiss-super", name="Swiss Super League", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/sui.1",
+        id="swiss-super",
+        name="Swiss Super League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/sui.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/17.png",
     ),
     CatalogLeague(
-        id="danish-superliga", name="Danish Superliga", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/den.1",
+        id="danish-superliga",
+        name="Danish Superliga",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/den.1",
         # ESPN has only the default-team-logo placeholder here — leave None.
     ),
     CatalogLeague(
-        id="eliteserien", name="Norwegian Eliteserien", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/nor.1",
+        id="eliteserien",
+        name="Norwegian Eliteserien",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/nor.1",
         # ESPN has only the default-team-logo placeholder here — leave None.
     ),
     CatalogLeague(
-        id="allsvenskan", name="Swedish Allsvenskan", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/swe.1",
+        id="allsvenskan",
+        name="Swedish Allsvenskan",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/swe.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/16.png",
     ),
     CatalogLeague(
-        id="russian-premier", name="Russian Premier League", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/rus.1",
+        id="russian-premier",
+        name="Russian Premier League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/rus.1",
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/106.png",
     ),
     # --- North American cups (whole-competition follow) ---
     CatalogLeague(
-        id="us-open-cup", name="U.S. Open Cup", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/usa.open",
+        id="us-open-cup",
+        name="U.S. Open Cup",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/usa.open",
         supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/69.png",
     ),
     CatalogLeague(
-        id="concacaf-champions", name="Concacaf Champions Cup", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/concacaf.champions",
+        id="concacaf-champions",
+        name="Concacaf Champions Cup",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/concacaf.champions",
         supports_follow_all=True,
         logo_url="https://a.espncdn.com/i/leaguelogos/soccer/500/2298.png",
     ),
@@ -326,16 +467,25 @@ CATALOG: tuple[CatalogLeague, ...] = (
     # The tennis tours only expose a generic ESPN sport icon (not a real
     # tour logo), so they stay None; UFC has a real league logo.
     CatalogLeague(
-        id="atp", name="ATP Tour", sport=Sport.TENNIS,
-        provider="espn", provider_key="tennis/atp",
+        id="atp",
+        name="ATP Tour",
+        sport=Sport.TENNIS,
+        provider="espn",
+        provider_key="tennis/atp",
     ),
     CatalogLeague(
-        id="wta", name="WTA Tour", sport=Sport.TENNIS,
-        provider="espn", provider_key="tennis/wta",
+        id="wta",
+        name="WTA Tour",
+        sport=Sport.TENNIS,
+        provider="espn",
+        provider_key="tennis/wta",
     ),
     CatalogLeague(
-        id="ufc", name="UFC", sport=Sport.MMA,
-        provider="espn", provider_key="mma/ufc",
+        id="ufc",
+        name="UFC",
+        sport=Sport.MMA,
+        provider="espn",
+        provider_key="mma/ufc",
         logo_url="https://a.espncdn.com/i/teamlogos/leagues/500/ufc.png",
     ),
     # Golf is a leaderboard sport: a tournament is ONE Event with a field,
@@ -343,8 +493,11 @@ CATALOG: tuple[CatalogLeague, ...] = (
     # ESPN athlete id) — the same athlete-as-team design as tennis/MMA.
     # The route derives entity_noun "golfer" from this sport.
     CatalogLeague(
-        id="pga", name="PGA Tour", sport=Sport.GOLF,
-        provider="espn", provider_key="golf/pga",
+        id="pga",
+        name="PGA Tour",
+        sport=Sport.GOLF,
+        provider="espn",
+        provider_key="golf/pga",
         logo_url="https://a.espncdn.com/i/teamlogos/leagues/500/pgatour.png",
     ),
     # --- Volleyball: served by TheSportsDB (the second provider) ---
@@ -353,19 +506,25 @@ CATALOG: tuple[CatalogLeague, ...] = (
     # European competitions the free tier actually lists; the teams fetch is
     # delegated to tsdb_catalog and tolerates the free tier's sparse data.
     CatalogLeague(
-        id="cev-euro-men", name="CEV European Championship (Men)",
+        id="cev-euro-men",
+        name="CEV European Championship (Men)",
         sport=Sport.VOLLEYBALL,
-        provider="thesportsdb", provider_key="5613",
+        provider="thesportsdb",
+        provider_key="5613",
     ),
     CatalogLeague(
-        id="evl-men", name="European Volleyball League (Men)",
+        id="evl-men",
+        name="European Volleyball League (Men)",
         sport=Sport.VOLLEYBALL,
-        provider="thesportsdb", provider_key="5848",
+        provider="thesportsdb",
+        provider_key="5848",
     ),
     CatalogLeague(
-        id="evl-women", name="European Volleyball League (Women)",
+        id="evl-women",
+        name="European Volleyball League (Women)",
         sport=Sport.VOLLEYBALL,
-        provider="thesportsdb", provider_key="5849",
+        provider="thesportsdb",
+        provider_key="5849",
     ),
 )
 
@@ -389,57 +548,103 @@ CATALOG: tuple[CatalogLeague, ...] = (
 NATIONAL_SIBLING_LEAGUES: tuple[CatalogLeague, ...] = (
     # FIFA World Cup qualifying — one endpoint per confederation.
     CatalogLeague(
-        id="worldq-uefa", name="World Cup Qualifying — UEFA", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fifa.worldq.uefa", national=True,
-    ),
-    CatalogLeague(
-        id="worldq-conmebol", name="World Cup Qualifying — CONMEBOL",
+        id="worldq-uefa",
+        name="World Cup Qualifying — UEFA",
         sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fifa.worldq.conmebol", national=True,
+        provider="espn",
+        provider_key="soccer/fifa.worldq.uefa",
+        national=True,
     ),
     CatalogLeague(
-        id="worldq-concacaf", name="World Cup Qualifying — Concacaf",
+        id="worldq-conmebol",
+        name="World Cup Qualifying — CONMEBOL",
         sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fifa.worldq.concacaf", national=True,
+        provider="espn",
+        provider_key="soccer/fifa.worldq.conmebol",
+        national=True,
     ),
     CatalogLeague(
-        id="worldq-afc", name="World Cup Qualifying — AFC", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fifa.worldq.afc", national=True,
+        id="worldq-concacaf",
+        name="World Cup Qualifying — Concacaf",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/fifa.worldq.concacaf",
+        national=True,
     ),
     CatalogLeague(
-        id="worldq-caf", name="World Cup Qualifying — CAF", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fifa.worldq.caf", national=True,
+        id="worldq-afc",
+        name="World Cup Qualifying — AFC",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/fifa.worldq.afc",
+        national=True,
     ),
     CatalogLeague(
-        id="worldq-ofc", name="World Cup Qualifying — OFC", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fifa.worldq.ofc", national=True,
+        id="worldq-caf",
+        name="World Cup Qualifying — CAF",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/fifa.worldq.caf",
+        national=True,
+    ),
+    CatalogLeague(
+        id="worldq-ofc",
+        name="World Cup Qualifying — OFC",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/fifa.worldq.ofc",
+        national=True,
     ),
     # Continental-championship qualifying / further continental cups that a
     # nation following Euros/Copa/etc. also plays in.
     CatalogLeague(
-        id="euroq", name="UEFA Euro Qualifying", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/uefa.euroq", national=True,
+        id="euroq",
+        name="UEFA Euro Qualifying",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/uefa.euroq",
+        national=True,
     ),
     CatalogLeague(
-        id="afc-asian-cup", name="AFC Asian Cup", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/afc.asian.cup", national=True,
+        id="afc-asian-cup",
+        name="AFC Asian Cup",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/afc.asian.cup",
+        national=True,
     ),
     CatalogLeague(
-        id="caf-nations", name="Africa Cup of Nations", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/caf.nations", national=True,
+        id="caf-nations",
+        name="Africa Cup of Nations",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/caf.nations",
+        national=True,
     ),
     CatalogLeague(
-        id="concacaf-gold", name="Concacaf Gold Cup", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/concacaf.gold", national=True,
+        id="concacaf-gold",
+        name="Concacaf Gold Cup",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/concacaf.gold",
+        national=True,
     ),
     CatalogLeague(
-        id="concacaf-nations", name="Concacaf Nations League", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/concacaf.nations.league", national=True,
+        id="concacaf-nations",
+        name="Concacaf Nations League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/concacaf.nations.league",
+        national=True,
     ),
     # International friendlies — every nation plays these between competitions.
     CatalogLeague(
-        id="friendly", name="International Friendly", sport=Sport.SOCCER,
-        provider="espn", provider_key="soccer/fifa.friendly", national=True,
+        id="friendly",
+        name="International Friendly",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="soccer/fifa.friendly",
+        national=True,
     ),
 )
 
@@ -477,8 +682,12 @@ def get_catalog_league(league_id: str) -> CatalogLeague | None:
 # WC qualifying in exactly one of these six, and friendlies in all windows.
 _WORLDQ_AND_FRIENDLIES: tuple[str, ...] = (
     "worldcup",
-    "worldq-uefa", "worldq-conmebol", "worldq-concacaf",
-    "worldq-afc", "worldq-caf", "worldq-ofc",
+    "worldq-uefa",
+    "worldq-conmebol",
+    "worldq-concacaf",
+    "worldq-afc",
+    "worldq-caf",
+    "worldq-ofc",
     "friendly",
 )
 
@@ -487,22 +696,31 @@ NATIONAL_TEAM_COMPETITIONS: dict[str, tuple[str, ...]] = {
     # Nations League, friendlies.
     "worldcup": (
         "worldcup",
-        "euros", "euroq", "nations-league",
+        "euros",
+        "euroq",
+        "nations-league",
         *_WORLDQ_AND_FRIENDLIES[1:],
     ),
     "euros": (
-        "euros", "euroq", "nations-league",
+        "euros",
+        "euroq",
+        "nations-league",
         *_WORLDQ_AND_FRIENDLIES,
     ),
     "nations-league": (
-        "nations-league", "euros", "euroq",
+        "nations-league",
+        "euros",
+        "euroq",
         *_WORLDQ_AND_FRIENDLIES,
     ),
     # Copa América: WC slate + the CONMEBOL/Concacaf continental cups + Concacaf
     # Nations League + friendlies (the Copa now mixes both confederations).
     "copa-america": (
         "copa-america",
-        "concacaf-gold", "concacaf-nations", "afc-asian-cup", "caf-nations",
+        "concacaf-gold",
+        "concacaf-nations",
+        "afc-asian-cup",
+        "caf-nations",
         *_WORLDQ_AND_FRIENDLIES,
     ),
     # Women's World Cup: WC slate + friendlies (women's qualifying largely runs
@@ -537,6 +755,7 @@ def national_competition_siblings(league_id: str) -> list[CatalogLeague]:
 # ---------------------------------------------------------------------------
 # Teams-in-league fetch
 # ---------------------------------------------------------------------------
+
 
 def _normalize_color(value: Any) -> str | None:
     """ESPN colors are usually bare hex ("1d428a") — prefix with "#"."""
@@ -620,6 +839,7 @@ def _parse_teams_payload(data: Any, league: CatalogLeague) -> list[CatalogTeam]:
 # flag).  A followed athlete becomes a ``CatalogTeam`` with provider_key = the
 # ESPN athlete id, so the existing single-member-"team" Game machinery applies.
 
+
 def _parse_athlete(athlete: Any) -> CatalogTeam | None:
     """Parse one ``ranks[].athlete`` object; None (+warning) if malformed."""
     try:
@@ -653,9 +873,7 @@ def _parse_athlete(athlete: Any) -> CatalogTeam | None:
             color=_normalize_color(athlete.get("color")),
         )
     except Exception:
-        logger.warning(
-            "Skipping malformed ESPN athlete entry", exc_info=True
-        )
+        logger.warning("Skipping malformed ESPN athlete entry", exc_info=True)
         return None
 
 
@@ -706,6 +924,7 @@ def _parse_rankings_payload(data: Any, league: CatalogLeague) -> list[CatalogTea
 # MMA.  This means the wizard offers exactly the golfers playing the
 # current/most-recent tournament (future commitments are not exposed by
 # ESPN — verified), which is the intended "playing this week" semantics.
+
 
 def _parse_golf_competitor(competitor: Any) -> CatalogTeam | None:
     """Parse one golf scoreboard ``competitors[]`` entry; None if malformed."""
@@ -834,15 +1053,11 @@ async def get_league_teams(league: CatalogLeague) -> list[CatalogTeam]:
         # Golf: neither /teams nor /rankings work; the field is the current
         # tournament's scoreboard competitors (checked before the generic
         # individual-sport branch, as golf is in INDIVIDUAL_SPORTS too).
-        data = await _fetch_json(
-            f"{_SITE_BASE}/{league.provider_key}/scoreboard", {}, league.id
-        )
+        data = await _fetch_json(f"{_SITE_BASE}/{league.provider_key}/scoreboard", {}, league.id)
         teams = _parse_golf_field_payload(data, league)
         noun = "golfers"
     elif league.sport in INDIVIDUAL_SPORTS:
-        data = await _fetch_json(
-            f"{_SITE_BASE}/{league.provider_key}/rankings", {}, league.id
-        )
+        data = await _fetch_json(f"{_SITE_BASE}/{league.provider_key}/rankings", {}, league.id)
         teams = _parse_rankings_payload(data, league)
         noun = "athletes"
     else:
@@ -859,7 +1074,5 @@ async def get_league_teams(league: CatalogLeague) -> list[CatalogTeam]:
     else:
         # Don't cache an empty result: more likely a payload-shape hiccup
         # than a league with zero entries, and these calls are rare anyway.
-        logger.warning(
-            "ESPN catalog returned no parseable %s for league %s", noun, league.id
-        )
+        logger.warning("ESPN catalog returned no parseable %s for league %s", noun, league.id)
     return list(teams)

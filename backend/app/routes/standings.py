@@ -8,6 +8,7 @@ configured window), and a best-effort Redis "last-good" copy backs the
 empty case so a wiped/never-fetched table can still serve the previous
 snapshot rather than a blank board.
 """
+
 from __future__ import annotations
 
 import logging
@@ -43,18 +44,14 @@ def _is_stale(fetched_at) -> bool:
 
 
 @router.get("/standings/{league_id}", response_model=StandingsOut)
-async def standings(
-    league_id: str, session: AsyncSession = Depends(get_session)
-) -> StandingsOut:
+async def standings(league_id: str, session: AsyncSession = Depends(get_session)) -> StandingsOut:
     league = await repository.get_league(session, league_id)
     if league is None:
         raise HTTPException(status_code=404, detail="Unknown league")
 
     row = await repository.get_standings(session, league_id)
     if row is not None and row.rows:
-        fetched_at = (
-            ensure_utc(row.fetched_at) if row.fetched_at is not None else None
-        )
+        fetched_at = ensure_utc(row.fetched_at) if row.fetched_at is not None else None
         out = StandingsOut(
             league_id=league.id,
             league_name=league.name,
@@ -80,9 +77,7 @@ async def standings(
         try:
             return StandingsOut.model_validate(cached)
         except Exception:
-            logger.warning(
-                "standings: ignoring unparseable last-good cache for %s", league_id
-            )
+            logger.warning("standings: ignoring unparseable last-good cache for %s", league_id)
 
     # Nothing anywhere: an empty (not "stale") table, as before.
     return StandingsOut(

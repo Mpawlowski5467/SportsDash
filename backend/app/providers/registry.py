@@ -5,6 +5,7 @@ Maps provider ids ("espn", "thesportsdb", ...) to live
 instantiated and registered at import time; anything else can register
 itself via :func:`register_provider`.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -40,9 +41,7 @@ class _GuardedProvider:
     breaker.  Non-coroutine attributes and ``close`` pass straight through.
     """
 
-    def __init__(
-        self, provider: SportsProvider, breaker: circuit_breaker.CircuitBreaker
-    ) -> None:
+    def __init__(self, provider: SportsProvider, breaker: circuit_breaker.CircuitBreaker) -> None:
         self._provider = provider
         self._breaker = breaker
         self.provider_id = provider.provider_id

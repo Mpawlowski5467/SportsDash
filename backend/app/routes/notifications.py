@@ -18,6 +18,7 @@ explicitly (read-only routes never do).  Scope-construction and the
 event-type ordering both come from :mod:`app.services.notify_prefs` so
 the resolver and the editor never disagree about the canonical set.
 """
+
 from __future__ import annotations
 
 import logging
@@ -67,9 +68,7 @@ async def _build_prefs(session: AsyncSession) -> NotificationPrefsOut:
     Stored rows fill in real values; configurable scopes with no row yet
     fall back to the all-on / un-muted default.
     """
-    prefs_by_scope = {
-        row.scope: row for row in await repository.get_notification_prefs(session)
-    }
+    prefs_by_scope = {row.scope: row for row in await repository.get_notification_prefs(session)}
     leagues: list[LeagueORM] = await repository.list_leagues(session)
     teams: list[TeamORM] = await repository.list_teams(session)
 
@@ -81,9 +80,7 @@ async def _build_prefs(session: AsyncSession) -> NotificationPrefsOut:
         scope = f"league:{league.id}"
         prefs.append(_pref_out(scope, league.name, prefs_by_scope.get(scope)))
 
-    return NotificationPrefsOut(
-        event_types=list(notify_prefs.EVENT_TYPES), prefs=prefs
-    )
+    return NotificationPrefsOut(event_types=list(notify_prefs.EVENT_TYPES), prefs=prefs)
 
 
 @router.get("/notifications/prefs", response_model=NotificationPrefsOut)

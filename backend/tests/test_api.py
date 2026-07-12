@@ -4,6 +4,7 @@ Builds its own FastAPI app (no scheduler, no providers), overrides the
 ``app.db.get_session`` dependency with sessions from a local in-memory
 aiosqlite engine, and seeds fictional data directly via the ORM.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -74,9 +75,7 @@ def _day_start(day: date) -> datetime:
 
 @pytest.fixture
 async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:", poolclass=StaticPool
-    )
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     try:
@@ -298,9 +297,7 @@ async def test_teams(client: AsyncClient) -> None:
     assert {team["id"] for team in data["teams"]} == {TEAM_FOXES, TEAM_HAWKS}
 
 
-async def test_today_returns_local_day_games_sorted(
-    client: AsyncClient, seed: Seed
-) -> None:
+async def test_today_returns_local_day_games_sorted(client: AsyncClient, seed: Seed) -> None:
     resp = await client.get("/api/today")
     assert resp.status_code == 200
     data = resp.json()
@@ -349,9 +346,7 @@ async def test_today_returns_local_day_games_sorted(
     assert tonight["clock"] is None
 
 
-async def test_schedule_for_team_default_range(
-    client: AsyncClient, seed: Seed
-) -> None:
+async def test_schedule_for_team_default_range(client: AsyncClient, seed: Seed) -> None:
     resp = await client.get(f"/api/schedule/{TEAM_FOXES}")
     assert resp.status_code == 200
     ids = [game["id"] for game in resp.json()]
@@ -360,9 +355,7 @@ async def test_schedule_for_team_default_range(
     assert ids == [GAME_FINAL_2, GAME_FINAL_1, GAME_LIVE, GAME_TONIGHT, GAME_FUTURE]
 
 
-async def test_schedule_for_team_date_filtering(
-    client: AsyncClient, seed: Seed
-) -> None:
+async def test_schedule_for_team_date_filtering(client: AsyncClient, seed: Seed) -> None:
     today_iso = seed.today.isoformat()
 
     # Single inclusive day: exactly today's games.
@@ -375,15 +368,11 @@ async def test_schedule_for_team_date_filtering(
     # Future window: foxes only have the next-week game.
     start = (seed.today + timedelta(days=1)).isoformat()
     end = (seed.today + timedelta(days=10)).isoformat()
-    resp = await client.get(
-        f"/api/schedule/{TEAM_FOXES}", params={"start": start, "end": end}
-    )
+    resp = await client.get(f"/api/schedule/{TEAM_FOXES}", params={"start": start, "end": end})
     assert [game["id"] for game in resp.json()] == [GAME_FUTURE]
 
     # Hawks additionally play the unfollowed Rivermark Owls in that window.
-    resp = await client.get(
-        f"/api/schedule/{TEAM_HAWKS}", params={"start": start, "end": end}
-    )
+    resp = await client.get(f"/api/schedule/{TEAM_HAWKS}", params={"start": start, "end": end})
     games = resp.json()
     assert [game["id"] for game in games] == [GAME_FUTURE, GAME_HAWKS_ONLY]
     hawks_only = games[1]
@@ -392,17 +381,13 @@ async def test_schedule_for_team_date_filtering(
     assert hawks_only["away"]["name"] == "Rivermark Owls"
 
 
-async def test_schedule_query_param_variant_matches_path(
-    client: AsyncClient, seed: Seed
-) -> None:
+async def test_schedule_query_param_variant_matches_path(client: AsyncClient, seed: Seed) -> None:
     start = (seed.today + timedelta(days=1)).isoformat()
     end = (seed.today + timedelta(days=10)).isoformat()
     by_query = await client.get(
         "/api/schedule", params={"team_id": TEAM_HAWKS, "start": start, "end": end}
     )
-    by_path = await client.get(
-        f"/api/schedule/{TEAM_HAWKS}", params={"start": start, "end": end}
-    )
+    by_path = await client.get(f"/api/schedule/{TEAM_HAWKS}", params={"start": start, "end": end})
     assert by_query.status_code == by_path.status_code == 200
     assert by_query.json() == by_path.json()
 
@@ -487,9 +472,7 @@ async def test_standings_is_stale_when_snapshot_is_old(
             StandingsORM(
                 league_id=LEAGUE_ID,
                 season="2026",
-                rows=[
-                    {"rank": 1, "team_name": "Glimmer Foxes", "wins": 10, "losses": 2}
-                ],
+                rows=[{"rank": 1, "team_name": "Glimmer Foxes", "wins": 10, "losses": 2}],
                 fetched_at=old,
             )
         )
@@ -629,9 +612,7 @@ async def test_news_serializes_image_url(
     resp = await client.get("/api/news", params={"team_id": TEAM_FOXES})
     assert resp.status_code == 200
     by_id = {item["id"]: item for item in resp.json()}
-    assert by_id["news-with-image"]["image_url"] == (
-        "https://img.example/foxes/clinch.jpg"
-    )
+    assert by_id["news-with-image"]["image_url"] == ("https://img.example/foxes/clinch.jpg")
     assert by_id["news-without-image"]["image_url"] is None
 
 
@@ -774,9 +755,7 @@ class _FakeProvider:
 
 def _use_provider(monkeypatch: pytest.MonkeyPatch, provider: _FakeProvider) -> None:
     """Point the games route's registry lookup at ``provider``."""
-    monkeypatch.setattr(
-        game_detail_service.registry, "get_provider", lambda provider_id: provider
-    )
+    monkeypatch.setattr(game_detail_service.registry, "get_provider", lambda provider_id: provider)
 
 
 async def test_game_detail_returns_game_and_summary(
@@ -963,8 +942,11 @@ async def test_game_detail_weather_requests_game_date_not_today(
     async def fake_fetch(lat, lon, *, target_date=None, **_kwargs):  # type: ignore[no-untyped-def]
         captured["date"] = target_date
         return Weather(
-            temperature=18.0, condition="Partly cloudy", code=2,
-            wind_speed=12.0, units="metric",
+            temperature=18.0,
+            condition="Partly cloudy",
+            code=2,
+            wind_speed=12.0,
+            units="metric",
         )
 
     monkeypatch.setattr(game_detail_service.weather, "fetch", fake_fetch)
@@ -1040,13 +1022,9 @@ async def test_odds_batch_prices_scheduled_and_live_skips_final(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeProvider(None, odds=_SAMPLE_ODDS)
-    monkeypatch.setattr(
-        odds_route.registry, "get_provider", lambda provider_id: fake
-    )
+    monkeypatch.setattr(odds_route.registry, "get_provider", lambda provider_id: fake)
 
-    resp = await client.get(
-        f"/api/odds?ids={GAME_TONIGHT},{GAME_LIVE},{GAME_FINAL_1}"
-    )
+    resp = await client.get(f"/api/odds?ids={GAME_TONIGHT},{GAME_LIVE},{GAME_FINAL_1}")
     assert resp.status_code == 200
     data = resp.json()
     # Scheduled + live are priced; the final game is gated out entirely.
@@ -1060,9 +1038,7 @@ async def test_odds_batch_empty_ids_returns_empty(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeProvider(None, odds=_SAMPLE_ODDS)
-    monkeypatch.setattr(
-        odds_route.registry, "get_provider", lambda provider_id: fake
-    )
+    monkeypatch.setattr(odds_route.registry, "get_provider", lambda provider_id: fake)
     resp = await client.get("/api/odds?ids=")
     assert resp.status_code == 200
     assert resp.json() == {}
@@ -1074,9 +1050,7 @@ async def test_odds_batch_unpriced_game_absent(
 ) -> None:
     # A provider with no line for the game → that game is simply omitted.
     fake = _FakeProvider(None, odds=None)
-    monkeypatch.setattr(
-        odds_route.registry, "get_provider", lambda provider_id: fake
-    )
+    monkeypatch.setattr(odds_route.registry, "get_provider", lambda provider_id: fake)
     resp = await client.get(f"/api/odds?ids={GAME_TONIGHT}")
     assert resp.status_code == 200
     assert resp.json() == {}
@@ -1194,9 +1168,7 @@ async def test_map_empty_when_no_team_has_coordinates(
     # The seed's live/scheduled games can't resolve a venue without coords or a
     # warm cache, so the route also kicks a background game-venue geocode —
     # stub it so the hermetic test spawns no real-DB task.
-    monkeypatch.setattr(
-        "app.routes.map_view.jobs.kick_game_venue_coords", lambda: None
-    )
+    monkeypatch.setattr("app.routes.map_view.jobs.kick_game_venue_coords", lambda: None)
     resp = await client.get("/api/map")
     assert resp.status_code == 200
     body = resp.json()
@@ -1217,8 +1189,8 @@ async def test_set_team_location_persists_stadium_facts(
     """
     from app.services import repository
 
-    long_location = "L" * 300       # exceeds venue_location's 256-char column
-    long_surface = "S" * 80         # exceeds venue_surface's 64-char column
+    long_location = "L" * 300  # exceeds venue_location's 256-char column
+    long_surface = "S" * 80  # exceeds venue_surface's 64-char column
     async with db() as session:
         await repository.set_team_location(
             session,
@@ -1353,9 +1325,7 @@ async def test_map_games_mode(client, seed, db, monkeypatch) -> None:
     assert any(team["team_id"] == TEAM_FOXES for team in data["teams"])
 
 
-async def test_map_plots_offseason_follow_all_league(
-    client, db, monkeypatch
-) -> None:
+async def test_map_plots_offseason_follow_all_league(client, db, monkeypatch) -> None:
     """An off-season ``follow_all`` league still plots its whole field.
 
     A whole-competition follow with NO near-window games (its tournament
@@ -1433,9 +1403,7 @@ async def test_map_plots_offseason_follow_all_league(
     data = resp.json()
 
     competition = {
-        team["team_id"]: team
-        for team in data["teams"]
-        if team["source"] == "competition"
+        team["team_id"]: team for team in data["teams"] if team["source"] == "competition"
     }
     # Both cached teams appear, keyed by "{league_id}:{provider_key}"; the
     # un-cached one is omitted even though the league is off-season.

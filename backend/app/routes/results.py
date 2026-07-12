@@ -1,4 +1,5 @@
 """Recent final scores for a team, newest first."""
+
 from __future__ import annotations
 
 import logging
@@ -27,7 +28,5 @@ async def results(
         raise HTTPException(status_code=404, detail="Unknown team")
 
     rows = await repository.results_for_team(session, team_id, limit=limit)
-    leagues_by_id = {
-        league.id: league for league in await repository.list_leagues(session)
-    }
+    leagues_by_id = {league.id: league for league in await repository.list_leagues(session)}
     return games_to_out(rows, leagues_by_id)

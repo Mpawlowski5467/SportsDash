@@ -5,6 +5,7 @@
 when the database probe fails (a 500 would be useless to an uptime
 checker that needs to read the body).
 """
+
 from __future__ import annotations
 
 import logging

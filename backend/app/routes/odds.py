@@ -13,6 +13,7 @@ the work, and an odds-less game (most soccer) is cached as a negative so it
 isn't re-fetched on every poll.  The fan-out is bounded by a semaphore and
 the request can never fail — a missing/odds-less game is simply absent.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -36,13 +37,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _CACHE_TTL_SECONDS = 600  # 10 min — lines drift slowly pre-game
-_MAX_CONCURRENCY = 8      # parallel summary+predictor fetches per request
-_MAX_IDS = 60             # bound the fan-out (each id = two upstream calls)
+_MAX_CONCURRENCY = 8  # parallel summary+predictor fetches per request
+_MAX_IDS = 60  # bound the fan-out (each id = two upstream calls)
 
 # Odds/win-probability are pre-game and live artifacts only.
-_PRICED_PHASES = frozenset(
-    {domain.GamePhase.SCHEDULED.value, domain.GamePhase.IN_PROGRESS.value}
-)
+_PRICED_PHASES = frozenset({domain.GamePhase.SCHEDULED.value, domain.GamePhase.IN_PROGRESS.value})
 
 
 @router.get("/odds", response_model=dict[str, GameOddsOut])
@@ -71,9 +70,7 @@ async def odds(
             continue
         league = leagues.get(row.league_id)
         if league is None:
-            league_row: LeagueORM | None = await repository.get_league(
-                session, row.league_id
-            )
+            league_row: LeagueORM | None = await repository.get_league(session, row.league_id)
             if league_row is None:
                 continue
             league = convert.league_from_row(league_row)
@@ -91,9 +88,7 @@ async def odds(
         async with semaphore:
             try:
                 provider = registry.get_provider(league.provider)
-                result = await provider.get_game_odds(
-                    league, provider_game_key(game_id)
-                )
+                result = await provider.get_game_odds(league, provider_game_key(game_id))
             except Exception:
                 # Transient/circuit errors: skip without caching so the next
                 # poll retries (a genuine "no line" returns None, not raises).
@@ -107,9 +102,7 @@ async def odds(
         )
         return out
 
-    priced = await asyncio.gather(
-        *(odds_for(game_id, league) for game_id, league in targets)
-    )
+    priced = await asyncio.gather(*(odds_for(game_id, league) for game_id, league in targets))
     return {
         game_id: value
         for (game_id, _league), value in zip(targets, priced, strict=False)

@@ -6,6 +6,7 @@ fictional data only.  The follow route's ESPN catalog fetch and its
 background refresh kick are monkeypatched out so the follow-all default
 seeding can be exercised end to end without network or a scheduler.
 """
+
 from __future__ import annotations
 
 from typing import AsyncIterator
@@ -84,9 +85,7 @@ CATALOG_TEAMS: dict[str, list[CatalogTeam]] = {
 
 @pytest.fixture
 async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:", poolclass=StaticPool
-    )
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     try:
@@ -286,9 +285,7 @@ async def test_put_merges_rather_than_replaces(
         json={"scope": "global", "events": {"period_start": False}},
     )
     assert resp.status_code == 200
-    global_pref = next(
-        pref for pref in resp.json()["prefs"] if pref["scope"] == "global"
-    )
+    global_pref = next(pref for pref in resp.json()["prefs"] if pref["scope"] == "global")
     # Both explicit disables are remembered.
     assert global_pref["events"]["intermission"] is False
     assert global_pref["events"]["period_start"] is False
@@ -309,11 +306,7 @@ async def test_follow_all_seeds_headline_only_league_pref(
     """A ``follow_all`` league's pref defaults to only game_start + final."""
     resp = await client.post(
         "/api/setup/follow",
-        json={
-            "selections": [
-                {"league_id": "ucl", "team_provider_keys": [], "follow_all": True}
-            ]
-        },
+        json={"selections": [{"league_id": "ucl", "team_provider_keys": [], "follow_all": True}]},
     )
     assert resp.status_code == 200
     assert kick_spy == ["kicked"]
@@ -342,9 +335,7 @@ async def test_follow_all_seeds_headline_only_league_pref(
         "final": True,
     }
     assert by_scope["league:ucl"]["muted"] is False
-    assert by_scope["global"]["events"] == {
-        event_type: True for event_type in EVENT_TYPES
-    }
+    assert by_scope["global"]["events"] == {event_type: True for event_type in EVENT_TYPES}
 
 
 async def test_follow_team_seeds_no_pref_row(

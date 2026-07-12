@@ -7,6 +7,7 @@ playoff scoreboard (``seasontype=3``).  Each game carries a ``series`` block
 naming the round.  We fetch the whole playoff window, dedupe games into
 series, and group series into rounds (ordered by when each round started).
 """
+
 from __future__ import annotations
 
 import logging
@@ -47,7 +48,7 @@ class PlayoffSide:
 class PlayoffSeries:
     team1: PlayoffSide
     team2: PlayoffSide
-    summary: str            # e.g. "NY leads series 3-0", "LAL win series 4-2"
+    summary: str  # e.g. "NY leads series 3-0", "LAL win series 4-2"
     # "East" / "West" recovered from the round note, used to place the series
     # on the left/right half of a two-sided bracket; None for the league
     # championship (no conference prefix) and sports without conferences.
@@ -126,9 +127,7 @@ def _side(competitor: dict) -> PlayoffSide:
     )
 
 
-async def fetch_playoff_bracket(
-    provider_key: str, sport: Sport
-) -> list[PlayoffRound]:
+async def fetch_playoff_bracket(provider_key: str, sport: Sport) -> list[PlayoffRound]:
     """Playoff rounds (each a list of series) for a league; ``[]`` if none.
 
     Never raises — a network/parse failure logs and returns ``[]`` so the
@@ -210,9 +209,7 @@ def _rounds_from_events(events: list) -> list[PlayoffRound]:
         series[key]["summary"] = summary
         # Upgrade a generic round label ("Playoff Series") to a specific one
         # ("Conference Finals") if any of the series' games names it.
-        if _REAL_ROUND.search(round_name) and not _REAL_ROUND.search(
-            series[key]["round"]
-        ):
+        if _REAL_ROUND.search(round_name) and not _REAL_ROUND.search(series[key]["round"]):
             series[key]["round"] = round_name
         date = _parse_date(comp.get("date")) or _parse_date(event.get("date"))
         if date is not None:
@@ -236,10 +233,7 @@ def _rounds_from_events(events: list) -> list[PlayoffRound]:
     # present, so it doesn't appear as a junk column (and, dated earliest,
     # sort ahead of the 1st round).  Keep it only when it's all we have, so a
     # sparsely-labeled bracket still renders something.
-    named = {
-        name for name in by_round
-        if name.strip().lower() not in _GENERIC_ROUND_LABELS
-    }
+    named = {name for name in by_round if name.strip().lower() not in _GENERIC_ROUND_LABELS}
     if named:
         by_round = {name: by_round[name] for name in named}
 

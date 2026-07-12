@@ -4,6 +4,7 @@ All team/league names are fictional.  ``diff_states`` and
 ``starting_soon_event`` are pure functions, so these tests need no
 database, network, or event loop.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -90,9 +91,7 @@ class TestQuarterFlow:
         prev = make_state(
             period=period - 1, label=f"Q{period - 1}", home=20, away=18, clock="00:00"
         )
-        new = make_state(
-            period=period, label=f"Q{period}", home=20, away=18, clock="12:00"
-        )
+        new = make_state(period=period, label=f"Q{period}", home=20, away=18, clock="12:00")
 
         events = bball_diff(prev, new)
 
@@ -114,9 +113,7 @@ class TestQuarterFlow:
 
     def test_intermission_carries_prev_label_and_score(self) -> None:
         prev = make_state(period=2, label="Q2", home=51, away=48, clock="00:14")
-        new = make_state(
-            period=2, label="Q2", home=55, away=50, clock=None, intermission=True
-        )
+        new = make_state(period=2, label="Q2", home=55, away=50, clock=None, intermission=True)
 
         events = bball_diff(prev, new)
 
@@ -169,9 +166,7 @@ class TestQuarterFlow:
 class TestHalvesFlow:
     def test_kickoff_fires_game_start(self) -> None:
         prev = make_state(GamePhase.SCHEDULED, game_id=SOCCER_GAME_ID)
-        new = make_state(
-            game_id=SOCCER_GAME_ID, period=1, label="1st Half", clock="03:12"
-        )
+        new = make_state(game_id=SOCCER_GAME_ID, period=1, label="1st Half", clock="03:12")
 
         events = soccer_diff(prev, new)
 
@@ -180,9 +175,7 @@ class TestHalvesFlow:
         assert events[0].dedupe_key == f"{SOCCER_GAME_ID}:start"
 
     def test_halftime_fires_intermission_with_score(self) -> None:
-        prev = make_state(
-            game_id=SOCCER_GAME_ID, period=1, label="1st Half", home=1, away=0
-        )
+        prev = make_state(game_id=SOCCER_GAME_ID, period=1, label="1st Half", home=1, away=0)
         new = make_state(
             game_id=SOCCER_GAME_ID,
             period=1,
@@ -210,9 +203,7 @@ class TestHalvesFlow:
             away=0,
             intermission=True,
         )
-        new = make_state(
-            game_id=SOCCER_GAME_ID, period=2, label="2nd Half", home=1, away=0
-        )
+        new = make_state(game_id=SOCCER_GAME_ID, period=2, label="2nd Half", home=1, away=0)
 
         events = soccer_diff(prev, new)
 
@@ -221,9 +212,7 @@ class TestHalvesFlow:
         assert events[0].dedupe_key == f"{SOCCER_GAME_ID}:period:2"
 
     def test_full_time_fires_final_with_score(self) -> None:
-        prev = make_state(
-            game_id=SOCCER_GAME_ID, period=2, label="2nd Half", home=2, away=1
-        )
+        prev = make_state(game_id=SOCCER_GAME_ID, period=2, label="2nd Half", home=2, away=1)
         new = make_state(
             GamePhase.FINAL,
             game_id=SOCCER_GAME_ID,
@@ -250,22 +239,14 @@ class TestHalvesFlow:
 class TestInningsFlow:
     def test_half_inning_flip_same_period_fires_nothing(self) -> None:
         """'Top 5' -> 'Bot 5' keeps period=5: must NOT fire PERIOD_START."""
-        prev = make_state(
-            game_id=BASEBALL_GAME_ID, period=5, label="Top 5", home=2, away=3
-        )
-        new = make_state(
-            game_id=BASEBALL_GAME_ID, period=5, label="Bot 5", home=2, away=4
-        )
+        prev = make_state(game_id=BASEBALL_GAME_ID, period=5, label="Top 5", home=2, away=3)
+        new = make_state(game_id=BASEBALL_GAME_ID, period=5, label="Bot 5", home=2, away=4)
 
         assert baseball_diff(prev, new) == []
 
     def test_new_inning_fires_period_start(self) -> None:
-        prev = make_state(
-            game_id=BASEBALL_GAME_ID, period=5, label="Bot 5", home=2, away=4
-        )
-        new = make_state(
-            game_id=BASEBALL_GAME_ID, period=6, label="Top 6", home=2, away=4
-        )
+        prev = make_state(game_id=BASEBALL_GAME_ID, period=5, label="Bot 5", home=2, away=4)
+        new = make_state(game_id=BASEBALL_GAME_ID, period=6, label="Top 6", home=2, away=4)
 
         events = baseball_diff(prev, new)
 
@@ -274,9 +255,7 @@ class TestInningsFlow:
         assert events[0].dedupe_key == f"{BASEBALL_GAME_ID}:period:6"
 
     def test_final_after_nine_fires_final(self) -> None:
-        prev = make_state(
-            game_id=BASEBALL_GAME_ID, period=9, label="Bot 9", home=5, away=4
-        )
+        prev = make_state(game_id=BASEBALL_GAME_ID, period=9, label="Bot 9", home=5, away=4)
         new = make_state(
             GamePhase.FINAL,
             game_id=BASEBALL_GAME_ID,
@@ -369,9 +348,7 @@ class TestMultipleTransitions:
     def test_intermission_with_final_phase_fires_final_only(self) -> None:
         """An intermission flag on a final snapshot must not fire INTERMISSION."""
         prev = make_state(period=4, label="Q4", home=88, away=84)
-        new = make_state(
-            GamePhase.FINAL, period=4, label="Q4", home=90, away=84, intermission=True
-        )
+        new = make_state(GamePhase.FINAL, period=4, label="Q4", home=90, away=84, intermission=True)
 
         events = bball_diff(prev, new)
 

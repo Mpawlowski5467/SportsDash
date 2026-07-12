@@ -1,4 +1,5 @@
 """ESPN byathlete leaders: label-index + positional value parsing."""
+
 from __future__ import annotations
 
 from app.models.domain import Sport

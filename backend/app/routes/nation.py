@@ -6,6 +6,7 @@ assembles what we *do* have for one by name: its standings line + group
 (from the league's stored standings) and its fixtures/results (from the
 league's synced games where it is home or away).
 """
+
 from __future__ import annotations
 
 import logging

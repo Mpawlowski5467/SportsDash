@@ -1,4 +1,5 @@
 """Retry/backoff tests for the shared provider HTTP helper."""
+
 from __future__ import annotations
 
 import httpx
@@ -10,6 +11,7 @@ from app.providers import http_util
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make backoff instant so retry tests don't actually wait."""
+
     async def fake_sleep(_delay: float) -> None:
         return None
 
@@ -44,9 +46,7 @@ async def test_retries_transport_error_then_raises() -> None:
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         with pytest.raises(http_util.TransientProviderError) as exc_info:
-            await http_util.get_with_retry(
-                client, "http://x", max_retries=2, backoff_base=0.01
-            )
+            await http_util.get_with_retry(client, "http://x", max_retries=2, backoff_base=0.01)
     # Give-up surfaces as a transient error (so the breaker counts it), with
     # the original transport error preserved as __cause__.
     assert isinstance(exc_info.value.__cause__, httpx.ConnectError)
@@ -63,9 +63,7 @@ async def test_does_not_retry_404() -> None:
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        resp = await http_util.get_with_retry(
-            client, "http://x", max_retries=3, backoff_base=0.01
-        )
+        resp = await http_util.get_with_retry(client, "http://x", max_retries=3, backoff_base=0.01)
     # 404 isn't retryable: returned immediately for the caller to raise.
     assert resp.status_code == 404
     assert attempts["n"] == 1
@@ -81,9 +79,7 @@ async def test_gives_up_after_max_retries_on_persistent_5xx() -> None:
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         with pytest.raises(http_util.TransientProviderError):
-            await http_util.get_with_retry(
-                client, "http://x", max_retries=2, backoff_base=0.01
-            )
+            await http_util.get_with_retry(client, "http://x", max_retries=2, backoff_base=0.01)
     # A persistent 5xx is surfaced as transient (not returned for the caller to
     # swallow), so the breaker counts it; 1 + 2 retries.
     assert attempts["n"] == 3
@@ -100,9 +96,7 @@ async def test_gives_up_after_max_retries_on_persistent_429() -> None:
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         with pytest.raises(http_util.TransientProviderError):
-            await http_util.get_with_retry(
-                client, "http://x", max_retries=2, backoff_base=0.01
-            )
+            await http_util.get_with_retry(client, "http://x", max_retries=2, backoff_base=0.01)
     # Sustained rate-limiting raises transient (the breaker can finally open);
     # never reaches the caller's json() so the HTML body is irrelevant.
     assert attempts["n"] == 3

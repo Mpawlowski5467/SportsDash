@@ -6,6 +6,7 @@ break the live polling loop.  When ``notifications_enabled`` is False
 the send is skipped and treated as handled (returns True) so callers
 mark the event as notified and never retry it.
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,9 +30,7 @@ _EVENT_TAGS: dict[EventType, str] = {
     EventType.FINAL: "checkered_flag",
 }
 
-_HIGH_PRIORITY_EVENTS: frozenset[EventType] = frozenset(
-    {EventType.GAME_START, EventType.FINAL}
-)
+_HIGH_PRIORITY_EVENTS: frozenset[EventType] = frozenset({EventType.GAME_START, EventType.FINAL})
 
 
 async def send(
@@ -64,14 +63,10 @@ async def send(
 
     try:
         client = http_client.get_client("ntfy", timeout=_REQUEST_TIMEOUT)
-        response = await client.post(
-            url, content=message.encode("utf-8"), headers=headers
-        )
+        response = await client.post(url, content=message.encode("utf-8"), headers=headers)
         response.raise_for_status()
     except Exception as exc:  # noqa: BLE001 — notification failures must never propagate
-        logger.warning(
-            "Failed to send ntfy notification %r to %s: %s", title, url, exc
-        )
+        logger.warning("Failed to send ntfy notification %r to %s: %s", title, url, exc)
         return False
 
     logger.debug("Sent ntfy notification %r to %s", title, url)

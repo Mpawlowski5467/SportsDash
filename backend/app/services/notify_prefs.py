@@ -29,6 +29,7 @@ sharing a fixture should reliably silence that fixture for the user who
 asked, rather than letting the other team's (possibly default) scope
 re-enable it.
 """
+
 from __future__ import annotations
 
 from typing import Mapping, Protocol, runtime_checkable

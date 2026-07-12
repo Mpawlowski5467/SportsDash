@@ -15,6 +15,7 @@ fault-isolated: a broken provider or feed (network error, bozo XML with
 no entries, missing fields) is logged and skipped — one bad source
 never kills a refresh.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -114,17 +115,13 @@ def _image_url(entry: Any) -> str | None:
     return None
 
 
-def _entry_to_news_item(
-    entry: Any, *, team_id: str, source: str
-) -> domain.NewsItem | None:
+def _entry_to_news_item(entry: Any, *, team_id: str, source: str) -> domain.NewsItem | None:
     title = (getattr(entry, "title", None) or "").strip()
     url = (getattr(entry, "link", None) or "").strip()
     if not title or not url:
         return None
 
-    summary_raw = getattr(entry, "summary", None) or getattr(
-        entry, "description", None
-    )
+    summary_raw = getattr(entry, "summary", None) or getattr(entry, "description", None)
     summary: str | None = None
     if summary_raw:
         stripped = _strip_html(str(summary_raw))
@@ -165,10 +162,7 @@ def build_google_news_url(team_name: str, locale: str, context: str | None = Non
     lang, country = _parse_locale(locale)
     terms = f'"{team_name}" {context}' if context else f'"{team_name}"'
     query = quote(terms)
-    return (
-        f"{_GOOGLE_NEWS_BASE}?q={query}"
-        f"&hl={lang}-{country}&gl={country}&ceid={country}:{lang}"
-    )
+    return f"{_GOOGLE_NEWS_BASE}?q={query}&hl={lang}-{country}&gl={country}&ceid={country}:{lang}"
 
 
 async def _feed_items(
@@ -213,20 +207,14 @@ async def fetch_team_news(team: TeamORM) -> list[domain.NewsItem]:
             try:
                 items.extend(await _feed_items(client, feed_url, team_id=team.id))
             except Exception:
-                logger.exception(
-                    "news: failed to fetch/parse feed %s for %s", feed_url, team.id
-                )
+                logger.exception("news: failed to fetch/parse feed %s for %s", feed_url, team.id)
                 continue
     return items
 
 
-async def fetch_google_news(
-    team: TeamORM, league_name: str | None = None
-) -> list[domain.NewsItem]:
+async def fetch_google_news(team: TeamORM, league_name: str | None = None) -> list[domain.NewsItem]:
     """Fetch the auto-generated Google News search feed for a team."""
-    feed_url = build_google_news_url(
-        team.name, get_settings().news_locale, context=league_name
-    )
+    feed_url = build_google_news_url(team.name, get_settings().news_locale, context=league_name)
     async with httpx.AsyncClient(
         timeout=_FEED_TIMEOUT, headers=_FEED_HEADERS, follow_redirects=True
     ) as client:
@@ -367,9 +355,7 @@ async def refresh_news_for_team(team_id: str) -> int:
     async with session_scope() as session:
         team = await repository.get_team(session, team_id)
         league_row = (
-            await repository.get_league(session, team.league_id)
-            if team is not None
-            else None
+            await repository.get_league(session, team.league_id) if team is not None else None
         )
     if team is None:
         logger.warning("news: manual refresh for unknown team %r — no-op", team_id)
@@ -388,9 +374,7 @@ async def refresh_news_for_league(league_id: str) -> int:
     async with session_scope() as session:
         league_row = await repository.get_league(session, league_id)
     if league_row is None or not league_row.follow_all:
-        logger.warning(
-            "news: manual refresh for non-follow_all league %r — no-op", league_id
-        )
+        logger.warning("news: manual refresh for non-follow_all league %r — no-op", league_id)
         return 0
     return await _refresh_league(_league_from_row(league_row))
 
@@ -400,9 +384,7 @@ async def refresh_news_for_league(league_id: str) -> int:
 _manual_refresh_lock = asyncio.Lock()
 
 
-async def trigger_refresh(
-    team_id: str | None = None, league_id: str | None = None
-) -> int:
+async def trigger_refresh(team_id: str | None = None, league_id: str | None = None) -> int:
     """On-demand refresh behind ``POST /api/news/refresh``; returns insert count.
 
     ``team_id`` scopes the fetch to one followed team and ``league_id`` to one

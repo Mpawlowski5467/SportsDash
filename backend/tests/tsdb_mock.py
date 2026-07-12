@@ -5,6 +5,7 @@ one client + pacing gate in ``app.services.tsdb_client``, so tests
 install their fake transport there instead of patching each module's
 ``httpx.AsyncClient``.
 """
+
 from __future__ import annotations
 
 from typing import Callable

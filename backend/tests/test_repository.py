@@ -4,6 +4,7 @@ The engine is built directly here (never via ``app.db``) so global
 settings and the app engine stay untouched.  All fixture data is
 fictional.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -253,9 +254,7 @@ async def test_upsert_games_applies_incoming_state_while_scheduled(
 ) -> None:
     session = seeded
     start = utcnow() - timedelta(minutes=10)
-    await repository.upsert_games(
-        session, [make_game("mock:g-sched", start_time=start)]
-    )
+    await repository.upsert_games(session, [make_game("mock:g-sched", start_time=start)])
     await session.flush()
 
     # Stored phase is 'scheduled' and the incoming Game carries a state:
@@ -351,15 +350,18 @@ async def test_apply_game_state_and_state_from_row_round_trip(
     assert snapshot.last_update.utcoffset() == timedelta(0)
     assert utcnow() - snapshot.last_update < timedelta(minutes=1)
 
-    assert await repository.apply_game_state(
-        session,
-        domain.GameState(
-            game_id="mock:does-not-exist",
-            phase=domain.GamePhase.IN_PROGRESS,
-            home_score=0,
-            away_score=0,
-        ),
-    ) is None
+    assert (
+        await repository.apply_game_state(
+            session,
+            domain.GameState(
+                game_id="mock:does-not-exist",
+                phase=domain.GamePhase.IN_PROGRESS,
+                home_score=0,
+                away_score=0,
+            ),
+        )
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -457,12 +459,15 @@ async def test_upcoming_games_for_leagues(seeded: AsyncSession) -> None:
     assert {r.id for r in rows} == {"mock:u-soon", "mock:u-live"}
 
     # Unknown / empty league set yields nothing (no SQL error on empty IN).
-    assert await repository.upcoming_games_for_leagues(
-        session, [], now, now + timedelta(days=3)
-    ) == []
-    assert await repository.upcoming_games_for_leagues(
-        session, ["no-such-league"], now, now + timedelta(days=3)
-    ) == []
+    assert (
+        await repository.upcoming_games_for_leagues(session, [], now, now + timedelta(days=3)) == []
+    )
+    assert (
+        await repository.upcoming_games_for_leagues(
+            session, ["no-such-league"], now, now + timedelta(days=3)
+        )
+        == []
+    )
 
 
 async def test_map_relevant_league_ids(seeded: AsyncSession) -> None:
@@ -637,29 +642,52 @@ async def test_finals_missing_notification_filters_by_dedupe_and_recency(
 
     def final(game_id: str) -> domain.GameState:
         return domain.GameState(
-            game_id=game_id, phase=domain.GamePhase.FINAL,
-            home_score=3, away_score=1, period=4, period_label="Final",
+            game_id=game_id,
+            phase=domain.GamePhase.FINAL,
+            home_score=3,
+            away_score=1,
+            period=4,
+            period_label="Final",
         )
 
     await repository.upsert_games(
         session,
         [
             # FINAL within lookback, no dedupe row -> returned.
-            make_game("mock:fn-unsent", start_time=now - timedelta(hours=1),
-                      home_team_id=TEAM_COMETS, state=final("mock:fn-unsent")),
+            make_game(
+                "mock:fn-unsent",
+                start_time=now - timedelta(hours=1),
+                home_team_id=TEAM_COMETS,
+                state=final("mock:fn-unsent"),
+            ),
             # FINAL within lookback but already notified -> excluded.
-            make_game("mock:fn-sent", start_time=now - timedelta(hours=1),
-                      home_team_id=TEAM_COMETS, state=final("mock:fn-sent")),
+            make_game(
+                "mock:fn-sent",
+                start_time=now - timedelta(hours=1),
+                home_team_id=TEAM_COMETS,
+                state=final("mock:fn-sent"),
+            ),
             # FINAL but older than the lookback -> excluded.
-            make_game("mock:fn-old", start_time=now - timedelta(hours=24),
-                      home_team_id=TEAM_COMETS, state=final("mock:fn-old")),
+            make_game(
+                "mock:fn-old",
+                start_time=now - timedelta(hours=24),
+                home_team_id=TEAM_COMETS,
+                state=final("mock:fn-old"),
+            ),
             # Still in progress -> excluded.
-            make_game("mock:fn-live", start_time=now - timedelta(hours=1),
-                      home_team_id=TEAM_COMETS,
-                      state=domain.GameState(
-                          game_id="mock:fn-live", phase=domain.GamePhase.IN_PROGRESS,
-                          home_score=1, away_score=1, period=2, period_label="Q2",
-                      )),
+            make_game(
+                "mock:fn-live",
+                start_time=now - timedelta(hours=1),
+                home_team_id=TEAM_COMETS,
+                state=domain.GameState(
+                    game_id="mock:fn-live",
+                    phase=domain.GamePhase.IN_PROGRESS,
+                    home_score=1,
+                    away_score=1,
+                    period=2,
+                    period_label="Q2",
+                ),
+            ),
         ],
     )
     await repository.mark_notified(session, "mock:fn-sent:final")
@@ -685,9 +713,7 @@ async def test_event_finals_missing_notification_uses_state_updated_at(
             # exclude a just-finalized event.
             end_time=now + timedelta(days=1),
             phase=domain.GamePhase.FINAL,
-            leaderboard=(
-                domain.LeaderRow(position=1, position_label="1", name="A", score="-5"),
-            ),
+            leaderboard=(domain.LeaderRow(position=1, position_label="1", name="A", score="-5"),),
         )
 
     await repository.upsert_events(
@@ -701,9 +727,7 @@ async def test_event_finals_missing_notification_uses_state_updated_at(
     old.state_updated_at = now - timedelta(hours=24)
     await session.flush()
 
-    rows = await repository.event_finals_missing_notification(
-        session, now, timedelta(hours=6)
-    )
+    rows = await repository.event_finals_missing_notification(session, now, timedelta(hours=6))
     # ev:unsent qualifies (recent state_updated_at, no dedupe, despite future
     # end_time); ev:sent is deduped; ev:old aged out.
     assert {r.id for r in rows} == {"ev:unsent"}
@@ -793,9 +817,9 @@ async def test_list_news_orders_published_desc_nulls_last(
 
     rows = await repository.list_news(session)
     assert [r.id for r in rows] == [
-        "newer0000000000c",   # newest published first
+        "newer0000000000c",  # newest published first
         "older0000000000a",
-        "nopub0000000000d",   # NULL published last, newer fetched_at first
+        "nopub0000000000d",  # NULL published last, newer fetched_at first
         "nopub0000000000b",
     ]
 
@@ -952,9 +976,7 @@ async def test_prune_stale_games(seeded: AsyncSession) -> None:
             period_label="Q4",
         ),
     )
-    await repository.upsert_games(
-        seeded, [old_scheduled, old_live, recent_scheduled, old_final]
-    )
+    await repository.upsert_games(seeded, [old_scheduled, old_live, recent_scheduled, old_final])
     await repository.apply_game_state(
         seeded,
         domain.GameState(
@@ -1018,15 +1040,24 @@ async def test_save_standings_drops_team_ids_no_longer_followed(
         season="2026",
         rows=(
             domain.StandingRow(
-                rank=1, team_name="Ashport Comets", wins=9, losses=1,
+                rank=1,
+                team_name="Ashport Comets",
+                wins=9,
+                losses=1,
                 team_id=TEAM_COMETS,
             ),
             domain.StandingRow(
-                rank=2, team_name="Glimmerfen Owls", wins=7, losses=3,
+                rank=2,
+                team_name="Glimmerfen Owls",
+                wins=7,
+                losses=3,
                 team_id="glimmerfen-owls",  # stale: not a followed team
             ),
             domain.StandingRow(
-                rank=3, team_name="Bramblewick Foxes", wins=2, losses=8,
+                rank=3,
+                team_name="Bramblewick Foxes",
+                wins=2,
+                losses=8,
             ),
         ),
         fetched_at=utcnow(),
@@ -1052,9 +1083,7 @@ async def test_set_team_location_persists_and_lists(seeded: AsyncSession) -> Non
     # Before resolution, no team carries coordinates.
     assert await repository.list_teams_with_location(seeded) == []
 
-    await repository.set_team_location(
-        seeded, TEAM_COMETS, "Ashport Fieldhouse", 51.5074, -0.1278
-    )
+    await repository.set_team_location(seeded, TEAM_COMETS, "Ashport Fieldhouse", 51.5074, -0.1278)
     await seeded.flush()
 
     stored = await repository.get_team(seeded, TEAM_COMETS)

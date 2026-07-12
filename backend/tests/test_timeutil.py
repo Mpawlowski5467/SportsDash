@@ -5,6 +5,7 @@ These back the app's single most important convention (CONTRACTS.md:
 the DB passes through ensure_utc") — and the Postgres/asyncpg path
 returns AWARE datetimes, so both arms matter.
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone

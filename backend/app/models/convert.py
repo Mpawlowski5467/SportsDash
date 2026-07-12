@@ -6,6 +6,7 @@ already drifted (one dropped ``League.follow_all``).  Any new column on
 ``LeagueORM``/``TeamORM`` that the domain models carry gets added here,
 once.
 """
+
 from __future__ import annotations
 
 from app.models import domain

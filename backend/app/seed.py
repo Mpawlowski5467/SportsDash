@@ -6,6 +6,7 @@ A missing or broken config file is logged but never prevents the app
 from booting — the shipped file is a comments-only template, and the
 normal first-run path is the frontend setup wizard (``/setup/follow``).
 """
+
 from __future__ import annotations
 
 import logging
@@ -138,9 +139,7 @@ async def seed_from_config(path: str | None = None) -> None:
             if team.league_id not in league_ids:
                 existing = await repository.get_league(session, team.league_id)
                 if existing is None:
-                    logger.error(
-                        "Skipping team %r: unknown league_id %r", team.id, team.league_id
-                    )
+                    logger.error("Skipping team %r: unknown league_id %r", team.id, team.league_id)
                     continue
             await repository.upsert_team(session, team)
             seeded_teams += 1

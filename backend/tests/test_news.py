@@ -6,6 +6,7 @@ SQLite database built directly here (same pattern as
 ``test_repository.py``) so global settings and the app engine stay
 untouched.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -131,16 +132,14 @@ async def _seed_follow_all(
 def test_google_news_url_en_us() -> None:
     url = news.build_google_news_url("Ashport Comets", "en-US")
     assert url == (
-        "https://news.google.com/rss/search"
-        "?q=%22Ashport%20Comets%22&hl=en-US&gl=US&ceid=US:en"
+        "https://news.google.com/rss/search?q=%22Ashport%20Comets%22&hl=en-US&gl=US&ceid=US:en"
     )
 
 
 def test_google_news_url_pl_pl() -> None:
     url = news.build_google_news_url("Rivermont Stags", "pl-PL")
     assert url == (
-        "https://news.google.com/rss/search"
-        "?q=%22Rivermont%20Stags%22&hl=pl-PL&gl=PL&ceid=PL:pl"
+        "https://news.google.com/rss/search?q=%22Rivermont%20Stags%22&hl=pl-PL&gl=PL&ceid=PL:pl"
     )
 
 
@@ -237,9 +236,7 @@ async def test_refresh_dedupes_identical_urls_across_sources(
     class FakeProvider:
         provider_id = "mock"
 
-        async def get_news(
-            self, league: domain.League, team: domain.Team
-        ) -> list[domain.NewsItem]:
+        async def get_news(self, league: domain.League, team: domain.Team) -> list[domain.NewsItem]:
             assert league.id == LEAGUE_ID
             assert team.id == TEAM_ID
             return [
@@ -247,9 +244,7 @@ async def test_refresh_dedupes_identical_urls_across_sources(
                 make_item(provider_url, title="Provider exclusive"),
             ]
 
-    monkeypatch.setattr(
-        news.registry, "get_provider", lambda provider_id: FakeProvider()
-    )
+    monkeypatch.setattr(news.registry, "get_provider", lambda provider_id: FakeProvider())
 
     async def fake_rss(team) -> list[domain.NewsItem]:
         return [make_item(shared_url, source="Ashport Sports Wire")]
@@ -282,14 +277,10 @@ async def test_provider_failure_does_not_block_other_sources(
     class ExplodingProvider:
         provider_id = "mock"
 
-        async def get_news(
-            self, league: domain.League, team: domain.Team
-        ) -> list[domain.NewsItem]:
+        async def get_news(self, league: domain.League, team: domain.Team) -> list[domain.NewsItem]:
             raise RuntimeError("provider outage")
 
-    monkeypatch.setattr(
-        news.registry, "get_provider", lambda provider_id: ExplodingProvider()
-    )
+    monkeypatch.setattr(news.registry, "get_provider", lambda provider_id: ExplodingProvider())
 
     rss_url = "https://news.example/ashport/roster-notes"
 
@@ -333,9 +324,7 @@ async def test_refresh_ingests_follow_all_league_news(
         ) -> list[domain.NewsItem]:  # pragma: no cover - no team rows seeded
             raise AssertionError("get_news must not run for a teamless league")
 
-        async def get_league_news(
-            self, league: domain.League
-        ) -> list[domain.NewsItem]:
+        async def get_league_news(self, league: domain.League) -> list[domain.NewsItem]:
             assert league.id == COMP_ID
             assert league.follow_all is True
             return [
@@ -347,9 +336,7 @@ async def test_refresh_ingests_follow_all_league_news(
                 )
             ]
 
-    monkeypatch.setattr(
-        news.registry, "get_provider", lambda provider_id: FakeProvider()
-    )
+    monkeypatch.setattr(news.registry, "get_provider", lambda provider_id: FakeProvider())
 
     assert await news.refresh_all_news() == 1
 
@@ -402,9 +389,7 @@ async def test_refresh_news_for_league_noop_when_not_follow_all(
     monkeypatch.setattr(
         news.registry,
         "get_provider",
-        lambda provider_id: (_ for _ in ()).throw(
-            AssertionError("provider must not be consulted")
-        ),
+        lambda provider_id: (_ for _ in ()).throw(AssertionError("provider must not be consulted")),
     )
 
     assert await news.refresh_news_for_league(LEAGUE_ID) == 0

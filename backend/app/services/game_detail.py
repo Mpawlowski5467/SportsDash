@@ -11,6 +11,7 @@ unknown provider, a provider with no data for the game, or any exception
 collapses to ``None`` so a detail endpoint never 500s because of an
 enrichment lookup.
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,9 +42,7 @@ def provider_game_key(game_id: str) -> str:
     return game_id.split(":", 1)[1] if ":" in game_id else game_id
 
 
-async def fetch_summary(
-    league: domain.League, game_id: str
-) -> GameSummaryOut | None:
+async def fetch_summary(league: domain.League, game_id: str) -> GameSummaryOut | None:
     """Resolve the league's provider and fetch the box score on demand.
 
     Best-effort: an unknown provider, a provider that has no summary for
@@ -60,22 +59,16 @@ async def fetch_summary(
         )
         return None
     try:
-        summary = await provider.get_game_summary(
-            league, provider_game_key(game_id)
-        )
+        summary = await provider.get_game_summary(league, provider_game_key(game_id))
     except Exception:
-        logger.exception(
-            "Provider %r failed to summarize game %s", league.provider, game_id
-        )
+        logger.exception("Provider %r failed to summarize game %s", league.provider, game_id)
         return None
     if summary is None:
         return None
     return summary_to_out(summary)
 
 
-async def fetch_odds(
-    league: domain.League, game_id: str
-) -> GameOddsOut | None:
+async def fetch_odds(league: domain.League, game_id: str) -> GameOddsOut | None:
     """Resolve the league's provider and fetch betting lines + win-prob.
 
     Best-effort, exactly like :func:`fetch_summary`: an unknown provider, a
@@ -89,18 +82,14 @@ async def fetch_odds(
     try:
         odds = await provider.get_game_odds(league, provider_game_key(game_id))
     except Exception:
-        logger.exception(
-            "Provider %r failed to price game %s", league.provider, game_id
-        )
+        logger.exception("Provider %r failed to price game %s", league.provider, game_id)
         return None
     if odds is None:
         return None
     return odds_to_out(odds)
 
 
-async def _home_venue_coords(
-    session: AsyncSession, row: GameORM
-) -> tuple[float, float] | None:
+async def _home_venue_coords(session: AsyncSession, row: GameORM) -> tuple[float, float] | None:
     """Resolve the home venue's coordinates for a weather lookup.
 
     A followed home team carries resolved stadium coordinates on its row; a
@@ -109,11 +98,7 @@ async def _home_venue_coords(
     """
     if row.home_team_id is not None:
         team = await repository.get_team(session, row.home_team_id)
-        if (
-            team is not None
-            and team.venue_lat is not None
-            and team.venue_lon is not None
-        ):
+        if team is not None and team.venue_lat is not None and team.venue_lon is not None:
             return team.venue_lat, team.venue_lon
     host = wc_venues.resolve(row.venue)
     if host is not None:
@@ -185,6 +170,4 @@ async def fetch_lineup(
         return None
     if home is None and away is None:
         return None
-    return lineup_to_out(
-        GameLineup(game_id=row.id, sport=sport, home=home, away=away)
-    )
+    return lineup_to_out(GameLineup(game_id=row.id, sport=sport, home=home, away=away))
