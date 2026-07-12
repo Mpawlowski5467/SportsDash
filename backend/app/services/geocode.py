@@ -21,6 +21,8 @@ import time
 
 import httpx
 
+from app.services import http_client
+
 logger = logging.getLogger(__name__)
 
 _NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
@@ -52,10 +54,10 @@ async def geocode(query: str) -> tuple[float, float] | None:
     try:
         async with _rate_lock:
             await _respect_rate_limit()
-            async with httpx.AsyncClient(
-                timeout=_TIMEOUT, headers=_HEADERS
-            ) as client:
-                response = await client.get(_NOMINATIM_URL, params=params)
+            client = http_client.get_client(
+                "geocode", timeout=_TIMEOUT, headers=_HEADERS
+            )
+            response = await client.get(_NOMINATIM_URL, params=params)
             _mark_request()
             response.raise_for_status()
             payload = response.json()

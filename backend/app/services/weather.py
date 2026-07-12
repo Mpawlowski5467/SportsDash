@@ -21,6 +21,8 @@ from typing import Any
 
 import httpx
 
+from app.services import http_client
+
 from app.config import get_settings
 from app.models import domain
 from app.services import cache
@@ -129,10 +131,10 @@ async def fetch(
         params["forecast_days"] = "1"
     try:
         async with _MAX_INFLIGHT:
-            async with httpx.AsyncClient(
-                timeout=_TIMEOUT, headers=_HEADERS
-            ) as client:
-                response = await client.get(_URL, params=params)
+            client = http_client.get_client(
+                "weather", timeout=_TIMEOUT, headers=_HEADERS
+            )
+            response = await client.get(_URL, params=params)
             response.raise_for_status()
             payload = response.json()
     except Exception:

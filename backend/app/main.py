@@ -25,7 +25,7 @@ from app.scheduler.jobs import (
     setup_scheduler,
 )
 from app.seed import seed_from_config
-from app.services import cache, tsdb_client
+from app.services import cache, http_client, tsdb_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,6 +88,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await registry.close_all()
         await cache.close_cache()
         await tsdb_client.close_client()
+        await http_client.close_all()
         await dispose_engine()
         logger.info("SportsDash shut down")
 

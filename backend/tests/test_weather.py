@@ -8,7 +8,7 @@ import pytest
 
 from app.config import get_settings
 from app.models import domain
-from app.services import weather
+from app.services import http_client, weather
 
 _SAMPLE = {
     "current": {
@@ -104,11 +104,8 @@ async def test_fetch_parses_live_payload(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(weather.cache, "cache_get_json", no_cache_get)
     monkeypatch.setattr(weather.cache, "cache_set_json", no_cache_set)
-    real_client = httpx.AsyncClient  # bind before patching to avoid recursion
-    monkeypatch.setattr(
-        weather.httpx,
-        "AsyncClient",
-        lambda *a, **k: real_client(transport=transport),
+    monkeypatch.setitem(
+        http_client._clients, "weather", httpx.AsyncClient(transport=transport)
     )
 
     w = await weather.fetch(40.7128, -74.0060, units="imperial")
@@ -133,11 +130,8 @@ async def test_fetch_never_raises_on_http_error(monkeypatch: pytest.MonkeyPatch)
         return None
 
     monkeypatch.setattr(weather.cache, "cache_get_json", no_cache)
-    real_client = httpx.AsyncClient  # bind before patching to avoid recursion
-    monkeypatch.setattr(
-        weather.httpx,
-        "AsyncClient",
-        lambda *a, **k: real_client(transport=transport),
+    monkeypatch.setitem(
+        http_client._clients, "weather", httpx.AsyncClient(transport=transport)
     )
 
     assert await weather.fetch(1.0, 2.0) is None
@@ -157,11 +151,15 @@ async def test_fetch_uses_cache_when_present(monkeypatch: pytest.MonkeyPatch) ->
     async def cache_hit(_key: str):
         return cached
 
-    def explode(*_a, **_k):  # pragma: no cover - must not be called
-        raise AssertionError("HTTP client must not be built on a cache hit")
+    def explode(_request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("no HTTP request may be made on a cache hit")
 
     monkeypatch.setattr(weather.cache, "cache_get_json", cache_hit)
-    monkeypatch.setattr(weather.httpx, "AsyncClient", explode)
+    monkeypatch.setitem(
+        http_client._clients,
+        "weather",
+        httpx.AsyncClient(transport=httpx.MockTransport(explode)),
+    )
 
     w = await weather.fetch(5.0, 5.0)
     assert w is not None
@@ -207,9 +205,8 @@ def test_parse_target_date_none_keeps_today_first_row() -> None:
 
 def _route_through(monkeypatch: pytest.MonkeyPatch, handler) -> None:
     transport = httpx.MockTransport(handler)
-    real_client = httpx.AsyncClient  # bind before patching to avoid recursion
-    monkeypatch.setattr(
-        weather.httpx, "AsyncClient", lambda *a, **k: real_client(transport=transport)
+    monkeypatch.setitem(
+        http_client._clients, "weather", httpx.AsyncClient(transport=transport)
     )
 
 

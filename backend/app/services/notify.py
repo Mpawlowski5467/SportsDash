@@ -12,6 +12,8 @@ import logging
 
 import httpx
 
+from app.services import http_client
+
 from app.config import get_settings
 from app.models.domain import EventType, GameEvent
 
@@ -61,11 +63,11 @@ async def send(
         headers["Authorization"] = f"Bearer {settings.ntfy_token}"
 
     try:
-        async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
-            response = await client.post(
-                url, content=message.encode("utf-8"), headers=headers
-            )
-            response.raise_for_status()
+        client = http_client.get_client("ntfy", timeout=_REQUEST_TIMEOUT)
+        response = await client.post(
+            url, content=message.encode("utf-8"), headers=headers
+        )
+        response.raise_for_status()
     except Exception as exc:  # noqa: BLE001 — notification failures must never propagate
         logger.warning(
             "Failed to send ntfy notification %r to %s: %s", title, url, exc
