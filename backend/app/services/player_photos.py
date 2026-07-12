@@ -28,40 +28,20 @@ full coverage a keyed provider (e.g. API-Football) would be required.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 
-import httpx
-
-from app.config import get_settings
-from app.providers.http_util import TransientProviderError, get_with_retry
-from app.services import cache
+from app.providers.http_util import TransientProviderError
+from app.services import cache, tsdb_client
 
 logger = logging.getLogger(__name__)
 
-_BASE = "https://www.thesportsdb.com/api/v1/json/3/"
-_HEADERS = {"User-Agent": "SportsDash/1.0 (self-hosted)"}
-_TIMEOUT = httpx.Timeout(15.0)
-# Serialize lookups (a roster backfill walks many players) and space them, so
-# the shared free key sees a polite trickle, not a burst.
-_MAX_INFLIGHT = asyncio.Semaphore(1)
-# Seconds to wait after each request before the next is allowed — a gentle
-# ~3 req/s cap on top of serialization.
-_REQUEST_SPACING = 0.34
+# Base URL, headers, sport labels, and the process-wide pacing gate live
+# in services.tsdb_client — lookups here are serialized and spaced by the
+# same gate every other TSDB caller uses.
+_SPORT_LABEL = tsdb_client.SPORT_LABEL
 
 _SUCCESS_TTL = 60 * 60 * 24 * 30   # 30 days — a player's cutout rarely changes
 _MISS_TTL = 60 * 60 * 24 * 3       # 3 days — re-check in case TheSportsDB adds them
-
-# App ``Sport`` value -> TheSportsDB ``strSport`` label, to prefer the right
-# code when a name is shared across sports.  Unknown sports skip the filter.
-_SPORT_LABEL: dict[str, str] = {
-    "basketball": "Basketball",
-    "baseball": "Baseball",
-    "soccer": "Soccer",
-    "hockey": "Ice Hockey",
-    "football": "American Football",
-    "volleyball": "Volleyball",
-}
 
 
 async def lookup_photo(
@@ -111,28 +91,16 @@ async def _search(name: str) -> object | None:
     exhausted 429/5xx/timeout so the caller can skip caching; a 404 or empty
     body is a genuine "no such player" and returns ``None``.
     """
-    settings = get_settings()
-    async with _MAX_INFLIGHT:
-        async with httpx.AsyncClient(
-            base_url=_BASE,
-            timeout=_TIMEOUT,
-            headers=_HEADERS,
-            follow_redirects=True,
-        ) as client:
-            # max_retries=0 → FAIL-FAST: a 429 raises TransientProviderError
-            # immediately rather than sleeping out its 30s Retry-After (which
-            # would stall the daily roster job); the player retries next run.
-            response = await get_with_retry(
-                client,
-                "searchplayers.php",
-                params={"p": name},
-                max_retries=0,
-                backoff_base=settings.provider_backoff_base,
-                label="tsdb-player",
-            )
-        # Space the next caller (only after a real response — a fail-fast
-        # transient raised above and skipped this).
-        await asyncio.sleep(_REQUEST_SPACING)
+    # max_retries=0 → FAIL-FAST: a 429 raises TransientProviderError
+    # immediately rather than sleeping out its 30s Retry-After (which
+    # would stall the daily roster job); the player retries next run.
+    # Serialization + spacing come from the shared tsdb_client gate.
+    response = await tsdb_client.paced_get(
+        "searchplayers.php",
+        {"p": name},
+        max_retries=0,
+        label="tsdb-player",
+    )
     if response.status_code == 404:
         return None
     response.raise_for_status()
@@ -190,10 +158,4 @@ def _team_matches(candidate_team: str, wanted: str) -> bool:
     return wanted in a or a in wanted
 
 
-def _clean(value: object) -> str | None:
-    """A non-empty trimmed string, or ``None`` (TheSportsDB uses null/"")."""
-    if isinstance(value, str):
-        text = value.strip()
-        if text and text.lower() != "null":
-            return text
-    return None
+_clean = tsdb_client.clean_str

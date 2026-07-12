@@ -42,6 +42,7 @@ import httpx
 from app import timeutil
 from app.config import get_settings
 from app.providers.http_util import get_with_retry
+from app.services import tsdb_client
 from app.models.domain import (
     Event,
     Game,
@@ -61,8 +62,6 @@ from app.models.domain import (
 )
 
 logger = logging.getLogger(__name__)
-
-_BASE = "https://www.thesportsdb.com/api/v1/json/3/"
 
 # Status strings TheSportsDB reports for a finished match.  ``strStatus``
 # is usually "FT"; ``strProgress`` / longer phrasings ("Match Finished",
@@ -527,7 +526,7 @@ class TheSportsDbProvider:
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(
-                base_url=_BASE,
+                base_url=tsdb_client.TSDB_BASE_URL,
                 timeout=httpx.Timeout(get_settings().provider_timeout_seconds),
                 headers={"User-Agent": "SportsDash/1.0"},
                 follow_redirects=True,
@@ -547,6 +546,9 @@ class TheSportsDbProvider:
         """
         settings = get_settings()
         try:
+            # Take the process-wide TSDB pacing slot — this provider shares
+            # the free key with the catalog/stadium/photo lookups.
+            await tsdb_client.acquire_slot()
             response = await get_with_retry(
                 self._get_client(),
                 endpoint,

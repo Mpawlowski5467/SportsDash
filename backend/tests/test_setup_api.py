@@ -1000,9 +1000,7 @@ async def test_tsdb_catalog_parses_lookup_all_teams(
 
     teams = await tsdb_catalog.get_tsdb_league_teams(league)
 
-    assert seen == [
-        "https://www.thesportsdb.com/api/v1/json/3/lookup_all_teams.php"
-    ]
+    assert seen == ["lookup_all_teams.php"]
     # Malformed entry dropped; fields mapped onto CatalogTeam.
     assert [t.name for t in teams] == ["Saltmarsh Spikers", "Verdania Volley"]
     spikers = teams[0]

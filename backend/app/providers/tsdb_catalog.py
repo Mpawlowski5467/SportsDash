@@ -27,13 +27,14 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from app.providers.espn_catalog import CatalogTeam, EspnCatalogError
+from app.providers.http_util import TransientProviderError
+from app.services import tsdb_client
 
 if TYPE_CHECKING:  # avoid an import cycle at module load
     from app.providers.espn_catalog import CatalogLeague
 
 logger = logging.getLogger(__name__)
 
-_TSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3"
 _CACHE_TTL_SECONDS = 3600.0
 
 # TheSportsDB colors are already "#"-prefixed hex ("#1d59af") — accept those;
@@ -114,18 +115,13 @@ def _parse_teams_payload(data: Any) -> list[CatalogTeam]:
     return teams
 
 
-async def _fetch_json(url: str, params: dict[str, str], league_id: str) -> Any:
-    """GET ``url`` with a short-lived client; raise EspnCatalogError on failure."""
+async def _fetch_json(endpoint: str, params: dict[str, str], league_id: str) -> Any:
+    """GET via the shared paced TSDB client; raise EspnCatalogError on failure."""
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(15.0),
-            headers={"User-Agent": "SportsDash/1.0"},
-            follow_redirects=True,
-        ) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
-    except (httpx.HTTPError, ValueError) as exc:
+        response = await tsdb_client.paced_get(endpoint, params, label="tsdb-catalog")
+        response.raise_for_status()
+        return response.json()
+    except (httpx.HTTPError, ValueError, TransientProviderError) as exc:
         raise EspnCatalogError(
             f"Failed to fetch TheSportsDB catalog for league {league_id!r}: {exc}"
         ) from exc
@@ -147,7 +143,7 @@ async def get_tsdb_league_teams(league: CatalogLeague) -> list[CatalogTeam]:
         return list(cached[1])
 
     data = await _fetch_json(
-        f"{_TSDB_BASE}/lookup_all_teams.php",
+        "lookup_all_teams.php",
         {"id": league.provider_key},
         league.id,
     )

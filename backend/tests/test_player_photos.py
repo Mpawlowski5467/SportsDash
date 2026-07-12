@@ -6,6 +6,7 @@ import pytest
 
 from app.config import get_settings
 from app.services import player_photos
+from tests.tsdb_mock import install_tsdb_handler
 
 
 @pytest.fixture(autouse=True)
@@ -18,16 +19,6 @@ def _no_cache(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(player_photos.cache, "cache_get_json", _get)
     monkeypatch.setattr(player_photos.cache, "cache_set_json", _set)
-    # No real inter-request delay in tests.
-    monkeypatch.setattr(player_photos, "_REQUEST_SPACING", 0.0)
-
-
-def _route(handler) -> object:
-    transport = httpx.MockTransport(handler)
-    real_client = httpx.AsyncClient
-    # Forward base_url/timeout/headers so the relative "searchplayers.php" path
-    # resolves against TheSportsDB's base URL.
-    return lambda *a, **k: real_client(transport=transport, **k)
 
 
 def _players(*players: dict) -> dict:
@@ -59,7 +50,7 @@ async def test_lookup_photo_returns_cutout_with_team_disambiguation(
         assert request.url.params.get("p") == "Cole Palmer"
         return httpx.Response(200, json=payload)
 
-    monkeypatch.setattr(player_photos.httpx, "AsyncClient", _route(handler))
+    install_tsdb_handler(monkeypatch, handler)
     url = await player_photos.lookup_photo(
         "Cole Palmer", team_name="Chelsea", sport="soccer"
     )
@@ -77,11 +68,7 @@ async def test_lookup_photo_falls_back_to_thumb_then_render(
             "strThumb": "https://img/thumb.jpg",
         }
     )
-    monkeypatch.setattr(
-        player_photos.httpx,
-        "AsyncClient",
-        _route(lambda r: httpx.Response(200, json=payload)),
-    )
+    install_tsdb_handler(monkeypatch, lambda r: httpx.Response(200, json=payload))
     url = await player_photos.lookup_photo("No Cutout", team_name="Chelsea", sport="soccer")
     assert url == "https://img/thumb.jpg"
 
@@ -89,11 +76,7 @@ async def test_lookup_photo_falls_back_to_thumb_then_render(
 async def test_lookup_photo_none_when_no_match(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        player_photos.httpx,
-        "AsyncClient",
-        _route(lambda r: httpx.Response(200, json={"player": None})),
-    )
+    install_tsdb_handler(monkeypatch, lambda r: httpx.Response(200, json={"player": None}))
     assert (
         await player_photos.lookup_photo("Nobody", team_name="Chelsea", sport="soccer")
         is None
@@ -112,11 +95,7 @@ async def test_lookup_photo_transient_429_is_not_cached(
         saved.append((key, value))
 
     monkeypatch.setattr(player_photos.cache, "cache_set_json", _set)
-    monkeypatch.setattr(
-        player_photos.httpx,
-        "AsyncClient",
-        _route(lambda r: httpx.Response(429, text="rate limited")),
-    )
+    install_tsdb_handler(monkeypatch, lambda r: httpx.Response(429, text="rate limited"))
     result = await player_photos.lookup_photo(
         "Cole Palmer", team_name="Chelsea", sport="soccer"
     )
@@ -133,11 +112,7 @@ async def test_lookup_photo_genuine_miss_is_cached(
         saved.append(value)
 
     monkeypatch.setattr(player_photos.cache, "cache_set_json", _set)
-    monkeypatch.setattr(
-        player_photos.httpx,
-        "AsyncClient",
-        _route(lambda r: httpx.Response(200, json={"player": []})),
-    )
+    install_tsdb_handler(monkeypatch, lambda r: httpx.Response(200, json={"player": []}))
     assert await player_photos.lookup_photo("Nobody", sport="soccer") is None
     assert {"url": None} in saved  # a genuine miss IS cached (to avoid re-querying)
 
@@ -151,7 +126,7 @@ async def test_lookup_photo_uses_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(_r: httpx.Request) -> httpx.Response:  # pragma: no cover
         raise AssertionError("network hit on a cache hit")
 
-    monkeypatch.setattr(player_photos.httpx, "AsyncClient", _route(boom))
+    install_tsdb_handler(monkeypatch, boom)
     url = await player_photos.lookup_photo("Cole Palmer", team_name="Chelsea")
     assert url == "https://img/cached.png"
 

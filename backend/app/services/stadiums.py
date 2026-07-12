@@ -34,31 +34,14 @@ import logging
 import re
 from dataclasses import dataclass
 
-import httpx
-
 from app.models.domain import TeamLocation
+from app.services import tsdb_client
 
 logger = logging.getLogger(__name__)
 
-_BASE = "https://www.thesportsdb.com/api/v1/json/3/"
-_TIMEOUT = httpx.Timeout(15.0)
-_HEADERS = {"User-Agent": "SportsDash/1.0 (self-hosted)"}
-
-# Map the app's ``Sport`` value onto TheSportsDB's ``strSport`` label so a
-# name search can prefer the right code (several sports share a club name —
-# "Arsenal" is a dozen soccer clubs, "Chelsea" has U21/women's/youth sides).
-# Unknown sports simply skip the filter.
-_SPORT_LABEL: dict[str, str] = {
-    "basketball": "Basketball",
-    "baseball": "Baseball",
-    "soccer": "Soccer",
-    "hockey": "Ice Hockey",
-    "football": "American Football",
-    "tennis": "Tennis",
-    "mma": "Fighting",
-    "golf": "Golf",
-    "volleyball": "Volleyball",
-}
+# Base URL, sport-label map, coercion helpers, the shared HTTP client and
+# the process-wide pacing gate all live in services.tsdb_client.
+_SPORT_LABEL = tsdb_client.SPORT_LABEL
 
 # In-process cache: a resolved (or definitively-missed) lookup is reused for
 # the life of the process.  A definitive miss (the search succeeded, nothing
@@ -284,13 +267,7 @@ def _compose_venue(stadium: str | None, location: str | None) -> str | None:
 # Coercion / parsing helpers (pure)
 # ---------------------------------------------------------------------------
 
-def _clean(value: object) -> str | None:
-    """A non-empty trimmed string, or ``None`` (TheSportsDB uses null/"" )."""
-    if isinstance(value, str):
-        text = value.strip()
-        if text and text.lower() != "null":
-            return text
-    return None
+_clean = tsdb_client.clean_str
 
 
 def _coerce_int(value: object) -> int | None:
@@ -371,13 +348,12 @@ async def _get_json(endpoint: str, params: dict[str, str]) -> object | None:
     contract holds.
     """
     try:
-        async with httpx.AsyncClient(
-            base_url=_BASE,
-            timeout=_TIMEOUT,
-            headers=_HEADERS,
-            follow_redirects=True,
-        ) as client:
-            response = await client.get(endpoint, params=params)
+        # max_retries=0 → FAIL-FAST like the photo lookup: stadium resolves
+        # run inside batch refresh jobs, so a 429 skips the team (retried
+        # next refresh, uncached) instead of sleeping out its Retry-After.
+        response = await tsdb_client.paced_get(
+            endpoint, params, max_retries=0, label="tsdb-stadiums"
+        )
         response.raise_for_status()
         if not response.content or not response.text.strip():
             return None

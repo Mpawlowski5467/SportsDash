@@ -5,14 +5,7 @@ import httpx
 import pytest
 
 from app.services import stadiums
-
-
-def _route(handler) -> object:
-    transport = httpx.MockTransport(handler)
-    real_client = httpx.AsyncClient
-    # Forward the service's kwargs (base_url, timeout, headers) so relative
-    # request paths still resolve against TheSportsDB's base URL.
-    return lambda *a, **k: real_client(transport=transport, **k)
+from tests.tsdb_mock import install_tsdb_handler
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +34,7 @@ async def test_lookup_team_info_reads_description_and_founded(
             },
         )
 
-    monkeypatch.setattr(stadiums.httpx, "AsyncClient", _route(handler))
+    install_tsdb_handler(monkeypatch, handler)
 
     info = await stadiums.lookup_team_info("Chelsea", sport="soccer")
     assert info is not None
@@ -59,7 +52,7 @@ async def test_lookup_team_info_none_when_no_facts(
             json={"teams": [{"strTeam": "Nowhere FC", "strSport": "Soccer"}]},
         )
 
-    monkeypatch.setattr(stadiums.httpx, "AsyncClient", _route(handler))
+    install_tsdb_handler(monkeypatch, handler)
     assert await stadiums.lookup_team_info("Nowhere FC", sport="soccer") is None
 
 
@@ -69,7 +62,7 @@ async def test_lookup_team_info_never_raises_on_http_error(
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, text="<html>rate limited</html>")
 
-    monkeypatch.setattr(stadiums.httpx, "AsyncClient", _route(handler))
+    install_tsdb_handler(monkeypatch, handler)
     assert await stadiums.lookup_team_info("Chelsea", sport="soccer") is None
 
 
@@ -114,7 +107,7 @@ async def test_lookup_stadium_does_not_cache_transient_failure(
             },
         )
 
-    monkeypatch.setattr(stadiums.httpx, "AsyncClient", _route(handler))
+    install_tsdb_handler(monkeypatch, handler)
 
     # First call hits the transient 429 -> None, and MUST NOT be cached.
     assert await stadiums.lookup_stadium("Arsenal", sport="soccer") is None
@@ -143,7 +136,7 @@ async def test_lookup_stadium_caches_definitive_miss(
         # HTTP 200 with no matching team — TheSportsDB's "no such team".
         return httpx.Response(200, json={"teams": None})
 
-    monkeypatch.setattr(stadiums.httpx, "AsyncClient", _route(handler))
+    install_tsdb_handler(monkeypatch, handler)
 
     assert await stadiums.lookup_stadium("Nowhere FC", sport="soccer") is None
     assert await stadiums.lookup_stadium("Nowhere FC", sport="soccer") is None
@@ -176,7 +169,7 @@ async def test_lookup_team_info_does_not_cache_transient_failure(
             },
         )
 
-    monkeypatch.setattr(stadiums.httpx, "AsyncClient", _route(handler))
+    install_tsdb_handler(monkeypatch, handler)
 
     assert await stadiums.lookup_team_info("Chelsea", sport="soccer") is None
     assert "chelsea|soccer" not in stadiums._info_cache
