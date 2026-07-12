@@ -47,7 +47,9 @@ const FIVE_MINUTES = 300_000;
  *   local "today"                -> 60s
  * - otherwise                    -> 5min
  */
-function todayRefetchInterval(data: TodayResponse | undefined): number {
+export function todayRefetchInterval(
+  data: TodayResponse | undefined,
+): number {
   if (data === undefined) {
     return FIVE_MINUTES;
   }
