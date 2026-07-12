@@ -2,17 +2,39 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import Supercluster from "supercluster";
-import type { Feature, FeatureCollection, LineString } from "geojson";
+import type { FeatureCollection, LineString } from "geojson";
 
 import { useMap, useSchedule, useTeams } from "../hooks";
 import { localDayOffset } from "../lib/time";
-import type { Game, GameSide, MapGame, MapTeam } from "../types";
-import MapTeamPanel, { type TravelInfo } from "../components/MapTeamPanel";
+import { greatCircle, hasCoords, haversineKm, toRad } from "../lib/geo";
+import {
+  COMPETITION_RING,
+  DEFAULT_COLOR,
+  createClusterElement,
+  createClusterTooltipElement,
+  createFanElement,
+  createMarkerElement,
+  createPlaneElement,
+  createTooltipElement,
+  createVenueMarkerElement,
+  createVenueTooltipElement,
+  type MapMode,
+} from "./map/markers";
+import {
+  buildLiveTeams,
+  buildNextGames,
+  buildTravelArcs,
+  buildTravelInfo,
+  groupGamesByVenue,
+  isToday,
+} from "./map/travel";
+import "./map/map.css";
+import type { Game, MapTeam } from "../types";
+import MapTeamPanel from "../components/MapTeamPanel";
 import MapVenueGamesPanel, {
   type MapVenueGroup,
 } from "../components/MapVenueGamesPanel";
 import Select, { type SelectOption } from "../components/Select";
-import { formatShortDate } from "../lib/time";
 import { usePrefersReducedMotion } from "../lib/usePrefersReducedMotion";
 import { useMapFocus } from "../components/MapFocusContext";
 import { useCloseTeamDetail, useOpenTeam } from "../components/TeamDetailPanel";
@@ -27,9 +49,6 @@ const STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
 /** Camera tilt (degrees) so building extrusions read as 3D. */
 const DEFAULT_PITCH = 55;
-
-/** Fallback marker color for teams with no brand color. */
-const DEFAULT_COLOR = "#f59e0b"; // amber-500, matches the SportsDash accent
 
 /** Zoom to use when flying to / framing a single stadium. */
 const SINGLE_TEAM_ZOOM = 15.5;
@@ -48,17 +67,6 @@ const TOUR_PAGE_AT = 7200; // the team page opens
 const TOUR_PAGE_CLOSE_AT = 11400; // page closes, before the next fly-in
 const TOUR_ORBIT_FROM = -28; // fly-in bearing
 const TOUR_ORBIT_TO = 28; // orbit sweeps to this bearing
-
-/**
- * Marker badge diameter in px — the same for EVERY team plot (a followed
- * team or a whole-competition team) so all stadium chips read as one size.
- * Competition teams still stand out less than the user's own via a muted
- * opacity and a thin neutral ring (see `createMarkerElement`), not size.
- */
-const MARKER_SIZE = 32;
-
-/** Neutral ring color for competition markers (zinc-400). */
-const COMPETITION_RING = "#a1a1aa";
 
 /**
  * Marker clustering (supercluster). DOM markers (one absolutely-positioned
@@ -92,8 +100,6 @@ const DAY_WINDOW_OPTIONS: SelectOption[] = [
   { id: "30", label: "Next 30 days" },
 ];
 
-type MapMode = "games" | "stadiums";
-
 /** A normalized marker the reconciler can add/remove regardless of its source. */
 interface MapMarker {
   id: string;
@@ -126,246 +132,6 @@ interface ClusterAccumProps {
 type Selection =
   | { kind: "team"; team: MapTeam }
   | { kind: "venue"; venue: MapVenueGroup };
-
-/**
- * Build the team-marker DOM element: a rounded badge showing the team logo
- * with a colored ring and a subtle shadow. When `logo_url` is null — or the
- * image 404s / errors at runtime — we fall back to a solid colored pin so
- * every stadium still shows a marker. `source` drives the styling so the
- * user's own teams stand out among a competition's full field.
- */
-function createMarkerElement(
-  team: MapTeam,
-  highlightToday: boolean,
-  inTransit = false,
-): HTMLDivElement {
-  const isCompetition = team.source === "competition";
-  const ring = isCompetition ? COMPETITION_RING : team.color ?? DEFAULT_COLOR;
-  const pinFill = team.color ?? DEFAULT_COLOR;
-  const size = MARKER_SIZE;
-  const el = document.createElement("div");
-  el.className = highlightToday ? "sd-map-marker sd-map-marker-today" : "sd-map-marker";
-  el.style.cssText =
-    `width:${size}px;height:${size}px;border-radius:9999px;` +
-    `box-sizing:border-box;` +
-    `border:${isCompetition ? "1.5px" : "2px"} solid ${ring};` +
-    `box-shadow:0 1px 4px rgba(0,0,0,0.45);cursor:pointer;` +
-    `opacity:${isCompetition ? "0.78" : "1"};` +
-    `display:flex;align-items:center;justify-content:center;overflow:hidden;` +
-    `background:#f4f4f5;`;
-
-  const showPin = () => {
-    el.innerHTML = "";
-    el.style.background = pinFill;
-  };
-
-  if (team.logo_url) {
-    const img = document.createElement("img");
-    img.src = team.logo_url;
-    img.alt = team.name;
-    img.style.cssText =
-      "width:100%;height:100%;object-fit:contain;display:block;padding:3px;box-sizing:border-box;";
-    img.addEventListener("error", showPin, { once: true });
-    el.appendChild(img);
-  } else {
-    showPin();
-  }
-
-  if (!inTransit) return el;
-  // Wrap so a corner ✈ badge can sit OUTSIDE the circle (which clips its own
-  // overflow) — marks a team currently flying to an away game.
-  const wrap = document.createElement("div");
-  wrap.style.cssText = "position:relative;line-height:0;";
-  wrap.appendChild(el);
-  const badge = document.createElement("div");
-  badge.textContent = "✈";
-  badge.title = "Traveling to an away game";
-  badge.style.cssText =
-    "position:absolute;top:-6px;right:-6px;font-size:11px;line-height:1;" +
-    "color:var(--color-amber-400);text-shadow:0 0 3px rgba(0,0,0,0.75);" +
-    "pointer-events:none;";
-  wrap.appendChild(badge);
-  return wrap;
-}
-
-/** Hover label content for a team marker (name, venue, next match / league). */
-function createTooltipElement(team: MapTeam): HTMLDivElement {
-  const root = document.createElement("div");
-
-  const name = document.createElement("div");
-  name.textContent = team.name;
-  name.style.cssText = "font-weight:600;color:var(--color-zinc-100);";
-  root.appendChild(name);
-
-  if (team.venue) {
-    const venue = document.createElement("div");
-    venue.textContent = team.venue;
-    venue.style.cssText = "margin-top:1px;font-size:12px;color:var(--color-zinc-300);";
-    root.appendChild(venue);
-  }
-
-  const thirdLine = team.next_opponent
-    ? `Next: vs ${team.next_opponent}` +
-      (team.next_match_time ? ` · ${formatShortDate(team.next_match_time)}` : "")
-    : team.league_name ?? "";
-  if (thirdLine) {
-    const third = document.createElement("div");
-    third.textContent = thirdLine;
-    third.style.cssText = "margin-top:2px;font-size:11px;color:var(--color-zinc-400);";
-    root.appendChild(third);
-  }
-
-  return root;
-}
-
-/**
- * Build a game-venue marker: a rounded-square badge showing how many games
- * are scheduled there in the window. Amber when a followed team is involved,
- * neutral zinc for a whole-competition venue — visually distinct from the
- * round team-logo chips of "Stadiums" mode.
- */
-function createVenueMarkerElement(
-  group: MapVenueGroup,
-  highlightToday: boolean,
-): HTMLDivElement {
-  const accent = group.source === "followed" ? DEFAULT_COLOR : COMPETITION_RING;
-  const el = document.createElement("div");
-  el.className = highlightToday
-    ? "sd-map-marker sd-map-venue sd-map-marker-today"
-    : "sd-map-marker sd-map-venue";
-  el.style.cssText =
-    "min-width:24px;height:24px;padding:0 6px;border-radius:7px;box-sizing:border-box;" +
-    `border:2px solid ${accent};background:#18181b;color:#fafafa;` +
-    "box-shadow:0 1px 4px rgba(0,0,0,0.45);cursor:pointer;" +
-    "display:flex;align-items:center;justify-content:center;" +
-    "font-family:inherit;font-size:12px;font-weight:600;line-height:1;";
-  el.textContent = String(group.games.length);
-  return el;
-}
-
-/** Hover label for a venue marker (venue, game count, next matchup). */
-function createVenueTooltipElement(group: MapVenueGroup): HTMLDivElement {
-  const root = document.createElement("div");
-
-  const name = document.createElement("div");
-  name.textContent = group.venue ?? "Venue";
-  name.style.cssText = "font-weight:600;color:var(--color-zinc-100);";
-  root.appendChild(name);
-
-  const count = document.createElement("div");
-  count.textContent = `${group.games.length} upcoming ${
-    group.games.length === 1 ? "game" : "games"
-  }`;
-  count.style.cssText = "margin-top:1px;font-size:12px;color:var(--color-zinc-300);";
-  root.appendChild(count);
-
-  const next = group.games[0];
-  if (next) {
-    const line = document.createElement("div");
-    line.textContent =
-      `${next.away.name} v ${next.home.name} · ${formatShortDate(next.start_time)}`;
-    line.style.cssText = "margin-top:2px;font-size:11px;color:var(--color-zinc-400);";
-    root.appendChild(line);
-  }
-
-  return root;
-}
-
-/** Compact count label for a cluster badge (e.g. 1298 -> "1.3k"). */
-function abbreviateCount(count: number): string {
-  return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
-}
-
-/**
- * Build a cluster badge: a round dark chip showing how many pins it collapses.
- * It wears an amber ring when any of the user's own (followed) teams are inside
- * so their region stays findable even when zoomed out; otherwise a neutral
- * zinc ring. Size grows a little with the count so dense regions read heavier.
- */
-function createClusterElement(count: number, hasFollowed: boolean): HTMLDivElement {
-  const ring = hasFollowed ? DEFAULT_COLOR : COMPETITION_RING;
-  const size = count >= 100 ? 46 : count >= 25 ? 40 : 34;
-  const el = document.createElement("div");
-  el.className = "sd-map-marker sd-map-cluster";
-  el.style.cssText =
-    `width:${size}px;height:${size}px;border-radius:9999px;box-sizing:border-box;` +
-    `border:2px solid ${ring};background:#18181b;color:#fafafa;` +
-    `box-shadow:0 0 0 4px ${hasFollowed ? "rgba(245,158,11,0.15)" : "rgba(161,161,170,0.15)"},` +
-    `0 1px 6px rgba(0,0,0,0.5);cursor:pointer;` +
-    `display:flex;align-items:center;justify-content:center;` +
-    `font-family:inherit;font-weight:700;line-height:1;` +
-    `font-size:${count >= 100 ? "13px" : "12px"};`;
-  el.textContent = abbreviateCount(count);
-  return el;
-}
-
-/** Hover label for a cluster badge (count + zoom-in hint). */
-function createClusterTooltipElement(
-  count: number,
-  hasFollowed: boolean,
-  mode: MapMode,
-): HTMLDivElement {
-  const root = document.createElement("div");
-  const noun = mode === "games" ? "venues" : "stadiums";
-
-  const title = document.createElement("div");
-  title.textContent = `${count} ${count === 1 ? noun.slice(0, -1) : noun}`;
-  title.style.cssText = "font-weight:600;color:var(--color-zinc-100);";
-  root.appendChild(title);
-
-  if (hasFollowed) {
-    const followed = document.createElement("div");
-    followed.textContent = "Includes teams you follow";
-    followed.style.cssText =
-      "margin-top:1px;font-size:11px;color:var(--color-amber-400);";
-    root.appendChild(followed);
-  }
-
-  const hint = document.createElement("div");
-  hint.textContent = "Click to zoom in";
-  hint.style.cssText = "margin-top:2px;font-size:11px;color:var(--color-zinc-400);";
-  root.appendChild(hint);
-
-  return root;
-}
-
-/** True when an ISO timestamp falls on the viewer's local calendar today. */
-function isToday(iso: string | null): boolean {
-  if (!iso) return false;
-  const d = new Date(iso);
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
-}
-
-/** Group games into one entry per venue (keyed by rounded coordinates). */
-function groupGamesByVenue(games: MapGame[]): MapVenueGroup[] {
-  const byKey = new Map<string, MapVenueGroup>();
-  for (const game of games) {
-    const key = `${game.lat.toFixed(4)},${game.lon.toFixed(4)}`;
-    let group = byKey.get(key);
-    if (group === undefined) {
-      group = {
-        key,
-        venue: game.venue,
-        lat: game.lat,
-        lon: game.lon,
-        games: [],
-        source: "competition",
-      };
-      byKey.set(key, group);
-    }
-    group.games.push(game);
-    if (game.followed) group.source = "followed";
-  }
-  for (const group of byKey.values()) {
-    group.games.sort((a, b) => a.start_time.localeCompare(b.start_time));
-  }
-  return [...byKey.values()];
-}
 
 /** Reusable error/empty/loading frame with the dark kiosk chrome. */
 function MapFrame({ children }: { children: React.ReactNode }) {
@@ -455,293 +221,11 @@ const ARCS_LAYER = "sd-travel-arcs";
 /** Amber dashed line — matches the SportsDash accent. */
 const ARC_COLOR = "#f59e0b"; // amber-500
 
-/** Samples along each great-circle arc (more = smoother long-haul curves). */
-const ARC_SAMPLES = 48;
-
 /** An empty FeatureCollection (used to clear the arc layer in games mode). */
 const EMPTY_FC: FeatureCollection<LineString> = {
   type: "FeatureCollection",
   features: [],
 };
-
-const toRad = (deg: number): number => (deg * Math.PI) / 180;
-const toDeg = (rad: number): number => (rad * 180) / Math.PI;
-
-/** Finite-coordinate guard (the payload can carry nulls/NaN during geocoding). */
-function hasCoords(p: { lat: number; lon: number }): boolean {
-  return Number.isFinite(p.lat) && Number.isFinite(p.lon);
-}
-
-/**
- * Sample a great-circle path from (lon1,lat1) to (lon2,lat2) via spherical
- * linear interpolation (slerp), returning a list of [lon, lat] positions.
- * Returns null when the two points are effectively coincident.
- */
-function greatCircle(
-  lon1: number,
-  lat1: number,
-  lon2: number,
-  lat2: number,
-): [number, number][] | null {
-  const phi1 = toRad(lat1);
-  const phi2 = toRad(lat2);
-  const lam1 = toRad(lon1);
-  const lam2 = toRad(lon2);
-
-  // Angular distance (haversine), then slerp between the two endpoints.
-  const dPhi = phi2 - phi1;
-  const dLam = lam2 - lam1;
-  const h =
-    Math.sin(dPhi / 2) ** 2 +
-    Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLam / 2) ** 2;
-  const d = 2 * Math.asin(Math.min(1, Math.sqrt(h)));
-  if (d < 1e-6) return null;
-  const sinD = Math.sin(d);
-
-  const points: [number, number][] = [];
-  let prevLon: number | null = null;
-  for (let i = 0; i <= ARC_SAMPLES; i += 1) {
-    const f = i / ARC_SAMPLES;
-    const A = Math.sin((1 - f) * d) / sinD;
-    const B = Math.sin(f * d) / sinD;
-    const x = A * Math.cos(phi1) * Math.cos(lam1) + B * Math.cos(phi2) * Math.cos(lam2);
-    const y = A * Math.cos(phi1) * Math.sin(lam1) + B * Math.cos(phi2) * Math.sin(lam2);
-    const z = A * Math.sin(phi1) + B * Math.sin(phi2);
-    const phi = Math.atan2(z, Math.hypot(x, y));
-    const lam = Math.atan2(y, x);
-    let lonDeg = toDeg(lam);
-    // Unwrap longitude so consecutive samples never jump ~360° across the
-    // antimeridian — otherwise a trans-Pacific arc renders as a flat streak.
-    // MapLibre renders out-of-[-180,180] longitudes wrapped correctly.
-    if (prevLon !== null) {
-      while (lonDeg - prevLon > 180) lonDeg -= 360;
-      while (lonDeg - prevLon < -180) lonDeg += 360;
-    }
-    prevLon = lonDeg;
-    points.push([lonDeg, toDeg(phi)]);
-  }
-  return points;
-}
-
-/** A followed team's next located game in the window, and which side it's on. */
-interface NextGame {
-  game: MapGame;
-  isHome: boolean;
-}
-
-/** Normalize a team/competitor name for joining games to plotted pins. */
-function teamNameKey(name: string): string {
-  return name.trim().toLowerCase();
-}
-
-/**
- * Each plotted team's NEXT located game (earliest, home OR away) in the
- * window. The home/away split drives the travel visuals: an away next-game
- * gets the flight arc + plane, a home next-game gets the fans animation.
- * Every team on the map gets one (not just your followed teams), so a whole
- * competition / "follow all" still animates.
- *
- * Whole-competition games carry NO team_id on either side (only a name), so we
- * join a game side to a plotted pin by name, falling back through the rare
- * id-bearing case. Without the name join, "follow all" maps never animate.
- */
-function buildNextGames(
-  teams: MapTeam[],
-  games: MapGame[],
-): Map<string, NextGame> {
-  const byId = new Map(teams.map((t) => [t.team_id, t] as const));
-  const byName = new Map<string, MapTeam>();
-  for (const t of teams) byName.set(teamNameKey(t.name), t);
-  const out = new Map<string, NextGame>();
-  const consider = (side: GameSide, game: MapGame, isHome: boolean) => {
-    if (!hasCoords(game)) return;
-    const team =
-      (side.team_id !== null ? byId.get(side.team_id) : undefined) ??
-      byName.get(teamNameKey(side.name));
-    if (team === undefined) return;
-    const cur = out.get(team.team_id);
-    if (cur === undefined || game.start_time < cur.game.start_time) {
-      out.set(team.team_id, { game, isHome });
-    }
-  };
-  for (const game of games) {
-    consider(game.home, game, true);
-    consider(game.away, game, false);
-  }
-  return out;
-}
-
-/**
- * Travel-arc FeatureCollection: a great-circle home→host line for every plotted
- * team whose NEXT game is AWAY (a home next-game gets fans, not an arc/plane).
- */
-function buildTravelArcs(
-  teams: MapTeam[],
-  nextByTeam: Map<string, NextGame>,
-): FeatureCollection<LineString> {
-  const features: Feature<LineString>[] = [];
-  for (const team of teams) {
-    if (!hasCoords(team)) continue;
-    const next = nextByTeam.get(team.team_id);
-    if (next === undefined || next.isHome) continue;
-    const dest = next.game;
-    const line = greatCircle(team.lon, team.lat, dest.lon, dest.lat);
-    if (line === null) continue;
-    features.push({
-      type: "Feature",
-      properties: { team_id: team.team_id, game_id: dest.game_id },
-      geometry: { type: "LineString", coordinates: line },
-    });
-  }
-  return { type: "FeatureCollection", features };
-}
-
-/**
- * Plotted teams that have a game HAPPENING — live (in_progress) or kicking off
- * today — mapped to the crowd colour for their stadium. Drives the
- * click-to-celebrate fan burst: clicking such a team's pin streams fans into
- * its stadium. Joined by name (whole-competition games carry no team_id on
- * either side) with the id-bearing case as a fallback, exactly like the other
- * animation builders, so a "follow all" field celebrates too.
- */
-function buildLiveTeams(
-  teams: MapTeam[],
-  games: MapGame[],
-): Map<string, string> {
-  const byId = new Map(teams.map((t) => [t.team_id, t] as const));
-  const byName = new Map<string, MapTeam>();
-  for (const t of teams) byName.set(teamNameKey(t.name), t);
-  const out = new Map<string, string>();
-  const consider = (side: GameSide) => {
-    const team =
-      (side.team_id !== null ? byId.get(side.team_id) : undefined) ??
-      byName.get(teamNameKey(side.name));
-    if (team === undefined) return;
-    out.set(team.team_id, team.color ?? side.color ?? DEFAULT_COLOR);
-  };
-  for (const game of games) {
-    const happening =
-      game.phase === "in_progress" ||
-      (game.phase === "scheduled" && isToday(game.start_time));
-    if (!happening) continue;
-    consider(game.home);
-    consider(game.away);
-  }
-  return out;
-}
-
-// --- Travel facts (computed from coordinates; no provider call) -------------
-const AVG_FLIGHT_KMH = 800; // effective cruise incl. climb/descent
-const FLIGHT_OVERHEAD_MIN = 40; // taxi + climb + descent allowance
-const IN_TRANSIT_HOURS = 48; // a team is "in transit" this close to an away game
-
-/** Great-circle distance in km between two lat/lon points (haversine). */
-function haversineKm(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
-): number {
-  const R = 6371;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.asin(Math.min(1, Math.sqrt(a)));
-}
-
-/**
- * Travel facts per plotted team whose NEXT game is AWAY: great-circle
- * distance, an estimated flight time, the (approximate) time-zone change
- * (lon/15), and whether the trip is imminent ("in transit").
- */
-function buildTravelInfo(
-  teams: MapTeam[],
-  nextByTeam: Map<string, NextGame>,
-  nowMs: number,
-): Map<string, TravelInfo> {
-  const out = new Map<string, TravelInfo>();
-  for (const team of teams) {
-    if (!hasCoords(team)) continue;
-    const next = nextByTeam.get(team.team_id);
-    if (next === undefined || next.isHome) continue;
-    const dest = next.game;
-    const km = haversineKm(team.lat, team.lon, dest.lat, dest.lon);
-    if (km < 1) continue; // same venue — no real trip
-    const startMs = new Date(dest.start_time).getTime();
-    // Approximate tz from longitude (lon/15), wrapped to [-12,+12] so a
-    // trans-antimeridian trip doesn't report an impossible ±23h jump.
-    let tzDelta = Math.round(dest.lon / 15) - Math.round(team.lon / 15);
-    if (tzDelta > 12) tzDelta -= 24;
-    else if (tzDelta < -12) tzDelta += 24;
-    out.set(team.team_id, {
-      destVenue: dest.venue ?? "the away venue",
-      opponent: dest.home.name, // they're the away side, so home is the host
-      distanceKm: km,
-      flightMinutes: FLIGHT_OVERHEAD_MIN + (km / AVG_FLIGHT_KMH) * 60,
-      tzDelta,
-      inTransit:
-        Number.isFinite(startMs) &&
-        startMs >= nowMs &&
-        startMs - nowMs <= IN_TRANSIT_HOURS * 3600 * 1000,
-    });
-  }
-  return out;
-}
-
-// A top-down airliner silhouette pointing NORTH (up); rotate by the compass
-// bearing to aim it along the route. `fill="currentColor"` so CSS colors it.
-const PLANE_SVG =
-  '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">' +
-  '<path fill="currentColor" d="M12 2.2c-.55 0-1 .9-1 2v5.2L2.5 14c-.3.18-.5.5-.5.86v.5l9-2.1' +
-  'v4.2l-2.2 1.6c-.2.14-.3.4-.3.64v.3l3.5-.9 3.5.9v-.3c0-.24-.1-.5-.3-.64L13 17.46v-4.2l9 2.1' +
-  'v-.5c0-.36-.2-.68-.5-.86L13 9.4V4.2c0-1.1-.45-2-1-2z"/></svg>';
-
-/** A plane marker element (div + rotatable inner SVG glyph). */
-function createPlaneElement(): { el: HTMLDivElement; glyph: HTMLElement } {
-  const el = document.createElement("div");
-  el.className = "sd-map-plane";
-  el.style.pointerEvents = "none";
-  el.innerHTML = PLANE_SVG;
-  return { el, glyph: el.firstElementChild as HTMLElement };
-}
-
-// Several person silhouettes (all drawn facing RIGHT, `fill="currentColor"` so
-// each fan is tinted its team's colour) — a mixed crowd instead of one repeated
-// icon: walking, running, standing, and arms-up cheering.
-const FAN_GLYPHS = [
-  // walking
-  '<path fill="currentColor" d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9 7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 13 16.8 14 19 14v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6z"/>',
-  // running
-  '<path fill="currentColor" d="M13.49 5.48c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm-3.6 13.9 1-4.4 2.1 2v6h2v-7.5l-2.1-2 .6-3c1.3 1.5 3.3 2.5 5.5 2.5v-2c-1.9 0-3.5-1-4.4-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1l-5.2 2.2v4.7h2v-3.4l1.8-.7-1.6 8.1-4.9-1-.4 2z"/>',
-  // standing
-  '<path fill="currentColor" d="M14 7h-4c-1.1 0-2 .9-2 2v6h2v7h4v-7h2V9c0-1.1-.9-2-2-2zm-2-.75c.97 0 1.75-.78 1.75-1.75S12.97 2.75 12 2.75 10.25 3.53 10.25 4.5 11.03 6.25 12 6.25z"/>',
-  // cheering (arms up)
-  '<g fill="currentColor"><circle cx="12" cy="4" r="2"/><path d="M10 7c-1.1 0-2 .9-2 2v5h2v7h4v-7h2V9c0-1.1-.9-2-2-2z"/><path d="M9.6 7.9 6.7 5.2c-.45-.42-1.15-.4-1.55.05s-.38 1.15.07 1.55l2.9 2.6c.4-.6.9-1.1 1.48-1.5z"/><path d="M14.4 7.9l2.9-2.7c.45-.42 1.15-.4 1.55.05s.38 1.15-.07 1.55l-2.9 2.6c-.4-.6-.9-1.1-1.48-1.5z"/></g>',
-];
-
-/** A "fan" marker element: a small person heading to the stadium. `variant`
- *  picks one of several poses (so the crowd is mixed), `color` tints it (their
- *  team), `faceLeft` flips it to face the stadium, `delaySec` desyncs the walk
- *  bob, and `size` (px) varies so the crowd has some depth. */
-function createFanElement(
-  color: string,
-  faceLeft: boolean,
-  delaySec: number,
-  variant: number,
-  size: number,
-): HTMLDivElement {
-  const el = document.createElement("div");
-  el.className = faceLeft ? "sd-map-fan sd-map-fan-l" : "sd-map-fan sd-map-fan-r";
-  el.style.color = color;
-  el.style.pointerEvents = "none";
-  const glyph =
-    FAN_GLYPHS[((variant % FAN_GLYPHS.length) + FAN_GLYPHS.length) % FAN_GLYPHS.length];
-  el.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">${glyph}</svg>`;
-  (el.firstElementChild as HTMLElement).style.animationDelay = `${delaySec}s`;
-  return el;
-}
 
 /**
  * Fit/zoom the camera to frame ALL markers (not just the clustered subset).
@@ -842,19 +326,12 @@ export default function MapView() {
     };
   }, []);
   const [days, setDays] = useState<number>(DEFAULT_DAYS);
-  // Debounce the value fed to the query so dragging the slider doesn't fire a
-  // request per tick; the label still tracks `days` immediately.
-  const [queryDays, setQueryDays] = useState<number>(DEFAULT_DAYS);
-  useEffect(() => {
-    const t = window.setTimeout(() => setQueryDays(days), 250);
-    return () => window.clearTimeout(t);
-  }, [days]);
 
   // Stadiums mode only uses `games` to compute travel arcs to each team's NEXT
   // away game, so it looks further ahead than the user's games-mode window —
   // otherwise a team whose next trip is >window away would have no arc/plane.
   const effectiveDays =
-    mode === "stadiums" ? Math.max(queryDays, STADIUMS_TRAVEL_DAYS) : queryDays;
+    mode === "stadiums" ? Math.max(days, STADIUMS_TRAVEL_DAYS) : days;
   const mapQuery = useMap(effectiveDays);
   const teamsQuery = useTeams();
 
@@ -1917,74 +1394,6 @@ export default function MapView() {
 
   return (
     <div className="flex flex-col gap-2">
-      <style>{`
-        .sd-map-marker img { pointer-events: none; }
-        .sd-map-cluster { transition: transform 0.12s ease; }
-        .sd-map-cluster:hover { transform: scale(1.08); }
-        @media (prefers-reduced-motion: reduce) {
-          .sd-map-cluster { transition: none; }
-        }
-        .sd-map-tooltip .maplibregl-popup-content {
-          background: var(--color-zinc-900);
-          border: 1px solid var(--color-zinc-800);
-          border-radius: 8px;
-          padding: 6px 9px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
-          font-family: inherit;
-        }
-        .sd-map-tooltip .maplibregl-popup-tip {
-          border-top-color: var(--color-zinc-800);
-          border-bottom-color: var(--color-zinc-800);
-        }
-        .sd-map-tooltip { pointer-events: none; }
-        @keyframes sdMapPulse {
-          0%   { box-shadow: 0 0 0 0 rgba(245,158,11,0.6), 0 1px 4px rgba(0,0,0,0.45); }
-          70%  { box-shadow: 0 0 0 9px rgba(245,158,11,0), 0 1px 4px rgba(0,0,0,0.45); }
-          100% { box-shadow: 0 0 0 0 rgba(245,158,11,0), 0 1px 4px rgba(0,0,0,0.45); }
-        }
-        .sd-map-plane {
-          color: var(--color-amber-400);
-          line-height: 0;
-          filter: drop-shadow(0 1px 2px rgba(0,0,0,0.55));
-          will-change: transform, opacity;
-        }
-        .sd-map-plane svg { display: block; }
-        .sd-map-plane-cine { color: var(--color-amber-300); }
-        .sd-map-plane-cine svg {
-          width: 30px;
-          height: 30px;
-          filter: drop-shadow(0 2px 5px rgba(0,0,0,0.6));
-        }
-        .sd-map-fan {
-          line-height: 0;
-          filter: drop-shadow(0 1px 1px rgba(0,0,0,0.6));
-          will-change: transform, opacity;
-        }
-        .sd-map-fan svg { display: block; }
-        /* Facing: glyph is drawn walking right; flip it for fans east of the
-           stadium so everyone walks toward the gates. */
-        .sd-map-fan-l svg { transform: scaleX(-1); }
-        @keyframes sdFanStepR {
-          0%, 100% { transform: scaleX(1) translateY(0); }
-          50%      { transform: scaleX(1) translateY(-1px); }
-        }
-        @keyframes sdFanStepL {
-          0%, 100% { transform: scaleX(-1) translateY(0); }
-          50%      { transform: scaleX(-1) translateY(-1px); }
-        }
-        @media (prefers-reduced-motion: no-preference) {
-          .sd-map-fan-r svg { animation: sdFanStepR 0.5s ease-in-out infinite; }
-          .sd-map-fan-l svg { animation: sdFanStepL 0.5s ease-in-out infinite; }
-        }
-        .sd-map-marker-today { animation: sdMapPulse 1.8s ease-out infinite; }
-        @media (prefers-reduced-motion: reduce) {
-          .sd-map-marker-today {
-            animation: none;
-            box-shadow: 0 0 0 3px rgba(245,158,11,0.75), 0 1px 4px rgba(0,0,0,0.45);
-          }
-        }
-      `}</style>
-
       <div className="relative">
         <div
           ref={containerRef}

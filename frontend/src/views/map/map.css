@@ -1,0 +1,68 @@
+/* Map-view chrome: marker/cluster/tooltip skins and the plane/fan
+   animation glyphs. Extracted from MapView.tsx's inline <style> block. */
+
+.sd-map-marker img { pointer-events: none; }
+.sd-map-cluster { transition: transform 0.12s ease; }
+.sd-map-cluster:hover { transform: scale(1.08); }
+@media (prefers-reduced-motion: reduce) {
+  .sd-map-cluster { transition: none; }
+}
+.sd-map-tooltip .maplibregl-popup-content {
+  background: var(--color-zinc-900);
+  border: 1px solid var(--color-zinc-800);
+  border-radius: 8px;
+  padding: 6px 9px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  font-family: inherit;
+}
+.sd-map-tooltip .maplibregl-popup-tip {
+  border-top-color: var(--color-zinc-800);
+  border-bottom-color: var(--color-zinc-800);
+}
+.sd-map-tooltip { pointer-events: none; }
+@keyframes sdMapPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(245,158,11,0.6), 0 1px 4px rgba(0,0,0,0.45); }
+  70%  { box-shadow: 0 0 0 9px rgba(245,158,11,0), 0 1px 4px rgba(0,0,0,0.45); }
+  100% { box-shadow: 0 0 0 0 rgba(245,158,11,0), 0 1px 4px rgba(0,0,0,0.45); }
+}
+.sd-map-plane {
+  color: var(--color-amber-400);
+  line-height: 0;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.55));
+  will-change: transform, opacity;
+}
+.sd-map-plane svg { display: block; }
+.sd-map-plane-cine { color: var(--color-amber-300); }
+.sd-map-plane-cine svg {
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 2px 5px rgba(0,0,0,0.6));
+}
+.sd-map-fan {
+  line-height: 0;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.6));
+  will-change: transform, opacity;
+}
+.sd-map-fan svg { display: block; }
+/* Facing: glyph is drawn walking right; flip it for fans east of the
+   stadium so everyone walks toward the gates. */
+.sd-map-fan-l svg { transform: scaleX(-1); }
+@keyframes sdFanStepR {
+  0%, 100% { transform: scaleX(1) translateY(0); }
+  50%      { transform: scaleX(1) translateY(-1px); }
+}
+@keyframes sdFanStepL {
+  0%, 100% { transform: scaleX(-1) translateY(0); }
+  50%      { transform: scaleX(-1) translateY(-1px); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sd-map-fan-r svg { animation: sdFanStepR 0.5s ease-in-out infinite; }
+  .sd-map-fan-l svg { animation: sdFanStepL 0.5s ease-in-out infinite; }
+}
+.sd-map-marker-today { animation: sdMapPulse 1.8s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .sd-map-marker-today {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(245,158,11,0.75), 0 1px 4px rgba(0,0,0,0.45);
+  }
+}
