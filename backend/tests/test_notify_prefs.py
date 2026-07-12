@@ -31,7 +31,11 @@ from app.models import domain
 from app.models.domain import GamePhase, GameState
 from app.models.orm import Base, GameORM
 from app.providers import registry
+from app.scheduler import common as scheduler_common
 from app.scheduler import jobs
+from app.scheduler import live as scheduler_live
+from app.scheduler import refresh as scheduler_refresh
+from app.scheduler import stadium_cache as scheduler_stadium_cache
 from app.services import notify, notify_prefs, repository
 from app.services.notify_prefs import EVENT_TYPES, decide
 from app.timeutil import utcnow
@@ -395,7 +399,10 @@ def patched_scope(db: async_sessionmaker[AsyncSession], monkeypatch: pytest.Monk
             yield sess
             await sess.commit()
 
-    monkeypatch.setattr(jobs, "session_scope", scope)
+    # The job modules each bind session_scope at import time, so the
+    # test scope is patched into every one of them.
+    for module in (scheduler_common, scheduler_refresh, scheduler_stadium_cache, scheduler_live):
+        monkeypatch.setattr(module, "session_scope", scope)
 
 
 @pytest.fixture

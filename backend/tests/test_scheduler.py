@@ -31,7 +31,11 @@ from app.models import domain
 from app.models.orm import Base, EventORM, TeamCompetitionORM
 from app.providers import registry
 from app import background
+from app.scheduler import common as scheduler_common
 from app.scheduler import jobs
+from app.scheduler import live as scheduler_live
+from app.scheduler import refresh as scheduler_refresh
+from app.scheduler import stadium_cache as scheduler_stadium_cache
 from app.services import repository
 from app.timeutil import utcnow
 
@@ -274,7 +278,10 @@ def patched_scope(db: async_sessionmaker[AsyncSession], monkeypatch: pytest.Monk
             yield session
             await session.commit()
 
-    monkeypatch.setattr(jobs, "session_scope", scope)
+    # The job modules each bind session_scope at import time, so the
+    # test scope is patched into every one of them.
+    for module in (scheduler_common, scheduler_refresh, scheduler_stadium_cache, scheduler_live):
+        monkeypatch.setattr(module, "session_scope", scope)
 
 
 @pytest.fixture
@@ -1083,7 +1090,7 @@ async def test_attach_player_photos_backfills_missing_only_and_caps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Only photoless players are looked up, capped, and a no-match stays None."""
-    monkeypatch.setattr(jobs, "_PHOTO_BACKFILL_MAX_PLAYERS", 2)
+    monkeypatch.setattr(scheduler_refresh, "_PHOTO_BACKFILL_MAX_PLAYERS", 2)
 
     looked_up: list[str] = []
 
