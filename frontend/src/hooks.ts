@@ -160,20 +160,6 @@ export function useGameOdds(
 }
 
 /**
- * Local calendar day, `daysOffset` from today, as "YYYY-MM-DD". Used to
- * build the default events window (today-7d .. today+45d) the way the
- * backend's /events route expects local days.
- */
-export function localDayOffset(daysOffset: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + daysOffset);
-  const year = String(d.getFullYear()).padStart(4, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-/**
  * On-demand box-score drill-down for a single game. Disabled until an id is
  * provided (the modal opens with a game id), so closing the modal stops the
  * polling. While the game is in progress the line score / performers keep

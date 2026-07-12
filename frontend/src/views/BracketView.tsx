@@ -5,8 +5,8 @@ import {
   useSchedule,
   useSetupLeagues,
   useTeams,
-  localDayOffset,
 } from "../hooks";
+import { localDayOffset } from "../lib/time";
 import type { BracketSeries, BracketSide, Game } from "../types";
 import TeamLogo from "../components/TeamLogo";
 import Select, { type SelectOption } from "../components/Select";

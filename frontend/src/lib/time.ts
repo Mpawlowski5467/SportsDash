@@ -85,3 +85,31 @@ export function relativeTime(iso: string): string {
   }
   return formatShortDate(iso);
 }
+
+/** Local-calendar "YYYY-MM-DD" key for a Date (no UTC shift). */
+export function localKeyFromDate(d: Date): string {
+  const y = String(d.getFullYear()).padStart(4, "0");
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Today ± offset days as a local "YYYY-MM-DD" key — the backend's schedule
+ * windows expect local calendar days.
+ */
+export function localDayOffset(daysOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + daysOffset);
+  return localKeyFromDate(d);
+}
+
+/**
+ * Parse a local "YYYY-MM-DD" key into a Date at local midnight. Never via
+ * `new Date(key)` — that parses as UTC midnight and shifts the day west of
+ * Greenwich.
+ */
+export function parseLocalDateKey(key: string): Date {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}

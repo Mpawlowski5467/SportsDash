@@ -1,3 +1,4 @@
+import { withAlpha } from "../lib/color";
 import { useMemo, useState, type ReactNode } from "react";
 import { useSetupLeagues, useStandings, useTeams } from "../hooks";
 import { formatDateTime } from "../lib/time";
@@ -17,24 +18,6 @@ interface TeamMeta {
 const FALLBACK_ACCENT = "#a1a1aa";
 
 /** Convert a hex color to an rgba() string at the given alpha. */
-function withAlpha(hex: string | null | undefined, alpha: number): string {
-  const fallbackRgb = "161, 161, 170";
-  if (!hex) return `rgba(${fallbackRgb}, ${alpha})`;
-  const raw = hex.trim().replace(/^#/, "");
-  const full =
-    raw.length === 3
-      ? raw
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : raw;
-  if (!/^[0-9a-fA-F]{6}$/.test(full)) return `rgba(${fallbackRgb}, ${alpha})`;
-  const r = parseInt(full.slice(0, 2), 16);
-  const g = parseInt(full.slice(2, 4), 16);
-  const b = parseInt(full.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
 /** ".667" style — three decimals, leading zero stripped. */
 function formatPct(pct: number | null): string {
   if (pct === null) return "—";

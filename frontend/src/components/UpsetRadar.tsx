@@ -1,3 +1,5 @@
+import { formatMoneyline } from "../lib/odds";
+import { abbrev } from "../lib/labels";
 import { useMemo } from "react";
 
 import { useGameOdds } from "../hooks";
@@ -18,15 +20,7 @@ interface UpsetSignal {
 }
 
 /** Up-to-three-char abbreviation fallback, mirroring the modal helper. */
-function abbrev(name: string): string {
-  return name.slice(0, 3).toUpperCase();
-}
-
 /** American odds with an explicit sign (+144 / -175). */
-function formatMoneyline(value: number): string {
-  return value > 0 ? `+${value}` : `${value}`;
-}
-
 /**
  * Decide whether a game is an upset signal. Needs BOTH win probabilities AND
  * both moneylines: the market underdog is the side with the higher moneyline

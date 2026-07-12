@@ -7,11 +7,15 @@ import StatusBadge from "../components/StatusBadge";
 import TeamLogo from "../components/TeamLogo";
 import UpsetRadar from "../components/UpsetRadar";
 import WeatherInline from "../components/WeatherInline";
-import { localDayOffset, useMatchup, useSchedule, useToday } from "../hooks";
+import { useMatchup, useSchedule, useToday } from "../hooks";
+import { localDayOffset } from "../lib/time";
+import OddsSection from "../components/OddsSection";
+import { oddsHasContent } from "../lib/odds";
+import { sideLabel } from "../lib/labels";
+import { OUTCOME_CHIP } from "../lib/outcome";
 import { formatDateTime, formatShortDate } from "../lib/time";
 import type {
   Game,
-  GameOdds,
   GameSide,
   Matchup,
   Player,
@@ -19,27 +23,6 @@ import type {
 
 /** Phases that belong in a pre-game previews browser. */
 const PREVIEW_PHASES = new Set<Game["phase"]>(["scheduled", "in_progress"]);
-
-/** Up-to-three-char abbreviation fallback, mirroring the modal helpers. */
-function abbrev(name: string): string {
-  return name.slice(0, 3).toUpperCase();
-}
-
-function sideLabel(side: GameSide): string {
-  return side.abbreviation ?? abbrev(side.name);
-}
-
-/** American odds with an explicit sign (+144 / -175); "—" when unpriced. */
-function formatMoneyline(value: number | null): string {
-  if (value === null) return "—";
-  return value > 0 ? `+${value}` : `${value}`;
-}
-
-/** Home point spread with an explicit sign (-1.5 / +3); "PK" at zero. */
-function formatSpread(value: number): string {
-  if (value === 0) return "PK";
-  return value > 0 ? `+${value}` : `${value}`;
-}
 
 /**
  * Pre-game PREVIEW browser. Gathers the upcoming games over the next two weeks
@@ -248,106 +231,6 @@ function SideHeader({
   );
 }
 
-function oddsHasContent(odds: GameOdds): boolean {
-  return (
-    odds.home_win_pct !== null ||
-    odds.away_win_pct !== null ||
-    odds.home_moneyline !== null ||
-    odds.away_moneyline !== null ||
-    odds.spread !== null ||
-    odds.over_under !== null
-  );
-}
-
-/**
- * Win-probability + betting line for the matchup — a copy of the detail
- * modal's OddsSection (which isn't exported), kept visually identical: the
- * win-probability split bar reads away (amber, left) / home (sky, right), and
- * the moneyline / spread / total rows show only what the provider priced.
- */
-function OddsSection({ odds, game }: { odds: GameOdds; game: Game }) {
-  const awayLabel = sideLabel(game.away);
-  const homeLabel = sideLabel(game.home);
-  const awayPct = odds.away_win_pct;
-  const homePct = odds.home_win_pct;
-  const hasProb = awayPct !== null && homePct !== null;
-  const hasLine =
-    odds.home_moneyline !== null ||
-    odds.away_moneyline !== null ||
-    odds.spread !== null ||
-    odds.over_under !== null;
-
-  return (
-    <Section title="Win probability & odds">
-      <div className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-800/30 px-3 py-3">
-        {hasProb && (
-          <div className="space-y-1">
-            <div className="flex items-baseline justify-between text-sm tabular-nums">
-              <span className="font-semibold text-amber-400">
-                {awayLabel} {Math.round(awayPct!)}%
-              </span>
-              <span className="text-[11px] uppercase tracking-wide text-zinc-500">
-                Win probability
-              </span>
-              <span className="font-semibold text-sky-400">
-                {Math.round(homePct!)}% {homeLabel}
-              </span>
-            </div>
-            <div className="flex h-1.5 overflow-hidden rounded-full bg-zinc-800">
-              <div
-                className="bg-amber-500/70"
-                style={{ width: `${awayPct}%` }}
-              />
-              <div className="flex-1 bg-sky-500/60" />
-            </div>
-          </div>
-        )}
-
-        {hasLine && (
-          <dl className="space-y-1.5 text-sm">
-            {(odds.away_moneyline !== null || odds.home_moneyline !== null) && (
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-xs uppercase tracking-wide text-zinc-500">
-                  Moneyline
-                </dt>
-                <dd className="tabular-nums text-zinc-200">
-                  {awayLabel} {formatMoneyline(odds.away_moneyline)}
-                  <span className="px-1.5 text-zinc-600">·</span>
-                  {homeLabel} {formatMoneyline(odds.home_moneyline)}
-                </dd>
-              </div>
-            )}
-            {odds.spread !== null && (
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-xs uppercase tracking-wide text-zinc-500">
-                  Spread
-                </dt>
-                <dd className="tabular-nums text-zinc-200">
-                  {homeLabel} {formatSpread(odds.spread)}
-                </dd>
-              </div>
-            )}
-            {odds.over_under !== null && (
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-xs uppercase tracking-wide text-zinc-500">
-                  Total
-                </dt>
-                <dd className="tabular-nums text-zinc-200">
-                  O/U {odds.over_under}
-                </dd>
-              </div>
-            )}
-          </dl>
-        )}
-
-        {odds.provider !== null && (
-          <p className="text-[11px] text-zinc-500">via {odds.provider}</p>
-        )}
-      </div>
-    </Section>
-  );
-}
-
 /** One side's recent form as W/L/D chips, newest-first, with a side label. */
 function FormRow({ label, form }: { label: string; form: string[] }) {
   if (form.length === 0) return null;
@@ -365,19 +248,13 @@ function FormRow({ label, form }: { label: string; form: string[] }) {
   );
 }
 
-const FORM_CHIP: Record<string, string> = {
-  W: "bg-emerald-500/15 text-emerald-400",
-  L: "bg-red-500/15 text-red-400",
-  D: "bg-zinc-700/40 text-zinc-300",
-};
-
 function FormChip({ result }: { result: string }) {
   const key = result.toUpperCase();
   return (
     <span
       className={
         "flex size-5 items-center justify-center rounded text-xs font-bold " +
-        (FORM_CHIP[key] ?? "bg-zinc-700/40 text-zinc-300")
+        (OUTCOME_CHIP[key as keyof typeof OUTCOME_CHIP] ?? "bg-zinc-700/40 text-zinc-300")
       }
     >
       {key}

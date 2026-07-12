@@ -5,6 +5,7 @@ import type { Game, GameSide, Sport } from "../types";
 import TeamLogo from "../components/TeamLogo";
 import Select, { type SelectOption } from "../components/Select";
 import { useManageTeams } from "../components/ManageTeamsContext";
+import { OUTCOME_CHIP } from "../lib/outcome";
 
 /** Per-side display metadata for logos, keyed by internal team id. */
 interface SideMeta {
@@ -16,12 +17,6 @@ interface SideMeta {
 const RESULTS_LIMIT = 50;
 
 type Outcome = "W" | "L" | "D" | null;
-
-const OUTCOME_CHIP: Record<Exclude<Outcome, null>, string> = {
-  W: "bg-emerald-500/15 text-emerald-400",
-  L: "bg-red-500/15 text-red-400",
-  D: "bg-zinc-700/40 text-zinc-300",
-};
 
 function sideLabel(side: GameSide): string {
   return side.abbreviation ?? side.name;

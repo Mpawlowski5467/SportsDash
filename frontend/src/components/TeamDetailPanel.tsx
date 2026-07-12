@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 import {
-  localDayOffset,
   useMap,
   useNation,
   useNews,
@@ -10,6 +9,7 @@ import {
   useSchedule,
   useTeams,
 } from "../hooks";
+import { localDayOffset } from "../lib/time";
 import type { Game } from "../types";
 import TeamProfileView, {
   type Outcome,

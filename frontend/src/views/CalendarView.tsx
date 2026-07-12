@@ -1,3 +1,5 @@
+import { isLightColor } from "../lib/color";
+import { localKeyFromDate } from "../lib/time";
 import { useEffect, useMemo, useRef, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -150,30 +152,6 @@ function SubscribeMenu({ teams }: { teams: Team[] }) {
  * Local "YYYY-MM-DD" key from a Date. Built from the local date parts —
  * `toISOString()` would shift the day across the UTC boundary.
  */
-function toLocalKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-/** Simple perceived-luminance check for readable event text. */
-function isLightColor(hex: string): boolean {
-  const raw = hex.replace("#", "");
-  const full =
-    raw.length === 3
-      ? raw
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : raw;
-  const r = parseInt(full.slice(0, 2), 16);
-  const g = parseInt(full.slice(2, 4), 16);
-  const b = parseInt(full.slice(4, 6), 16);
-  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return false;
-  return 0.299 * r + 0.587 * g + 0.114 * b > 150;
-}
-
 function eventColor(game: Game, teamColors: Record<string, string>): string {
   for (const teamId of game.followed_team_ids) {
     const color = teamColors[teamId];
@@ -195,8 +173,8 @@ function eventColor(game: Game, teamColors: Record<string, string>): string {
 function initialRange(): { start: string; end: string } {
   const now = new Date();
   return {
-    start: toLocalKey(new Date(now.getFullYear(), now.getMonth(), 0)),
-    end: toLocalKey(new Date(now.getFullYear(), now.getMonth() + 1, 1)),
+    start: localKeyFromDate(new Date(now.getFullYear(), now.getMonth(), 0)),
+    end: localKeyFromDate(new Date(now.getFullYear(), now.getMonth() + 1, 1)),
   };
 }
 
@@ -328,10 +306,10 @@ export default function CalendarView() {
     // Pad one day on each side for the server-vs-browser timezone gap
     // (see initialRange): -1 from the visible start, and the exclusive
     // end used as-is IS the +1 padded inclusive end.
-    const start = toLocalKey(
+    const start = localKeyFromDate(
       new Date(arg.start.getFullYear(), arg.start.getMonth(), arg.start.getDate() - 1),
     );
-    const end = toLocalKey(arg.end);
+    const end = localKeyFromDate(arg.end);
     setRange((prev) =>
       prev.start === start && prev.end === end ? prev : { start, end },
     );

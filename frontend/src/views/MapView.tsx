@@ -4,7 +4,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import Supercluster from "supercluster";
 import type { Feature, FeatureCollection, LineString } from "geojson";
 
-import { useMap, useSchedule, useTeams, localDayOffset } from "../hooks";
+import { useMap, useSchedule, useTeams } from "../hooks";
+import { localDayOffset } from "../lib/time";
 import type { Game, GameSide, MapGame, MapTeam } from "../types";
 import MapTeamPanel, { type TravelInfo } from "../components/MapTeamPanel";
 import MapVenueGamesPanel, {

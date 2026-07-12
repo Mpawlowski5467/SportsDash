@@ -1,3 +1,4 @@
+import { parseLocalDateKey } from "../lib/time";
 import { useMemo, useState } from "react";
 import { useGameOdds, useTeams, useToday } from "../hooks";
 import GameCard from "../components/GameCard";
@@ -9,11 +10,6 @@ import type { League, SportEvent } from "../types";
  * parses as UTC midnight, which shifts the day for anyone west of Greenwich —
  * so we split and use the local-time constructor instead.
  */
-function parseLocalDate(key: string): Date {
-  const [y, m, d] = key.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
-
 /** Score colored by sign: under par emerald, at/over par zinc. */
 function eventScoreClass(score: string): string {
   const t = score.trim();
@@ -249,7 +245,7 @@ export default function TodayView() {
   const { date, games } = todayQuery.data;
   // Defensive: an older backend (pre-Phase-5) may omit `events` entirely.
   const events = todayQuery.data.events ?? [];
-  const localDate = parseLocalDate(date);
+  const localDate = parseLocalDateKey(date);
   const weekday = localDate.toLocaleDateString(undefined, { weekday: "long" });
   const longDate = localDate.toLocaleDateString(undefined, {
     month: "long",
