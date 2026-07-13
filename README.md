@@ -369,6 +369,13 @@ Where SportsDash is headed — recently shipped work, near-term packaging and
 distribution, and longer-term product ideas — lives in
 **[ROADMAP.md](ROADMAP.md)**.
 
+## Contributing
+
+Bug reports and well-scoped PRs are welcome — dev setup, the quality
+gates CI enforces, and the house rules (binding contracts doc, UTC
+internally, fictional fixture names) live in
+**[CONTRIBUTING.md](CONTRIBUTING.md)**.
+
 ## License
 
 SportsDash is open source under the **[MIT License](LICENSE)** — use it,
