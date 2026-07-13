@@ -37,6 +37,7 @@ if [ ! -x "$ROOT/backend/.venv/bin/pyinstaller" ]; then
   python3.12 -m venv "$ROOT/backend/.venv"
   "$ROOT/backend/.venv/bin/pip" install --quiet --upgrade pip
   "$ROOT/backend/.venv/bin/pip" install --quiet \
+    -r "$ROOT/backend/requirements.lock" \
     -r "$ROOT/backend/requirements-dev.txt"
 fi
 

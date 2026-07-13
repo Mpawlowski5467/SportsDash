@@ -17,13 +17,11 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
-    create_async_engine,
 )
-from sqlalchemy.pool import StaticPool
 
 from app.db import get_session
+from tests.db_engine import create_test_schema, make_test_engine
 from app.models import domain
-from app.models.orm import Base
 from app.providers import espn_catalog
 from app.providers.espn_catalog import CatalogLeague, CatalogTeam
 from app.routes import router as api_router
@@ -85,9 +83,8 @@ CATALOG_TEAMS: dict[str, list[CatalogTeam]] = {
 
 @pytest.fixture
 async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    engine = make_test_engine()
+    await create_test_schema(engine)
     try:
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:

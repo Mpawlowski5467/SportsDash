@@ -24,11 +24,44 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements*.txt
-      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pip install -r requirements.lock -r requirements-dev.txt
       - run: ruff check app tests
       - run: ruff format --check app tests
       # The suite is hermetic (no network) and runs in ~5s.
       - run: pytest -q --cov=app --cov-report=term-missing
+
+  # Same suite against real Postgres/asyncpg — the driver returns tz-AWARE
+  # datetimes (SQLite returns naive) and enforces FKs/VARCHAR widths, which
+  # is exactly the class of bug the sqlite-only run can't see.
+  backend-postgres:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sportsdash
+          POSTGRES_PASSWORD: sportsdash
+          POSTGRES_DB: sportsdash_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sportsdash"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SPORTSDASH_TEST_DATABASE_URL: postgresql+asyncpg://sportsdash:sportsdash@localhost:5432/sportsdash_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r requirements.lock -r requirements-dev.txt
+      - run: pytest -q
 
   frontend:
     runs-on: ubuntu-latest

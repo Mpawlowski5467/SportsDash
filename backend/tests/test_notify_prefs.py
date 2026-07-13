@@ -23,13 +23,12 @@ import pytest
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
-    create_async_engine,
 )
-from sqlalchemy.pool import StaticPool
 
 from app.models import domain
+from tests.db_engine import create_test_schema, make_test_engine
 from app.models.domain import GamePhase, GameState
-from app.models.orm import Base, GameORM
+from app.models.orm import GameORM
 from app.providers import registry
 from app.scheduler import common as scheduler_common
 from app.scheduler import jobs
@@ -262,9 +261,8 @@ def test_two_followed_teams_one_scope_present_is_the_team_layer() -> None:
 
 @pytest.fixture
 async def session() -> AsyncIterator[AsyncSession]:
-    engine = create_async_engine("sqlite+aiosqlite://")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    engine = make_test_engine()
+    await create_test_schema(engine)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as sess:
         yield sess
@@ -382,9 +380,8 @@ class FakeProvider:
 
 @pytest.fixture
 async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    engine = make_test_engine()
+    await create_test_schema(engine)
     try:
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
@@ -481,6 +478,7 @@ async def test_live_tick_muted_team_suppressed_enabled_team_fires(
                 provider_key="rivermont-stags",
             ),
         )
+        await session.flush()  # parents before children: postgres enforces FKs
         session.add(_in_progress_row(muted_game, TEAM_COMETS))
         session.add(_in_progress_row(open_game, TEAM_STAGS))
         # Mute the Comets; the Stags keep the default (all on).

@@ -17,11 +17,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
-    create_async_engine,
 )
-from sqlalchemy.pool import StaticPool
 
 from app.config import get_settings
+from tests.db_engine import create_test_schema, make_test_engine
 from app.db import get_session
 from app.models.domain import (
     GameOdds,
@@ -31,7 +30,6 @@ from app.models.domain import (
     Weather,
 )
 from app.models.orm import (
-    Base,
     GameORM,
     LeagueORM,
     NewsORM,
@@ -75,9 +73,8 @@ def _day_start(day: date) -> datetime:
 
 @pytest.fixture
 async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    engine = make_test_engine()
+    await create_test_schema(engine)
     try:
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
@@ -100,6 +97,9 @@ async def seed(db: async_sessionmaker[AsyncSession]) -> Seed:
                 provider_key="mock-basketball",
             )
         )
+        # Real Postgres enforces the FK graph SQLite ignored: parents must
+        # be flushed before children reference them.
+        await session.flush()
         session.add(
             TeamORM(
                 id=TEAM_FOXES,
@@ -123,6 +123,7 @@ async def seed(db: async_sessionmaker[AsyncSession]) -> Seed:
                 rss_feeds=[],
             )
         )
+        await session.flush()
 
         # In progress today (state columns set).
         session.add(
@@ -861,6 +862,7 @@ async def _seed_scheduled_soccer_game(
                 provider_key="mock-soccer",
             )
         )
+        await session.flush()  # parents before children: postgres enforces FKs
         session.add(
             TeamORM(
                 id=SOCCER_TEAM,
@@ -874,6 +876,7 @@ async def _seed_scheduled_soccer_game(
                 venue_lon=-0.12,
             )
         )
+        await session.flush()  # parents before children: postgres enforces FKs
         session.add(
             GameORM(
                 id=SOCCER_GAME,

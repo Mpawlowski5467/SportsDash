@@ -16,10 +16,10 @@ from typing import AsyncIterator
 
 import feedparser
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import domain
-from app.models.orm import Base
+from tests.db_engine import create_test_schema, make_test_engine
 from app.services import news, repository
 
 LEAGUE_ID = "pinnacle-basketball"
@@ -59,9 +59,8 @@ async def session_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     """In-memory DB + a ``session_scope`` patched into the news module."""
-    engine = create_async_engine("sqlite+aiosqlite://")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    engine = make_test_engine()
+    await create_test_schema(engine)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
     @asynccontextmanager

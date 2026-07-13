@@ -23,12 +23,11 @@ import pytest
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
-    create_async_engine,
 )
-from sqlalchemy.pool import StaticPool
 
 from app.models import domain
-from app.models.orm import Base, EventORM, TeamCompetitionORM
+from tests.db_engine import create_test_schema, make_test_engine
+from app.models.orm import EventORM, TeamCompetitionORM
 from app.providers import registry
 from app import background
 from app.scheduler import common as scheduler_common
@@ -259,9 +258,8 @@ class FakeProvider:
 
 @pytest.fixture
 async def db() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    engine = make_test_engine()
+    await create_test_schema(engine)
     try:
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
@@ -331,6 +329,7 @@ async def test_team_with_sibling_competition_gets_games_from_both_leagues(
                 provider_key="nsu-global",
             ),
         )
+        await session.flush()  # parents before children: postgres enforces FKs
         # The sibling competition the national team also plays in.
         session.add(
             TeamCompetitionORM(
@@ -413,6 +412,7 @@ async def test_one_failing_source_does_not_stop_the_others(
                 provider_key="nsu-global",
             ),
         )
+        await session.flush()  # parents before children: postgres enforces FKs
         session.add(
             TeamCompetitionORM(
                 team_id=TEAM_ID,

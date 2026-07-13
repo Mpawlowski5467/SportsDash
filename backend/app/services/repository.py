@@ -1015,8 +1015,15 @@ async def replace_followed(
         await session.execute(delete(table))
     for league in leagues:
         await upsert_league(session, league)
+    # Parents must reach the database before children reference them:
+    # without ORM relationships SQLAlchemy gives no cross-table INSERT
+    # ordering inside one flush, and postgres (unlike sqlite's default)
+    # enforces the FKs — the delete loop above already goes children-first
+    # for the same reason.
+    await session.flush()
     for team in teams:
         await upsert_team(session, team)
+    await session.flush()
     for team_id, league_id, provider_key in competitions or ():
         session.add(
             TeamCompetitionORM(team_id=team_id, league_id=league_id, provider_key=provider_key)

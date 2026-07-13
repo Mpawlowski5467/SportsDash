@@ -5,8 +5,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# requirements.lock pins the full resolved set (regenerate with
+# `uv pip compile requirements.txt -o requirements.lock --python-version 3.12`)
+# so image rebuilds can't silently pick up new dependency versions.
+COPY requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 
 COPY app ./app
 COPY config ./config

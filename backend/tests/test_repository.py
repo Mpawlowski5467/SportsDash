@@ -11,10 +11,11 @@ from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import domain
-from app.models.orm import Base, NewsORM
+from tests.db_engine import create_test_schema, make_test_engine
+from app.models.orm import NewsORM
 from app.services import repository
 from app.timeutil import ensure_utc, utcnow
 
@@ -25,9 +26,8 @@ TEAM_STAGS = "rivermont-stags"
 
 @pytest.fixture
 async def session() -> AsyncIterator[AsyncSession]:
-    engine = create_async_engine("sqlite+aiosqlite://")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    engine = make_test_engine()
+    await create_test_schema(engine)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session:
         yield session
