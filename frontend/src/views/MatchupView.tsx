@@ -17,6 +17,7 @@ import { formatDateTime, formatShortDate } from "../lib/time";
 import type {
   Game,
   GameSide,
+  HeadToHeadRecord,
   Matchup,
   Player,
 } from "../types";
@@ -124,6 +125,13 @@ function Preview({ matchup }: { matchup: Matchup }) {
 
   const hasForm = matchup.home_form.length > 0 || matchup.away_form.length > 0;
   const hasH2H = matchup.head_to_head.length > 0;
+  const record = matchup.head_to_head_record;
+  // The stored "Head to head" list already shows near-window meetings —
+  // only surface the cross-season ones it doesn't have.
+  const recentIds = new Set(matchup.head_to_head.map((meeting) => meeting.id));
+  const recordMeetings = (record?.meetings ?? []).filter(
+    (meeting) => !recentIds.has(meeting.id),
+  );
   const hasLineup =
     lineup !== null && (lineup.home !== null || lineup.away !== null);
   const hasInjuries =
@@ -152,6 +160,19 @@ function Preview({ matchup }: { matchup: Matchup }) {
               <HeadToHeadRow key={meeting.id} game={meeting} />
             ))}
           </ul>
+        </Section>
+      )}
+
+      {record !== null && (
+        <Section title={`Head to head · last ${record.seasons} seasons`}>
+          <HeadToHeadRecordSummary record={record} />
+          {recordMeetings.length > 0 && (
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {recordMeetings.map((meeting) => (
+                <HeadToHeadRow key={meeting.id} game={meeting} />
+              ))}
+            </ul>
+          )}
         </Section>
       )}
 
@@ -228,6 +249,32 @@ function SideHeader({
         {side.name}
       </span>
     </div>
+  );
+}
+
+/** Cross-season W-D-L strip: "Moss Rovers 4W 1D 2L vs Tidewater FC". */
+function HeadToHeadRecordSummary({ record }: { record: HeadToHeadRecord }) {
+  const chips: { label: string; className: string }[] = [
+    { label: `${record.wins}W`, className: OUTCOME_CHIP.W },
+    ...(record.draws > 0
+      ? [{ label: `${record.draws}D`, className: OUTCOME_CHIP.D }]
+      : []),
+    { label: `${record.losses}L`, className: OUTCOME_CHIP.L },
+  ];
+  return (
+    <p className="flex flex-wrap items-center gap-1.5 text-sm text-zinc-300">
+      <span className="font-medium text-zinc-100">{record.team_name}</span>
+      {chips.map((chip) => (
+        <span
+          key={chip.label}
+          className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-bold ${chip.className}`}
+        >
+          {chip.label}
+        </span>
+      ))}
+      <span className="text-zinc-500">vs</span>
+      <span>{record.opponent_name}</span>
+    </p>
   );
 }
 

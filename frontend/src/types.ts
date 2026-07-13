@@ -266,6 +266,17 @@ export interface GameDetail {
  * projected lineups, recent form, head-to-head, injuries). Sides that aren't
  * followed teams come back with empty lineup/injuries.
  */
+export interface HeadToHeadRecord {
+  team_id: string;
+  team_name: string; // the followed side whose perspective the record takes
+  opponent_name: string;
+  seasons: number; // how many season keys were scanned
+  wins: number;
+  losses: number;
+  draws: number;
+  meetings: Game[]; // newest first, capped
+}
+
 export interface Matchup {
   game: Game;
   odds: GameOdds | null;
@@ -274,6 +285,7 @@ export interface Matchup {
   home_form: string[]; // recent results "W"/"L"/"D", newest first
   away_form: string[];
   head_to_head: Game[]; // past meetings, newest first
+  head_to_head_record: HeadToHeadRecord | null; // cross-season record
   home_injuries: Player[]; // followed-team players not active
   away_injuries: Player[];
 }

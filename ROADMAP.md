@@ -46,7 +46,9 @@ The desktop app exists; making it *easy to get and trust* is the next step.
   ESPN season via `GET /standings/{league}?season=` (DB-archived after
   one fetch; the scheduler also archives each season's final table as
   leagues roll over) and `GET /history/results/{team}?season=`.
-  Remaining idea: cross-season head-to-head records in the Matchup view.
+  Cross-season head-to-head records shipped in the Matchup view too
+  (2026-07-13): W-D-L vs the opponent across the last 5 seasons, from the
+  followed side's perspective, built on the same cached season fetches.
 
 ## 💡 Ideas — maybe someday
 

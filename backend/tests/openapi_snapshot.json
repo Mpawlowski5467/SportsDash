@@ -917,6 +917,58 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HeadToHeadRecordOut": {
+        "description": "Cross-season head-to-head, from ``team_name``'s perspective.\n\nBuilt by scanning the followed team's recent season archives; the\nstored ``MatchupOut.head_to_head`` list still carries the near-window\nmeetings, while this record covers the last ``seasons`` seasons.",
+        "properties": {
+          "draws": {
+            "title": "Draws",
+            "type": "integer"
+          },
+          "losses": {
+            "title": "Losses",
+            "type": "integer"
+          },
+          "meetings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GameOut"
+            },
+            "title": "Meetings",
+            "type": "array"
+          },
+          "opponent_name": {
+            "title": "Opponent Name",
+            "type": "string"
+          },
+          "seasons": {
+            "title": "Seasons",
+            "type": "integer"
+          },
+          "team_id": {
+            "title": "Team Id",
+            "type": "string"
+          },
+          "team_name": {
+            "title": "Team Name",
+            "type": "string"
+          },
+          "wins": {
+            "title": "Wins",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "team_id",
+          "team_name",
+          "opponent_name",
+          "seasons",
+          "wins",
+          "losses",
+          "draws"
+        ],
+        "title": "HeadToHeadRecordOut",
+        "type": "object"
+      },
       "LeaderRowOut": {
         "properties": {
           "detail": {
@@ -1405,6 +1457,16 @@
             },
             "title": "Head To Head",
             "type": "array"
+          },
+          "head_to_head_record": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HeadToHeadRecordOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "home_form": {
             "default": [],
@@ -2954,7 +3016,7 @@
     },
     "/api/history/results/{team_id}": {
       "get": {
-        "operationId": "season_results_api_history_results__team_id__get",
+        "operationId": "season_results_route_api_history_results__team_id__get",
         "parameters": [
           {
             "in": "path",
@@ -2985,7 +3047,7 @@
                   "items": {
                     "$ref": "#/components/schemas/GameOut"
                   },
-                  "title": "Response Season Results Api History Results  Team Id  Get",
+                  "title": "Response Season Results Route Api History Results  Team Id  Get",
                   "type": "array"
                 }
               }
@@ -3003,7 +3065,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Season Results"
+        "summary": "Season Results Route"
       }
     },
     "/api/leaders/{league_id}": {

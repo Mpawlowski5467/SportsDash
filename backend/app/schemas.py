@@ -315,6 +315,24 @@ class GameLineupOut(BaseModel):
 GameDetailOut.model_rebuild()
 
 
+class HeadToHeadRecordOut(BaseModel):
+    """Cross-season head-to-head, from ``team_name``'s perspective.
+
+    Built by scanning the followed team's recent season archives; the
+    stored ``MatchupOut.head_to_head`` list still carries the near-window
+    meetings, while this record covers the last ``seasons`` seasons.
+    """
+
+    team_id: str
+    team_name: str
+    opponent_name: str
+    seasons: int  # how many season keys were scanned
+    wins: int
+    losses: int
+    draws: int
+    meetings: list[GameOut] = []  # newest first, capped
+
+
 class MatchupOut(BaseModel):
     """A pre-game preview, assembled from already-available pieces.
 
@@ -333,6 +351,10 @@ class MatchupOut(BaseModel):
     home_form: list[str] = []
     away_form: list[str] = []
     head_to_head: list[GameOut] = []
+    # Cross-season record (last ~5 seasons) from a followed side's
+    # perspective; None when neither side is a followed espn team, the
+    # sport has no archives, or no meetings were found.
+    head_to_head_record: HeadToHeadRecordOut | None = None
     home_injuries: list[PlayerOut] = []
     away_injuries: list[PlayerOut] = []
 

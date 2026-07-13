@@ -1092,6 +1092,39 @@ async def test_matchup_assembles_preview(
         assert isinstance(data[key], list)
 
 
+async def test_matchup_includes_cross_season_record(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cross-season record flows through from the builder, preferring
+    the followed HOME side's perspective."""
+    from app.routes import matchup as matchup_route
+    from app.schemas import HeadToHeadRecordOut
+
+    _use_provider(monkeypatch, _FakeProvider(None))
+
+    async def fake_record(league_row, team_row, opponent_name):
+        return HeadToHeadRecordOut(
+            team_id=team_row.id,
+            team_name=team_row.name,
+            opponent_name=opponent_name,
+            seasons=5,
+            wins=4,
+            losses=2,
+            draws=1,
+            meetings=[],
+        )
+
+    monkeypatch.setattr(matchup_route.head_to_head, "build_record", fake_record)
+
+    resp = await client.get(f"/api/matchup/{GAME_TONIGHT}")
+    assert resp.status_code == 200
+    record = resp.json()["head_to_head_record"]
+    # GAME_TONIGHT's home side is the followed Quarry Hawks.
+    assert record["team_name"] == "Quarry Hawks"
+    assert record["opponent_name"] == "Glimmer Foxes"
+    assert (record["wins"], record["draws"], record["losses"]) == (4, 1, 2)
+
+
 async def test_matchup_unknown_game_404(client: AsyncClient) -> None:
     resp = await client.get("/api/matchup/mock:no-such-game")
     assert resp.status_code == 404
