@@ -15,6 +15,7 @@ class LeagueOut(BaseModel):
     id: str
     sport: str
     name: str
+    provider: str  # data source id ("espn", "thesportsdb") — gates season archives
     follow_all: bool = False  # followed as a whole competition (no team picks)
 
 

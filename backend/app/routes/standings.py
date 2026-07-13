@@ -14,12 +14,15 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_session
 from app.schemas import StandingRowOut, StandingsOut
+from app.models import convert
+from app.models.domain import Sport
+from app.providers import espn_history
 from app.services import cache, repository
 from app.timeutil import ensure_utc, utcnow
 
@@ -44,10 +47,17 @@ def _is_stale(fetched_at) -> bool:
 
 
 @router.get("/standings/{league_id}", response_model=StandingsOut)
-async def standings(league_id: str, session: AsyncSession = Depends(get_session)) -> StandingsOut:
+async def standings(
+    league_id: str,
+    season: int | None = Query(default=None, ge=1990, le=2100),
+    session: AsyncSession = Depends(get_session),
+) -> StandingsOut:
     league = await repository.get_league(session, league_id)
     if league is None:
         raise HTTPException(status_code=404, detail="Unknown league")
+
+    if season is not None:
+        return await _season_standings(session, league, season)
 
     row = await repository.get_standings(session, league_id)
     if row is not None and row.rows:
@@ -87,4 +97,38 @@ async def standings(league_id: str, session: AsyncSession = Depends(get_session)
         season="",
         fetched_at=None,
         rows=[],
+    )
+
+
+async def _season_standings(session: AsyncSession, league, season: int) -> StandingsOut:
+    """A past season's table: archive first, then a live ESPN backfill.
+
+    Fetched seasons are stored in the archive, so each one costs a single
+    upstream call ever.  Leagues whose provider has no season archives
+    (TheSportsDB volleyball, tennis rankings, MMA) 404 — the frontend
+    only offers the picker where history is supported.
+    """
+    key = str(season)
+    row = await repository.get_standings_archive(session, league.id, key)
+    if row is None:
+        sport = Sport(league.sport)
+        if league.provider != "espn" or not espn_history.supports_history(sport):
+            raise HTTPException(status_code=404, detail="No season archive for this league")
+        fetched = await espn_history.fetch_season_standings(convert.league_from_row(league), season)
+        if fetched is None:
+            raise HTTPException(status_code=404, detail="Season not available from the provider")
+        row = await repository.save_standings_archive(session, fetched, season_key=key)
+        if row is None:  # pragma: no cover — key is explicit, save can't miss
+            raise HTTPException(status_code=404, detail="Season not available from the provider")
+        await session.commit()
+
+    fetched_at = ensure_utc(row.fetched_at) if row.fetched_at is not None else None
+    return StandingsOut(
+        league_id=league.id,
+        league_name=league.name,
+        sport=league.sport,
+        season=row.season_label,
+        fetched_at=fetched_at,
+        rows=[StandingRowOut.model_validate(entry) for entry in row.rows],
+        is_stale=False,
     )

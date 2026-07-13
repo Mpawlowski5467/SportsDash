@@ -982,6 +982,10 @@
             "title": "Name",
             "type": "string"
           },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
           "sport": {
             "title": "Sport",
             "type": "string"
@@ -990,7 +994,8 @@
         "required": [
           "id",
           "sport",
-          "name"
+          "name",
+          "provider"
         ],
         "title": "LeagueOut",
         "type": "object"
@@ -2947,6 +2952,60 @@
         "summary": "Health"
       }
     },
+    "/api/history/results/{team_id}": {
+      "get": {
+        "operationId": "season_results_api_history_results__team_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "season",
+            "required": true,
+            "schema": {
+              "maximum": 2100,
+              "minimum": 1990,
+              "title": "Season",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GameOut"
+                  },
+                  "title": "Response Season Results Api History Results  Team Id  Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Season Results"
+      }
+    },
     "/api/leaders/{league_id}": {
       "get": {
         "operationId": "leaders_api_leaders__league_id__get",
@@ -3838,6 +3897,24 @@
             "schema": {
               "title": "League Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "season",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 2100,
+                  "minimum": 1990,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Season"
             }
           }
         ],

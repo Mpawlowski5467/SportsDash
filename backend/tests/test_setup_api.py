@@ -505,6 +505,7 @@ async def test_follow_happy_path_replaces_existing_set(
         "id": "epl",
         "sport": "soccer",
         "name": "Premier League",
+        "provider": "espn",
         "follow_all": False,
     }
     assert [team["id"] for team in data["teams"]] == [

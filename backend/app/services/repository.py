@@ -13,6 +13,7 @@ both sqlite and postgres).
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Sequence
@@ -31,6 +32,7 @@ from app.models.orm import (
     NotificationSentORM,
     PlayerORM,
     StadiumORM,
+    StandingsArchiveORM,
     StandingsORM,
     TeamCompetitionORM,
     TeamORM,
@@ -861,6 +863,55 @@ async def save_standings(session: AsyncSession, standings: domain.Standings) -> 
 
 async def get_standings(session: AsyncSession, league_id: str) -> StandingsORM | None:
     return await session.get(StandingsORM, league_id)
+
+
+_SEASON_LABEL_RE = re.compile(r"^(\d{4})(?:-(\d{2}))?$")
+
+
+def season_key_from_label(label: str) -> str | None:
+    """Numeric season key from a provider label; None when unparseable.
+
+    Cross-year seasons key on the ENDING year ("2025-26" -> "2026") so a
+    season has one key whichever way a provider spells it.
+    """
+    match = _SEASON_LABEL_RE.match((label or "").strip())
+    if match is None:
+        return None
+    start, end2 = match.groups()
+    if end2 is None:
+        return start
+    return start[:2] + end2
+
+
+async def save_standings_archive(
+    session: AsyncSession,
+    standings: domain.Standings,
+    *,
+    season_key: str | None = None,
+) -> StandingsArchiveORM | None:
+    """Upsert one season's table into the archive; None if the key is unknowable.
+
+    Archive rows deliberately drop the followed-team ``team_id`` tags —
+    they reference the CURRENT follow set, which is meaningless for a
+    past season (and would dangle after a re-follow).
+    """
+    key = season_key or season_key_from_label(standings.season)
+    if key is None:
+        return None
+    row = await session.get(StandingsArchiveORM, (standings.league_id, key))
+    if row is None:
+        row = StandingsArchiveORM(league_id=standings.league_id, season=key)
+        session.add(row)
+    row.season_label = _clip(standings.season, 32) or key
+    row.rows = [_standing_row_to_dict(replace(r, team_id=None)) for r in standings.rows]
+    row.fetched_at = ensure_utc(standings.fetched_at)
+    return row
+
+
+async def get_standings_archive(
+    session: AsyncSession, league_id: str, season_key: str
+) -> StandingsArchiveORM | None:
+    return await session.get(StandingsArchiveORM, (league_id, season_key))
 
 
 async def replace_roster(session: AsyncSession, roster: domain.Roster) -> None:

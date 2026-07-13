@@ -63,6 +63,7 @@ def _teams_out(leagues: Sequence[domain.League], teams: Sequence[domain.Team]) -
                 id=league.id,
                 sport=league.sport.value,
                 name=league.name,
+                provider=league.provider,
                 follow_all=league.follow_all,
             )
             for league in leagues

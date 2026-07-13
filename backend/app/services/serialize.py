@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Mapping, Sequence
 
+from app.models import domain
 from app.models.domain import GameLineup, GameOdds, GameSummary, TeamLineup, Weather
 from app.models.orm import EventORM, GameORM, LeagueORM
 from app.schemas import (
@@ -36,6 +37,52 @@ logger = logging.getLogger(__name__)
 #: Phases for which scores are meaningless unless a live/final state was
 #: actually recorded for the game.
 _NO_STATE_PHASES = frozenset({"postponed", "canceled"})
+
+
+def domain_game_to_out(game: domain.Game, league: LeagueORM) -> GameOut:
+    """Serialize a provider-domain Game that was never stored (history fetches).
+
+    Mirrors :func:`game_to_out`'s score-hiding rules against the domain
+    shape: scheduled games (and never-started postponed/canceled ones)
+    show no score.
+    """
+    state = game.state
+    phase = state.phase.value if state is not None else "scheduled"
+    hide_scores = (
+        state is None or phase == "scheduled" or (phase in _NO_STATE_PHASES and state.period == 0)
+    )
+    return GameOut(
+        id=game.id,
+        league_id=game.league_id,
+        sport=league.sport,
+        home=GameSideOut(
+            team_id=game.home_team_id,
+            name=game.home_name,
+            abbreviation=game.home_abbreviation,
+            logo_url=game.home_logo_url,
+            color=game.home_color,
+            score=None if hide_scores else state.home_score,
+        ),
+        away=GameSideOut(
+            team_id=game.away_team_id,
+            name=game.away_name,
+            abbreviation=game.away_abbreviation,
+            logo_url=game.away_logo_url,
+            color=game.away_color,
+            score=None if hide_scores else state.away_score,
+        ),
+        start_time=game.start_time,
+        venue=game.venue,
+        series=game.series,
+        phase=phase,
+        period=state.period if state is not None else 0,
+        period_label=state.period_label if state is not None else "",
+        clock=state.clock if state is not None else None,
+        is_intermission=state.is_intermission if state is not None else False,
+        followed_team_ids=[
+            team_id for team_id in (game.home_team_id, game.away_team_id) if team_id is not None
+        ],
+    )
 
 
 def game_to_out(row: GameORM, league: LeagueORM) -> GameOut:

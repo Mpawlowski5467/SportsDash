@@ -16,6 +16,7 @@ from app.routes import (
     events,
     games,
     health,
+    history,
     leaders,
     map_view,
     matchup,
@@ -51,6 +52,7 @@ router.include_router(news.router)
 router.include_router(calendar.router)
 router.include_router(events.router)
 router.include_router(games.router)
+router.include_router(history.router)
 router.include_router(odds.router)
 router.include_router(matchup.router)
 router.include_router(map_view.router)

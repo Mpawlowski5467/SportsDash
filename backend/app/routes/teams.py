@@ -26,6 +26,7 @@ async def teams(session: AsyncSession = Depends(get_session)) -> TeamsOut:
                 id=league.id,
                 sport=league.sport,
                 name=league.name,
+                provider=league.provider,
                 follow_all=league.follow_all,
             )
             for league in leagues

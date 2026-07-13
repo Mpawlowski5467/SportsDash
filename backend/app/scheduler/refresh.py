@@ -244,6 +244,10 @@ async def refresh_standings_for_league(league: domain.League) -> None:
         standings = await provider.get_standings(league)
         async with session_scope() as session:
             await repository.save_standings(session, standings)
+            # Keep the season history: the same table upserts into the
+            # archive keyed by season, so when the league rolls over the
+            # final table of the finished season is preserved.
+            await repository.save_standings_archive(session, standings)
         logger.info("refresh_standings: %s — %d row(s)", league.id, len(standings.rows))
     except Exception:
         logger.exception("refresh_standings: failed for league %r — skipping", league.id)

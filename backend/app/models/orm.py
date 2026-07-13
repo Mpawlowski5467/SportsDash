@@ -163,6 +163,25 @@ class StandingsORM(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class StandingsArchiveORM(Base):
+    """One final (or fetched-on-demand) standings table per league season.
+
+    ``StandingsORM`` stays the rolling current snapshot; this table is
+    append-per-season history.  ``season`` is the numeric season key used
+    in API queries (the ENDING year for cross-year seasons: "2025-26" ->
+    "2026"); ``season_label`` keeps the provider's display form.
+    """
+
+    __tablename__ = "standings_archive"
+
+    league_id: Mapped[str] = mapped_column(ForeignKey("leagues.id"), primary_key=True)
+    season: Mapped[str] = mapped_column(String(16), primary_key=True)
+    season_label: Mapped[str] = mapped_column(String(32))
+    # JSON list of dicts shaped exactly like schemas.StandingRowOut.
+    rows: Mapped[list] = mapped_column(JSON, default=list)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class PlayerORM(Base):
     __tablename__ = "players"
 
