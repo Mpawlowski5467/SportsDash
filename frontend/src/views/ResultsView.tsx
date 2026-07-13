@@ -1,11 +1,12 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { useResults, useTeams } from "../hooks";
+import { useResults, useSeasonResults, useTeams } from "../hooks";
 import { formatShortDate } from "../lib/time";
 import type { Game, GameSide, Sport } from "../types";
 import TeamLogo from "../components/TeamLogo";
 import Select, { type SelectOption } from "../components/Select";
 import { useManageTeams } from "../components/ManageTeamsContext";
 import { OUTCOME_CHIP } from "../lib/outcome";
+import { CURRENT_SEASON, seasonOptions, supportsArchives } from "../lib/seasons";
 
 /** Per-side display metadata for logos, keyed by internal team id. */
 interface SideMeta {
@@ -210,7 +211,19 @@ export default function ResultsView() {
   const teamId = teams.some((team) => team.id === selected)
     ? selected
     : teams[0]?.id;
+  const team = teams.find((entry) => entry.id === teamId);
+  const league = (teamsQuery.data?.leagues ?? []).find(
+    (entry) => entry.id === team?.league_id,
+  );
+  // Past-season archive picker (espn team sports only). "Recent" keeps
+  // the stored near-window results; a year fetches that season on demand.
+  const [seasonSel, setSeasonSel] = useState<string>(CURRENT_SEASON);
+  const archives = supportsArchives(league);
+  const seasonYear =
+    archives && seasonSel !== CURRENT_SEASON ? Number(seasonSel) : undefined;
   const resultsQuery = useResults(teamId, RESULTS_LIMIT);
+  const historyQuery = useSeasonResults(teamId, seasonYear);
+  const activeQuery = seasonYear === undefined ? resultsQuery : historyQuery;
 
   const teamOptions: SelectOption[] = useMemo(
     () =>
@@ -245,7 +258,7 @@ export default function ResultsView() {
     return map;
   }, [teamsQuery.data]);
 
-  const games = resultsQuery.data;
+  const games = activeQuery.data;
 
   const summary = useMemo(
     () => summarize(games ?? [], teamId),
@@ -293,19 +306,27 @@ export default function ResultsView() {
   }
 
   let body: ReactNode;
-  if (resultsQuery.isError) {
-    body = (
-      <p className="text-sm text-red-400">
-        Failed to load results: {resultsQuery.error?.message ?? "unknown error"}
-      </p>
-    );
+  if (activeQuery.isError) {
+    body =
+      seasonYear !== undefined ? (
+        <p className="text-sm text-zinc-500">
+          The {seasonSel} season isn&apos;t available from the provider for
+          this team.
+        </p>
+      ) : (
+        <p className="text-sm text-red-400">
+          Failed to load results:{" "}
+          {activeQuery.error?.message ?? "unknown error"}
+        </p>
+      );
   } else if (!games) {
     body = <p className="text-sm text-zinc-500">Loading results…</p>;
   } else if (games.length === 0) {
     body = (
       <p className="text-sm text-zinc-500">
-        No results yet for this team. Final scores accumulate here as games
-        finish while the app runs.
+        {seasonYear !== undefined
+          ? "No final scores for that season."
+          : "No results yet for this team. Final scores accumulate here as games finish while the app runs."}
       </p>
     );
   } else {
@@ -336,12 +357,25 @@ export default function ResultsView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Select
-        options={teamOptions}
-        value={teamId}
-        onChange={setSelected}
-        ariaLabel="Choose team"
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Select
+          options={teamOptions}
+          value={teamId}
+          onChange={(id) => {
+            setSelected(id);
+            setSeasonSel(CURRENT_SEASON); // a new team starts on recent results
+          }}
+          ariaLabel="Choose team"
+        />
+        {archives && (
+          <Select
+            options={seasonOptions()}
+            value={seasonSel}
+            onChange={setSeasonSel}
+            ariaLabel="Choose season"
+          />
+        )}
+      </div>
       {body}
     </div>
   );

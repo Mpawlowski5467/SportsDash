@@ -210,16 +210,43 @@ export function useMatchup(
 
 export function useStandings(
   leagueId: string | undefined,
+  season?: number,
 ): UseQueryResult<Standings> {
   return useQuery({
-    queryKey: ["standings", leagueId ?? null],
+    queryKey: ["standings", leagueId ?? null, season ?? "current"],
     queryFn: () => {
       if (leagueId === undefined) {
         throw new Error("useStandings: leagueId is required");
       }
-      return api.standings(leagueId);
+      return api.standings(leagueId, season);
     },
     enabled: !!leagueId,
+    // A past season's table never changes; the current one refetches
+    // on the default policy. A 404 means "no archive for that season".
+    staleTime: season !== undefined ? Infinity : undefined,
+    retry: season !== undefined ? false : undefined,
+  });
+}
+
+/**
+ * A team's FINAL games from one past season. Disabled until a season is
+ * picked; past seasons are immutable, so the cache never goes stale.
+ */
+export function useSeasonResults(
+  teamId: string | undefined,
+  season: number | undefined,
+): UseQueryResult<Game[]> {
+  return useQuery({
+    queryKey: ["history-results", teamId ?? null, season ?? null],
+    queryFn: () => {
+      if (teamId === undefined || season === undefined) {
+        throw new Error("useSeasonResults: teamId and season are required");
+      }
+      return api.historyResults(teamId, season);
+    },
+    enabled: !!teamId && season !== undefined,
+    staleTime: Infinity,
+    retry: false, // a 404 means "no archive for that season" — don't hammer
   });
 }
 

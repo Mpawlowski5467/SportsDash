@@ -53,6 +53,10 @@ tennis, MMA, golf, and volleyball.**
 - **Rosters** — players, positions, jersey numbers, season stat lines, and
   injury status.
 - **Results** — recent finals per team with streak / last-10 chips.
+- **Season archives** — jump any ESPN league or team back up to 15 years:
+  past-season standings tables (archived in the DB after one fetch) and
+  full past-season results, straight from the season pickers on the
+  Standings and Results views.
 - **News** — aggregated headlines per team (ESPN + Google News + RSS) with an
   in-app reader.
 - **Map** — every followed team's (and active competition's) home venue on a

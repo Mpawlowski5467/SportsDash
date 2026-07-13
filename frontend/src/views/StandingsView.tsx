@@ -7,6 +7,7 @@ import TeamLogo from "../components/TeamLogo";
 import Select, { type SelectOption } from "../components/Select";
 import { useOpenNation, useOpenTeam } from "../components/TeamDetailPanel";
 import { useManageTeams } from "../components/ManageTeamsContext";
+import { CURRENT_SEASON, seasonOptions, supportsArchives } from "../lib/seasons";
 
 /** Per-team display metadata pulled from the /teams payload, keyed by id. */
 interface TeamMeta {
@@ -290,7 +291,13 @@ export default function StandingsView() {
   const leagueId = leagues.some((league) => league.id === selected)
     ? selected
     : leagues[0]?.id;
-  const standingsQuery = useStandings(leagueId);
+  const league = leagues.find((entry) => entry.id === leagueId);
+  // Past-season archive picker (espn team sports only).
+  const [seasonSel, setSeasonSel] = useState<string>(CURRENT_SEASON);
+  const archives = supportsArchives(league);
+  const seasonYear =
+    archives && seasonSel !== CURRENT_SEASON ? Number(seasonSel) : undefined;
+  const standingsQuery = useStandings(leagueId, seasonYear);
 
   // League logos for the selector (the /teams rows don't carry one).
   const leagueOptions: SelectOption[] = useMemo(() => {
@@ -346,12 +353,18 @@ export default function StandingsView() {
 
   let body: ReactNode;
   if (standingsQuery.isError) {
-    body = (
-      <p className="text-sm text-red-400">
-        Failed to load standings:{" "}
-        {standingsQuery.error?.message ?? "unknown error"}
-      </p>
-    );
+    body =
+      seasonYear !== undefined ? (
+        <p className="text-sm text-zinc-500">
+          The {seasonSel} season isn&apos;t available from the provider for
+          this league.
+        </p>
+      ) : (
+        <p className="text-sm text-red-400">
+          Failed to load standings:{" "}
+          {standingsQuery.error?.message ?? "unknown error"}
+        </p>
+      );
   } else if (!standings) {
     body = <p className="text-sm text-zinc-500">Loading standings…</p>;
   } else if (standings.rows.length === 0) {
@@ -449,12 +462,25 @@ export default function StandingsView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Select
-        options={leagueOptions}
-        value={leagueId}
-        onChange={setSelected}
-        ariaLabel="Choose league"
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Select
+          options={leagueOptions}
+          value={leagueId}
+          onChange={(id) => {
+            setSelected(id);
+            setSeasonSel(CURRENT_SEASON); // a new league starts on its live table
+          }}
+          ariaLabel="Choose league"
+        />
+        {archives && (
+          <Select
+            options={seasonOptions()}
+            value={seasonSel}
+            onChange={setSeasonSel}
+            ariaLabel="Choose season"
+          />
+        )}
+      </div>
       {body}
     </div>
   );

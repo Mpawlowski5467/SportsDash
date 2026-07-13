@@ -27,6 +27,7 @@ export interface League {
   id: string;
   sport: Sport;
   name: string;
+  provider: string; // data source id ("espn", "thesportsdb") — gates season archives
   follow_all: boolean; // followed as a whole competition (no team picks)
 }
 

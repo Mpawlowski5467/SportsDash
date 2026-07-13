@@ -132,8 +132,13 @@ export const api = {
   odds: (ids: string[]) =>
     get<Record<string, GameOdds>>("/odds", { ids: ids.join(",") }),
 
-  standings: (leagueId: string) =>
-    get<Standings>(`/standings/${encodeURIComponent(leagueId)}`),
+  standings: (leagueId: string, season?: number) =>
+    get<Standings>(`/standings/${encodeURIComponent(leagueId)}`, { season }),
+
+  // A followed team's FINAL games from one past season (fetched from the
+  // provider on demand; espn team sports only).
+  historyResults: (teamId: string, season: number) =>
+    get<Game[]>(`/history/results/${encodeURIComponent(teamId)}`, { season }),
 
   leaders: (leagueId: string) =>
     get<StatLeaders>(`/leaders/${encodeURIComponent(leagueId)}`),

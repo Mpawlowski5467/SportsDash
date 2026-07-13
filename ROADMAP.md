@@ -41,8 +41,12 @@ The desktop app exists; making it *easy to get and trust* is the next step.
   redundancy. (See *Adding a provider* in the README.)
 - **Richer matchup previews** — surface betting odds and head-to-head history
   in the Matchup tab, with light pre-game context.
-- **Historical archives** — past-season standings, results, and head-to-head
-  records rather than only the live/near window.
+- ~~**Historical archives**~~ — ✅ shipped (2026-07-12) for standings and
+  results: season pickers on the Standings and Results views serve any
+  ESPN season via `GET /standings/{league}?season=` (DB-archived after
+  one fetch; the scheduler also archives each season's final table as
+  leagues roll over) and `GET /history/results/{team}?season=`.
+  Remaining idea: cross-season head-to-head records in the Matchup view.
 
 ## 💡 Ideas — maybe someday
 

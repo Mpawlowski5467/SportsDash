@@ -1647,3 +1647,20 @@ to nothing when unpriced.
   attribution, shown for scheduled/live games only. `GameCard` optional `odds`
   prop → a favorite chip (`favoriteChip`: favored side + win%, else moneyline);
   TodayView threads the batch map in.
+
+## Historical archives (added 2026-07-12)
+
+- ``StandingsArchiveORM`` (``standings_archive``): one row per
+  ``(league_id, season)`` — ``season`` is the numeric key ("2025-26" →
+  "2026"), ``season_label`` the provider's display form. ``StandingsORM``
+  remains the rolling current snapshot; the scheduler upserts every
+  standings refresh into the archive too.
+- ``app/providers/espn_history.py`` (standalone, espn_leaders-style — the
+  ``SportsProvider`` protocol is unchanged): ``fetch_season_standings`` /
+  ``fetch_season_results`` via ESPN's ``?season=`` params. Team sports
+  only; never raises.
+- ``GET /standings/{league_id}?season=YYYY`` → archive-first with a
+  one-time ESPN backfill; ``GET /history/results/{team_id}?season=YYYY``
+  → the season's FINAL games, redis-cached, never stored in ``games``.
+- ``LeagueOut`` carries ``provider`` so the frontend gates the season
+  pickers (espn team sports only).
