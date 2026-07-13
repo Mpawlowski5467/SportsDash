@@ -21,11 +21,12 @@ The desktop app exists; making it *easy to get and trust* is the next step.
 - ~~**CI release workflow**~~ — ✅ shipped (2026-07-12): tagging `v*` builds
   the `.dmg` on a macOS runner and attaches it to the GitHub Release
   ([v1.0.0](https://github.com/Mpawlowski5467/SportsDash/releases/tag/v1.0.0)).
-- **Code signing + notarization** — pipeline fully wired (2026-07-12):
-  local builds sign automatically when a Developer ID cert is in the
-  keychain, and the release workflow signs + notarizes once the six
-  `APPLE_*` repo secrets exist (see docs/desktop.md). Remaining: enroll in
-  the Apple Developer Program and create the certificate.
+- **Code signing + notarization** — pipeline fully wired (2026-07-12) but
+  **deliberately dormant**: SportsDash is a free open-source project, so
+  releases ship unsigned (right-click → Open past Gatekeeper, or build
+  from source). If that ever changes, enrolling in the Apple Developer
+  Program and adding the six `APPLE_*` repo secrets (docs/desktop.md)
+  turns signing on with no code changes.
 - **Faster launches** — switch the frozen backend from PyInstaller *onefile*
   to *onedir* to skip the per-launch self-extraction (~3–6s today).
 - **More desktop targets** — Intel (`x86_64`) macOS, and Windows / Linux

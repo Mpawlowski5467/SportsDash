@@ -368,3 +368,10 @@ resolve providers by the league's `provider` field at runtime.
 Where SportsDash is headed — recently shipped work, near-term packaging and
 distribution, and longer-term product ideas — lives in
 **[ROADMAP.md](ROADMAP.md)**.
+
+## License
+
+SportsDash is open source under the **[MIT License](LICENSE)** — use it,
+fork it, run it on your wall. Note that the app is a *client* of ESPN's and
+TheSportsDB's public endpoints; the data itself belongs to those services
+and their upstream rights holders.
