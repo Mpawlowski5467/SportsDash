@@ -51,6 +51,20 @@ mkdir -p "$BIN_DIR"
 cp "$ROOT/backend/dist/sportsdash-backend" "$BIN_DIR/sportsdash-backend-$TRIPLE"
 chmod +x "$BIN_DIR/sportsdash-backend-$TRIPLE"
 
+# Sign locally when a Developer ID certificate is in the keychain and no
+# identity was chosen explicitly; otherwise build unsigned (Gatekeeper will
+# warn on other machines — see docs/desktop.md "Code signing").
+if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+  IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+    | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
+  if [ -n "$IDENTITY" ]; then
+    export APPLE_SIGNING_IDENTITY="$IDENTITY"
+    echo "==> Code signing as: $IDENTITY"
+  else
+    echo "==> No Developer ID certificate found — building UNSIGNED."
+  fi
+fi
+
 echo "==> Building SportsDash.app (Tauri)…"
 cd "$ROOT/frontend"
 bun install --frozen-lockfile

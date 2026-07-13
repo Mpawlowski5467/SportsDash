@@ -78,12 +78,41 @@ Drag the `.app` to `/Applications`, or share the `.dmg`.
 
 ## Code signing / Gatekeeper
 
-The build is **unsigned**. On first launch macOS Gatekeeper will warn that
-the app is from an unidentified developer. Right-click the app → **Open**
-(or `xattr -dr com.apple.quarantine SportsDash.app`) to run it. To ship it
-to others without that friction you'd need an Apple Developer ID
-certificate and notarization, configured under `bundle` in
-[frontend/src-tauri/tauri.conf.json](../frontend/src-tauri/tauri.conf.json).
+Signing and notarization are **fully wired** — locally and in the release
+workflow — and turn on automatically once an Apple Developer ID
+certificate exists. Until then builds are unsigned: on first launch macOS
+Gatekeeper warns that the app is from an unidentified developer;
+right-click → **Open** (or `xattr -dr com.apple.quarantine
+SportsDash.app`) gets past it.
+
+### One-time setup (requires an Apple Developer account, $99/yr)
+
+1. **Enroll** at <https://developer.apple.com/programs/> with your Apple ID.
+   Note your 10-character **Team ID** (Membership page).
+2. **Create the certificate**: Keychain Access → Certificate Assistant →
+   *Request a Certificate from a Certificate Authority* (save to disk) →
+   upload the CSR at <https://developer.apple.com/account/resources/certificates>
+   choosing type **Developer ID Application** → download and double-click
+   the `.cer` to install it in your keychain.
+3. **Local builds now sign automatically** — `scripts/build-desktop.sh`
+   picks up the identity from the keychain.
+4. **For CI releases**, export the certificate: Keychain Access → right-click
+   the "Developer ID Application: …" cert → Export as `.p12` with a
+   password, then add six repository secrets:
+
+   ```sh
+   base64 -i DeveloperID.p12 | tr -d '\n' | gh secret set APPLE_CERTIFICATE
+   gh secret set APPLE_CERTIFICATE_PASSWORD   # the .p12 export password
+   gh secret set APPLE_SIGNING_IDENTITY       # e.g. "Developer ID Application: Your Name (TEAMID)"
+   gh secret set APPLE_ID                     # your Apple ID email
+   gh secret set APPLE_PASSWORD               # app-specific password from appleid.apple.com
+   gh secret set APPLE_TEAM_ID                # the 10-char Team ID
+   ```
+
+   The next `v*` tag then produces a **signed and notarized** `.dmg`
+   (Tauri imports the cert into a temporary keychain, signs with the
+   hardened runtime, and staples the notarization ticket) — no Gatekeeper
+   friction for anyone who downloads it.
 
 ## Notes & trade-offs
 
