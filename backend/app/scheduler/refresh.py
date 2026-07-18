@@ -558,8 +558,32 @@ async def refresh_team_info() -> None:
         logger.exception("refresh_team_info failed")
 
 
+# Single-flight guard for daily_refresh.  It is reachable from THREE callers
+# (the daily cron, the startup spawn in main.py, and the setup-wizard kick),
+# and its upserts are SELECT-then-insert: two overlapping runs both see "no
+# row" for the same key, so the loser double-inserts and logs an
+# IntegrityError traceback.  Holding this lock makes any second caller a
+# logged no-op (skip, don't queue) — the same pattern as
+# ``_competition_stadiums_lock`` in common.py.
+_daily_refresh_lock = asyncio.Lock()
+
+
 async def daily_refresh() -> None:
-    """Full refresh: schedules + standings + rosters + news + locations + cleanup."""
+    """Full refresh: schedules + standings + rosters + news + locations + cleanup.
+
+    Single-flight: a run already in progress makes any overlapping caller
+    (cron, startup spawn, or setup-wizard kick) a no-op rather than racing
+    the upserts; nothing queues behind a running refresh.
+    """
+    if _daily_refresh_lock.locked():
+        logger.info("daily_refresh: a refresh is already running — skipping")
+        return
+    async with _daily_refresh_lock:
+        await _daily_refresh()
+
+
+async def _daily_refresh() -> None:
+    """Body of :func:`daily_refresh`, run under its single-flight lock."""
     logger.info("daily_refresh: starting")
     await refresh_schedules()
     await refresh_standings()
