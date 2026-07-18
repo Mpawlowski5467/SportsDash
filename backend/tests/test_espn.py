@@ -20,11 +20,18 @@ from app.providers.espn import (
     EspnProvider,
     _career_line_from_overview,
     _core_event_path,
+    _event_overlaps_window,
+    _golf_detail,
+    _golf_round_label,
+    _golf_score,
+    _leaderboard,
     _parse_athlete,
     _chunk_date_range,
     _format_stat_line,
     _merge_games,
     _parse_game_summary,
+    _parse_golf_event,
+    _parse_golf_scoreboard,
     _parse_individual_scoreboard,
     _parse_news,
     _parse_pickcenter,
@@ -3439,3 +3446,755 @@ def test_individual_period_normalization_scheduled_guard(
     assert state.period_label == ""
     assert state.clock is None
     assert state.is_intermission is False
+
+
+# ---------------------------------------------------------------------------
+# Golf: leaderboard Events (one tournament, a field on a board)
+#
+# Payload shape verified live against the real PGA feed (see golf.py): one
+# ``events[]`` entry per tournament, ``competitions[0]`` the tournament,
+# ``competitions[0].competitors[]`` the field.  Each golfer carries
+# ``order`` (pre-sorted, 1 = leader), a to-par display ``score`` string,
+# the athlete under ``athlete`` (whose id is null — the ESPN athlete id is
+# on ``competitor.id``), and per-round ``linescores`` whose in-progress
+# entry nests per-hole linescores (the "thru N" count).
+# ---------------------------------------------------------------------------
+
+GOLF_LEAGUE = League(
+    id="crestmoor-golf-tour",
+    sport=Sport.GOLF,
+    name="Crestmoor Golf Tour",
+    provider="espn",
+    provider_key="golf/crestmoor",
+)
+
+
+def _golf_round_entry(*, value: Any = None, holes: int = 0) -> dict[str, Any]:
+    """One round entry in a golfer's top-level ``linescores``.
+
+    A present ``value`` marks the round complete; while the round is in
+    progress there is no value yet and the nested per-hole linescores are
+    the "thru N" count.  ``holes`` is a bare count — the parser only reads
+    the nested list's length, so placeholders stand in for hole scores.
+    """
+    entry: dict[str, Any] = {"linescores": [{"hole": n} for n in range(1, holes + 1)]}
+    if value is not None:
+        entry["value"] = value
+    return entry
+
+
+def _golf_competitor(
+    *,
+    athlete_id: str | None = "90001",
+    name: str | None = "Marlow Fenwick",
+    order: Any = 1,
+    score: Any = "E",
+    rounds: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """One golfer on the board: the ESPN athlete id lives on
+    ``competitor.id`` (``athlete.id`` is null on the real feed), ``order``
+    is the pre-sorted board position, ``score`` the to-par display."""
+    competitor: dict[str, Any] = {
+        "id": athlete_id,
+        "type": "athlete",
+        "order": order,
+        "score": score,
+        "athlete": {"id": None, "displayName": name},
+    }
+    if rounds is not None:
+        competitor["linescores"] = rounds
+    return competitor
+
+
+def _golf_status(
+    *,
+    state: str,
+    name: str,
+    period: int = 0,
+    detail: str | None = None,
+    short_detail: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    stype: dict[str, Any] = {"state": state, "name": name}
+    if detail is not None:
+        stype["detail"] = detail
+    if short_detail is not None:
+        stype["shortDetail"] = short_detail
+    if description is not None:
+        stype["description"] = description
+    return {"period": period, "type": stype}
+
+
+def _golf_event(
+    *,
+    event_id: str = "8800001",
+    name: str | None = "Crestmoor Pines Invitational",
+    date_str: str | None = "2026-06-11T12:00Z",
+    end_date: str | None = "2026-06-14T22:00Z",
+    status: dict[str, Any] | None = None,
+    competitors: Any = None,
+    venue: str | None = "Whispering Dunes Golf Club",
+) -> dict[str, Any]:
+    """One golf tournament event: ``competitions[0]`` is the tournament and
+    its ``competitors`` the field.  None-valued knobs omit the key entirely
+    so defensive "missing" branches can be exercised."""
+    competition: dict[str, Any] = {"id": event_id}
+    if date_str is not None:
+        competition["date"] = date_str
+    if end_date is not None:
+        competition["endDate"] = end_date
+    if status is not None:
+        competition["status"] = status
+    if competitors is not None:
+        competition["competitors"] = competitors
+    if venue is not None:
+        competition["venue"] = {"fullName": venue}
+    event: dict[str, Any] = {"id": event_id, "competitions": [competition]}
+    if name is not None:
+        event["name"] = name
+    return event
+
+
+def test_golf_scoreboard_parses_tournaments_and_skips_malformed() -> None:
+    """One Event per tournament; junk entries and an id-less event drop out
+    without sinking the rest of the board."""
+    payload = {
+        "events": [
+            _golf_event(),
+            "not-an-event",
+            {"name": "Missing Id Open"},  # no id -> skipped
+        ]
+    }
+    events = _parse_golf_scoreboard(payload, GOLF_LEAGUE)
+    assert [event.id for event in events] == ["espn:8800001"]
+    assert events[0].league_id == GOLF_LEAGUE.id
+    assert events[0].name == "Crestmoor Pines Invitational"
+
+
+def test_golf_scoreboard_empty_without_events_list() -> None:
+    assert _parse_golf_scoreboard({}, GOLF_LEAGUE) == []
+    assert _parse_golf_scoreboard({"events": "nope"}, GOLF_LEAGUE) == []
+    # A non-dict payload degrades to no events rather than raising.
+    assert _parse_golf_scoreboard(None, GOLF_LEAGUE) == []
+
+
+def test_golf_event_scheduled_has_no_round_label_or_thru() -> None:
+    """Before tee-off the phase is SCHEDULED and the round label is
+    suppressed (even when the feed already carries one); no golfer shows a
+    detail yet."""
+    status = _golf_status(state="pre", name="STATUS_SCHEDULED", detail="Round 1")
+    event = _parse_golf_event(
+        _golf_event(status=status, competitors=[_golf_competitor()]),
+        GOLF_LEAGUE,
+    )
+    assert event is not None
+    assert event.phase is GamePhase.SCHEDULED
+    assert event.round_label == ""
+    assert event.leaderboard[0].detail is None
+    assert event.start_time == datetime(2026, 6, 11, 12, 0, tzinfo=timezone.utc)
+    assert event.end_time == datetime(2026, 6, 14, 22, 0, tzinfo=timezone.utc)
+    assert event.venue == "Whispering Dunes Golf Club"
+    assert event.last_update is not None
+
+
+def test_golf_event_in_progress_round_label_and_board() -> None:
+    status = _golf_status(
+        state="in",
+        name="STATUS_IN_PROGRESS",
+        period=2,
+        detail="Round 2 - Play Complete",
+    )
+    competitors = [
+        _golf_competitor(
+            athlete_id="90001",
+            name="Marlow Fenwick",
+            order=1,
+            score="-10",
+            rounds=[
+                _golf_round_entry(value=66.0, holes=18),
+                _golf_round_entry(value=65.0, holes=18),
+            ],
+        ),
+        _golf_competitor(
+            athlete_id="90002",
+            name="Dashiell Crowe",
+            order=2,
+            score="-8",
+            rounds=[
+                _golf_round_entry(value=68.0, holes=18),
+                _golf_round_entry(holes=11),
+            ],
+        ),
+    ]
+    event = _parse_golf_event(_golf_event(status=status, competitors=competitors), GOLF_LEAGUE)
+    assert event is not None
+    assert event.phase is GamePhase.IN_PROGRESS
+    # "Round 2 - Play Complete" trims to the bare round phrase.
+    assert event.round_label == "Round 2"
+    leader, chaser = event.leaderboard
+    assert (leader.position, leader.position_label, leader.score) == (1, "1", "-10")
+    # A completed last round (value + 18 holes) reads "F"...
+    assert leader.detail == "F"
+    # ...while the chaser's in-progress round shows the hole count.
+    assert (chaser.position_label, chaser.score, chaser.detail) == ("2", "-8", "thru 11")
+
+
+def test_golf_event_final_marks_every_golfer_f() -> None:
+    """Once the tournament is FINAL every row is "F" — no linescores
+    needed; the phase alone decides the detail."""
+    status = _golf_status(
+        state="post",
+        name="STATUS_FINAL",
+        period=4,
+        detail="Final Round - Play Complete",
+    )
+    event = _parse_golf_event(
+        _golf_event(status=status, competitors=[_golf_competitor(score="-16")]),
+        GOLF_LEAGUE,
+    )
+    assert event is not None
+    assert event.phase is GamePhase.FINAL
+    assert event.round_label == "Final Round"
+    assert all(row.detail == "F" for row in event.leaderboard)
+
+
+def test_golf_event_postponed_and_canceled_map_from_status_name() -> None:
+    # _map_phase reads POSTPON/CANCEL out of the type name even while the
+    # state still says "pre".
+    postponed = _parse_golf_event(
+        _golf_event(
+            status=_golf_status(state="pre", name="STATUS_POSTPONED", detail="Round 1 - Postponed")
+        ),
+        GOLF_LEAGUE,
+    )
+    assert postponed is not None
+    assert postponed.phase is GamePhase.POSTPONED
+    # The trailing status clause is trimmed from the round phrase.
+    assert postponed.round_label == "Round 1"
+    canceled = _parse_golf_event(
+        _golf_event(status=_golf_status(state="pre", name="STATUS_CANCELED")),
+        GOLF_LEAGUE,
+    )
+    assert canceled is not None
+    assert canceled.phase is GamePhase.CANCELED
+    assert canceled.round_label == ""  # no round phrase and no period
+
+
+# ---------------------------------------------------------------------------
+# Round label: detail phrase -> period fallback
+# ---------------------------------------------------------------------------
+
+
+def test_golf_round_label_prefers_leading_round_phrase() -> None:
+    status = _golf_status(state="in", name="STATUS_IN_PROGRESS", detail="ROUND 3 - PLAY SUSPENDED")
+    # Casing is normalized to a title-case round phrase.
+    assert _golf_round_label(status, 3) == "Round 3"
+
+
+def test_golf_round_label_keeps_final_round_and_playoff_whole() -> None:
+    # "Final Round"/"Playoff" carry no trailing status clause to trim.
+    final = _golf_status(
+        state="in", name="STATUS_IN_PROGRESS", detail="Final Round - Play Complete"
+    )
+    playoff = _golf_status(state="in", name="STATUS_IN_PROGRESS", detail="Playoff - Hole 2")
+    assert _golf_round_label(final, 4) == "Final Round"
+    assert _golf_round_label(playoff, 4) == "Playoff"
+
+
+def test_golf_round_label_falls_through_detail_keys() -> None:
+    # A detail with no round phrase is passed over for shortDetail, then
+    # description — the first recognizable phrase wins.
+    status = _golf_status(
+        state="in",
+        name="STATUS_IN_PROGRESS",
+        detail="18th Hole",
+        short_detail="Round 2 - Play Complete",
+    )
+    assert _golf_round_label(status, 2) == "Round 2"
+    desc_only = _golf_status(state="in", name="STATUS_IN_PROGRESS", description="Round 1")
+    assert _golf_round_label(desc_only, 1) == "Round 1"
+
+
+def test_golf_round_label_falls_back_to_period_then_empty() -> None:
+    # No recognizable round phrase anywhere: the period number stands in.
+    status = _golf_status(state="in", name="STATUS_IN_PROGRESS", detail="In Progress")
+    assert _golf_round_label(status, 3) == "Round 3"
+    assert _golf_round_label(status, 0) == ""
+    # A non-dict status.type is tolerated the same way.
+    assert _golf_round_label({"period": 2, "type": "nope"}, 2) == "Round 2"
+
+
+# ---------------------------------------------------------------------------
+# Per-golfer detail: "thru N" / "F" from round+hole linescores
+# ---------------------------------------------------------------------------
+
+
+def test_golf_detail_none_without_linescores() -> None:
+    # Before tee-off there is nothing to report (not "thru 0").
+    competitor = _golf_competitor()
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) is None
+    competitor["linescores"] = []
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) is None
+    competitor["linescores"] = "nope"
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) is None
+
+
+def test_golf_detail_thru_from_in_progress_round() -> None:
+    competitor = _golf_competitor(
+        rounds=[_golf_round_entry(value=68.0, holes=18), _golf_round_entry(holes=11)]
+    )
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) == "thru 11"
+    # A full 18 holes without a round value yet still reads "F".
+    competitor["linescores"] = [
+        _golf_round_entry(value=68.0, holes=18),
+        _golf_round_entry(holes=18),
+    ]
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) == "F"
+
+
+def test_golf_detail_completed_round() -> None:
+    # 18 holes + a value: finished for the day.
+    competitor = _golf_competitor(rounds=[_golf_round_entry(value=70.0, holes=18)])
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) == "F"
+    # A recorded round value with fewer than 18 holes still shows thru.
+    competitor["linescores"] = [_golf_round_entry(value=33.0, holes=9)]
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) == "thru 9"
+    # A value with no hole breakdown at all counts as complete.
+    competitor["linescores"] = [{"value": 70.0}]
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) == "F"
+
+
+def test_golf_detail_walks_back_past_empty_placeholders() -> None:
+    # ESPN pads future rounds with empty entries; the most recent round
+    # with real play decides the detail.
+    competitor = _golf_competitor(
+        rounds=[
+            _golf_round_entry(value=69.0, holes=18),
+            {"linescores": []},  # tomorrow's placeholder: no value, no holes
+        ]
+    )
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) == "F"
+    # Junk entries and non-list holes are tolerated the same way.
+    competitor["linescores"] = [
+        _golf_round_entry(value=69.0, holes=18),
+        "junk",
+        {"value": None, "linescores": "nope"},
+    ]
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) == "F"
+    # Only placeholders -> before tee-off -> None.
+    competitor["linescores"] = [{"linescores": []}]
+    assert _golf_detail(competitor, GamePhase.IN_PROGRESS) is None
+
+
+# ---------------------------------------------------------------------------
+# To-par score normalization
+# ---------------------------------------------------------------------------
+
+
+def test_golf_score_display_string_passthrough() -> None:
+    # ESPN ships the to-par score as a display string already; it is kept
+    # verbatim (bar surrounding whitespace).
+    for raw, expected in [("-10", "-10"), ("E", "E"), ("+3", "+3"), ("  -7 ", "-7")]:
+        assert _golf_score(_golf_competitor(score=raw)) == expected
+
+
+def test_golf_score_numeric_coercion() -> None:
+    # Numeric scores format as to-par strings; zero is even par.
+    for raw, expected in [(-4, "-4"), (0, "E"), (3, "+3"), (2.0, "+2")]:
+        assert _golf_score(_golf_competitor(score=raw)) == expected
+    # A bool is an int subclass but never a score.
+    assert _golf_score(_golf_competitor(score=True)) == "E"
+
+
+def test_golf_score_dict_display_value() -> None:
+    assert _golf_score(_golf_competitor(score={"displayValue": "-5"})) == "-5"
+    # A blank or absent displayValue degrades to even par.
+    assert _golf_score(_golf_competitor(score={"displayValue": "  "})) == "E"
+    assert _golf_score(_golf_competitor(score={})) == "E"
+
+
+def test_golf_score_missing_or_blank_is_even_par() -> None:
+    competitor = _golf_competitor()
+    del competitor["score"]
+    assert _golf_score(competitor) == "E"
+    assert _golf_score(_golf_competitor(score="")) == "E"
+    assert _golf_score(_golf_competitor(score=None)) == "E"
+
+
+# ---------------------------------------------------------------------------
+# Leaderboard: ordering, ties, malformed rows
+# ---------------------------------------------------------------------------
+
+
+def test_golf_leaderboard_orders_and_labels_field() -> None:
+    competitors = [
+        _golf_competitor(athlete_id="90003", name="Ellis Hartley", order=3, score="-4"),
+        _golf_competitor(athlete_id="90001", name="Marlow Fenwick", order=1, score="-10"),
+        _golf_competitor(athlete_id="90002", name="Dashiell Crowe", order=2, score="-7"),
+    ]
+    rows = _leaderboard(competitors, GamePhase.IN_PROGRESS)
+    # ESPN pre-sorts by order, but the board re-sorts defensively.
+    assert [row.name for row in rows] == ["Marlow Fenwick", "Dashiell Crowe", "Ellis Hartley"]
+    assert [(row.position, row.position_label) for row in rows] == [(1, "1"), (2, "2"), (3, "3")]
+
+
+def test_golf_leaderboard_ties_share_t_label() -> None:
+    """ESPN never flags ties: equal display scores collapse to a shared
+    "T{n}" label at the position of the tied group."""
+    competitors = [
+        _golf_competitor(athlete_id="90001", name="Marlow Fenwick", order=1, score="-10"),
+        _golf_competitor(athlete_id="90002", name="Dashiell Crowe", order=2, score="-8"),
+        _golf_competitor(athlete_id="90003", name="Ellis Hartley", order=2, score="-8"),
+        _golf_competitor(athlete_id="90004", name="Soren Vale", order=4, score="-6"),
+        _golf_competitor(athlete_id="90005", name="Bram Kessler", order=4, score="-6"),
+        _golf_competitor(athlete_id="90006", name="Wren Halloway", order=4, score="-6"),
+    ]
+    rows = _leaderboard(competitors, GamePhase.IN_PROGRESS)
+    assert [(row.position, row.position_label) for row in rows] == [
+        (1, "1"),
+        (2, "T2"),
+        (2, "T2"),
+        (4, "T4"),
+        (4, "T4"),
+        (4, "T4"),
+    ]
+
+
+def test_golf_leaderboard_skips_malformed_and_non_dict_entries() -> None:
+    """A nameless golfer or a junk entry drops out (with a warning);
+    position numbers come from ``order`` so the rest of the board stays
+    put."""
+    competitors = [
+        _golf_competitor(athlete_id="90001", name="Marlow Fenwick", order=1, score="-10"),
+        "junk",
+        _golf_competitor(athlete_id="90002", name=None, order=2, score="-8"),  # no name
+        _golf_competitor(athlete_id="90003", name="Ellis Hartley", order=3, score="-6"),
+    ]
+    rows = _leaderboard(competitors, GamePhase.IN_PROGRESS)
+    assert [row.name for row in rows] == ["Marlow Fenwick", "Ellis Hartley"]
+    # The skipped slot stays skipped — no renumbering.
+    assert [(row.position, row.position_label) for row in rows] == [(1, "1"), (3, "3")]
+
+
+def test_golf_leaderboard_tie_count_includes_skipped_row() -> None:
+    """Tie labels are computed over the whole feed BEFORE malformed rows
+    drop out, so a skipped golfer's score still ties the visible row — the
+    label mirrors the source leaderboard, not the surviving subset."""
+    competitors = [
+        _golf_competitor(athlete_id="90001", name="Marlow Fenwick", order=1, score="-10"),
+        _golf_competitor(athlete_id="90002", name=None, order=1, score="-10"),  # skipped
+    ]
+    rows = _leaderboard(competitors, GamePhase.IN_PROGRESS)
+    assert [(row.position, row.position_label) for row in rows] == [(1, "T1")]
+
+
+def test_golf_leaderboard_falls_back_to_sequential_position_without_order() -> None:
+    # A missing order only falls back to board sequence for the LABEL; the
+    # numeric position degrades to 0 (no order in the feed).  A string
+    # order still coerces.
+    competitors = [
+        _golf_competitor(athlete_id="90001", name="Marlow Fenwick", order=None, score="-10"),
+        _golf_competitor(athlete_id="90002", name="Dashiell Crowe", order="3", score="-8"),
+    ]
+    rows = _leaderboard(competitors, GamePhase.IN_PROGRESS)
+    assert [(row.position, row.position_label) for row in rows] == [(0, "1"), (3, "3")]
+
+
+def test_golf_leader_row_carries_espn_athlete_id_transiently() -> None:
+    """``player_id`` carries the ESPN athlete id (from ``competitor.id``)
+    for the scheduler to rewrite to an internal followed-golfer id; a
+    competitor without one gets None."""
+    rows = _leaderboard(
+        [
+            _golf_competitor(athlete_id="90001", name="Marlow Fenwick", order=1, score="-10"),
+            _golf_competitor(athlete_id=None, name="Dashiell Crowe", order=2, score="-8"),
+        ],
+        GamePhase.IN_PROGRESS,
+    )
+    assert rows[0].player_id == "90001"
+    assert rows[1].player_id is None
+
+
+# ---------------------------------------------------------------------------
+# Event-level defensive branches
+# ---------------------------------------------------------------------------
+
+
+def test_golf_event_requires_id_and_name() -> None:
+    assert _parse_golf_event({"name": "No Id Open"}, GOLF_LEAGUE) is None
+    assert _parse_golf_event({"id": "  ", "name": "Blank Id Open"}, GOLF_LEAGUE) is None
+    assert _parse_golf_event({"id": "8800002"}, GOLF_LEAGUE) is None
+    # shortName stands in when name is absent.
+    event = _parse_golf_event(
+        {"id": "8800002", "shortName": "Pines Inv.", "date": "2026-06-11T12:00Z"},
+        GOLF_LEAGUE,
+    )
+    assert event is not None
+    assert event.name == "Pines Inv."
+    # A non-dict event is skipped, never fatal.
+    assert _parse_golf_event("not-an-event", GOLF_LEAGUE) is None
+
+
+def test_golf_event_start_time_falls_back_to_event_date() -> None:
+    # The competition's date wins; the event date is the fallback.
+    event = _parse_golf_event(
+        {
+            "id": "8800003",
+            "name": "Fallback Date Open",
+            "date": "2026-06-11T12:00Z",
+            "competitions": [{"id": "8800003"}],
+        },
+        GOLF_LEAGUE,
+    )
+    assert event is not None
+    assert event.start_time == datetime(2026, 6, 11, 12, 0, tzinfo=timezone.utc)
+    # No usable date anywhere -> the tournament is dropped.
+    assert _parse_golf_event(_golf_event(date_str=None), GOLF_LEAGUE) is None
+    assert _parse_golf_event(_golf_event(date_str="not-a-date"), GOLF_LEAGUE) is None
+
+
+def test_golf_event_end_time_optional_and_falls_back() -> None:
+    raw = _golf_event(end_date=None)
+    raw["endDate"] = "2026-06-15T00:00Z"  # event-level endDate fallback
+    event = _parse_golf_event(raw, GOLF_LEAGUE)
+    assert event is not None
+    assert event.end_time == datetime(2026, 6, 15, 0, 0, tzinfo=timezone.utc)
+    # No endDate anywhere: end_time stays None (the window check treats
+    # the tournament as a single-day span).
+    event = _parse_golf_event(_golf_event(end_date=None), GOLF_LEAGUE)
+    assert event is not None
+    assert event.end_time is None
+
+
+def test_golf_event_status_falls_back_to_event_level() -> None:
+    # No competition status: the event-level status dict stands in.
+    raw = _golf_event()
+    raw["status"] = _golf_status(state="in", name="STATUS_IN_PROGRESS", period=1, detail="Round 1")
+    event = _parse_golf_event(raw, GOLF_LEAGUE)
+    assert event is not None
+    assert event.phase is GamePhase.IN_PROGRESS
+    assert event.round_label == "Round 1"
+    # A non-dict competition status is treated as missing.
+    raw = _golf_event()
+    raw["competitions"][0]["status"] = "nope"
+    event = _parse_golf_event(raw, GOLF_LEAGUE)
+    assert event is not None
+    assert event.phase is GamePhase.SCHEDULED
+    assert event.round_label == ""
+
+
+def test_golf_event_tolerates_missing_or_junk_competitions() -> None:
+    # No competitions array at all: the event date + an empty board.
+    event = _parse_golf_event(
+        {"id": "8800004", "name": "Bare Bones Open", "date": "2026-06-11T12:00Z"},
+        GOLF_LEAGUE,
+    )
+    assert event is not None
+    assert event.phase is GamePhase.SCHEDULED
+    assert event.leaderboard == ()
+    assert event.venue is None
+    # An empty array or a junk first entry degrades the same way.
+    for junk_competitions in ([], ["junk"]):
+        parsed = _parse_golf_event(
+            {
+                "id": "8800004",
+                "name": "Bare Bones Open",
+                "date": "2026-06-11T12:00Z",
+                "competitions": junk_competitions,
+            },
+            GOLF_LEAGUE,
+        )
+        assert parsed is not None
+        assert parsed.leaderboard == ()
+
+
+def test_golf_event_competitors_not_a_list_yields_empty_board() -> None:
+    event = _parse_golf_event(_golf_event(competitors="nope"), GOLF_LEAGUE)
+    assert event is not None
+    assert event.leaderboard == ()
+
+
+def test_golf_event_venue_requires_full_name() -> None:
+    event = _parse_golf_event(_golf_event(venue=None), GOLF_LEAGUE)
+    assert event is not None
+    assert event.venue is None
+    # A non-dict venue or an empty/non-string fullName drops to None.
+    for junk_venue in ("nope", {"fullName": ""}, {"fullName": 123}):
+        raw = _golf_event(venue=None)
+        raw["competitions"][0]["venue"] = junk_venue
+        event = _parse_golf_event(raw, GOLF_LEAGUE)
+        assert event is not None
+        assert event.venue is None
+
+
+def test_golf_event_period_coercion_and_non_dict_type() -> None:
+    # A junk status.type resolves from empty strings (SCHEDULED), and a
+    # string period still coerces (unused while scheduled).
+    raw = _golf_event(status={"period": "3", "type": "nope"})
+    event = _parse_golf_event(raw, GOLF_LEAGUE)
+    assert event is not None
+    assert event.phase is GamePhase.SCHEDULED
+    assert event.round_label == ""
+
+
+# ---------------------------------------------------------------------------
+# Tournament/window overlap
+# ---------------------------------------------------------------------------
+
+
+def test_golf_event_overlaps_window() -> None:
+    """A tournament runs Thu–Sun: any window touching its day span counts,
+    even when the first round preceded the window."""
+    event = _parse_golf_event(_golf_event(), GOLF_LEAGUE)  # Jun 11 -> Jun 14, 2026
+    assert event is not None
+    # Window inside the span, and windows the tournament spills into.
+    assert _event_overlaps_window(event, date(2026, 6, 12), date(2026, 6, 13))
+    assert _event_overlaps_window(event, date(2026, 6, 14), date(2026, 6, 18))
+    assert _event_overlaps_window(event, date(2026, 6, 1), date(2026, 6, 11))
+    # Entirely before / after: no overlap.
+    assert not _event_overlaps_window(event, date(2026, 6, 1), date(2026, 6, 10))
+    assert not _event_overlaps_window(event, date(2026, 6, 15), date(2026, 6, 18))
+    # Without an endDate the span collapses to the start day.
+    one_day = _parse_golf_event(_golf_event(end_date=None), GOLF_LEAGUE)
+    assert one_day is not None
+    assert _event_overlaps_window(one_day, date(2026, 6, 11), date(2026, 6, 11))
+    assert not _event_overlaps_window(one_day, date(2026, 6, 12), date(2026, 6, 12))
+
+
+# ---------------------------------------------------------------------------
+# Provider methods for a leaderboard (golf) league
+# ---------------------------------------------------------------------------
+
+
+def _golf_scoreboard_payload() -> dict[str, Any]:
+    """Two fictional tournaments: one live this week, one finished in May."""
+    return {
+        "events": [
+            _golf_event(
+                event_id="8800001",
+                status=_golf_status(
+                    state="in",
+                    name="STATUS_IN_PROGRESS",
+                    period=2,
+                    detail="Round 2 - Play Complete",
+                ),
+                competitors=[
+                    _golf_competitor(
+                        athlete_id="90001",
+                        name="Marlow Fenwick",
+                        order=1,
+                        score="-10",
+                        rounds=[_golf_round_entry(value=66.0, holes=18)],
+                    ),
+                    _golf_competitor(
+                        athlete_id="90002",
+                        name="Dashiell Crowe",
+                        order=2,
+                        score="-8",
+                        rounds=[_golf_round_entry(holes=11)],
+                    ),
+                ],
+            ),
+            _golf_event(
+                event_id="8800002",
+                name="Harbor Dunes Classic",
+                date_str="2026-05-14T12:00Z",
+                end_date="2026-05-17T22:00Z",
+                status=_golf_status(
+                    state="post",
+                    name="STATUS_FINAL",
+                    period=4,
+                    detail="Final Round - Play Complete",
+                ),
+            ),
+        ]
+    }
+
+
+async def test_golf_get_events_filters_to_window() -> None:
+    """get_events issues one ranged scoreboard call per chunk and keeps
+    only tournaments whose span overlaps the window."""
+    provider = EspnProvider()
+    calls: list[dict[str, str] | None] = []
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        calls.append(params)
+        return _golf_scoreboard_payload()
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    events = await provider.get_events(GOLF_LEAGUE, date(2026, 6, 8), date(2026, 6, 14))
+    # One ranged call covers the week (limit=400).
+    assert calls == [{"dates": "20260608-20260614", "limit": "400"}]
+    # The May classic falls outside the window; the live tournament stays.
+    assert [event.id for event in events] == ["espn:8800001"]
+    board = events[0].leaderboard
+    assert [(row.name, row.detail) for row in board] == [
+        ("Marlow Fenwick", "F"),
+        ("Dashiell Crowe", "thru 11"),
+    ]
+
+
+async def test_golf_get_events_non_leaderboard_league_short_circuits() -> None:
+    provider = EspnProvider()
+    called = False
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        return {}
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    # Golf is the only leaderboard sport; everyone else skips the fetch.
+    assert await provider.get_events(BASKETBALL_LEAGUE, date(2026, 6, 8), date(2026, 6, 14)) == []
+    assert called is False
+
+
+async def test_golf_get_events_survives_one_failed_chunk() -> None:
+    """A long window chunks by month; a failed chunk loses nothing from
+    the others, and duplicates across chunks merge by event id."""
+    provider = EspnProvider()
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        assert params is not None
+        if params["dates"].startswith("202607"):
+            raise httpx.ConnectError("July bucket down")
+        return _golf_scoreboard_payload()
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    events = await provider.get_events(GOLF_LEAGUE, date(2026, 5, 1), date(2026, 7, 15))
+    # May + June chunks both carry both tournaments; the merge dedupes
+    # them and the failed July chunk drops nothing.  Sorted by start time.
+    assert [event.id for event in events] == ["espn:8800002", "espn:8800001"]
+
+
+async def test_golf_get_events_raises_when_all_chunks_fail() -> None:
+    provider = EspnProvider()
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        raise httpx.ConnectError("everything down")
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    with pytest.raises(httpx.ConnectError):
+        await provider.get_events(GOLF_LEAGUE, date(2026, 6, 8), date(2026, 6, 14))
+
+
+async def test_golf_get_event_state_scans_scoreboard_by_id() -> None:
+    """Golf's /summary endpoint is unreliable, so the current scoreboard
+    is scanned for the tournament whose id matches."""
+    provider = EspnProvider()
+    captured: dict[str, Any] = {}
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        captured["url"] = url
+        return _golf_scoreboard_payload()
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    event = await provider.get_event_state(GOLF_LEAGUE, "8800001")
+    assert "/scoreboard" in captured["url"]  # not /summary
+    assert event is not None
+    assert event.id == "espn:8800001"
+    assert event.phase is GamePhase.IN_PROGRESS
+    # An unknown tournament id yields None.
+    assert await provider.get_event_state(GOLF_LEAGUE, "does-not-exist") is None
+    # Non-leaderboard leagues never fetch at all.
+    assert await provider.get_event_state(BASKETBALL_LEAGUE, "8800001") is None

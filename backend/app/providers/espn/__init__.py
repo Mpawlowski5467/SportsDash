@@ -27,6 +27,15 @@ import X`` keeps working exactly as it did for the single file.
 """
 
 from app.providers.espn.games import _parse_event, _parse_schedule, _parse_scoreboard
+from app.providers.espn.golf import (
+    _event_overlaps_window,
+    _golf_detail,
+    _golf_round_label,
+    _golf_score,
+    _leaderboard,
+    _parse_golf_event,
+    _parse_golf_scoreboard,
+)
 from app.providers.espn.individual import _parse_individual_scoreboard
 from app.providers.espn.news_location import _parse_news, _parse_team_location
 from app.providers.espn.provider import EspnProvider
@@ -58,12 +67,19 @@ __all__ = [
     "_career_line_from_overview",
     "_chunk_date_range",
     "_core_event_path",
+    "_event_overlaps_window",
     "_format_stat_line",
+    "_golf_detail",
+    "_golf_round_label",
+    "_golf_score",
+    "_leaderboard",
     "_merge_games",
     "_parse_athlete",
     "_parse_event",
     "_parse_game_summary",
     "_parse_goals",
+    "_parse_golf_event",
+    "_parse_golf_scoreboard",
     "_parse_individual_scoreboard",
     "_parse_news",
     "_parse_pickcenter",
