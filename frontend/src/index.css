@@ -28,6 +28,19 @@ html {
   color-scheme: dark;
 }
 
+/* ── Dark (default) + Stadium: secondary-text floor ─────────────────────
+ * The dark base otherwise leaves the stock palette UNSET (see header).
+ * Exception: stock zinc-500 (#71717a) on the #09090b base is only ~4.1:1 —
+ * below the WCAG AA 4.5:1 the header commits to — and text-zinc-500 is the
+ * app's most common secondary-text class. Lift it a step on both
+ * dark-based themes (#80808a ≈ 5.1:1 on the base, ≈4.5:1 on zinc-900
+ * cards), short of zinc-400 so the faint/secondary hierarchy survives.
+ */
+[data-theme="dark"],
+[data-theme="stadium"] {
+  --color-zinc-500: #80808a;
+}
+
 /* ── Light ──────────────────────────────────────────────────────────────
  * Near-white surfaces, dark ink. The bg scale (950→100) is inverted so the
  * darkest token (zinc-950, used as the app backdrop) becomes the lightest
@@ -80,7 +93,7 @@ html {
   --color-zinc-800: #ddd0ba; /* borders / hover        */
   --color-zinc-700: #c8b79c; /* stronger borders       */
   --color-zinc-600: #a78f6f; /* muted track            */
-  --color-zinc-500: #7a6a52; /* faint label            */
+  --color-zinc-500: #75654e; /* faint label (≈4.8:1 AA) */
   --color-zinc-400: #5c4f3d; /* secondary ink (AA)     */
   --color-zinc-300: #423829; /* body ink               */
   --color-zinc-200: #2e261b; /* strong ink             */

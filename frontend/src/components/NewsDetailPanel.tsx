@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { NewsItem } from "../types";
 import { formatDateTime } from "../lib/time";
 import Portal from "./Portal";
+import { usePanelChrome } from "./modalChrome";
 
 /** The article's source chip: a followed team or a competition. */
 export interface NewsSource {
@@ -34,15 +35,10 @@ export default function NewsDetailPanel({
   }, [item]);
   const shown = item ?? last;
 
-  // Lock background scroll + ESC to close while open.
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  // Shared chrome while open: topmost-only ESC (a modal stacked above this
+  // drawer keeps ESC priority), a real background scroll lock, and focus
+  // moved into the drawer then restored to the launcher on close.
+  const panelRef = usePanelChrome(onClose, open);
 
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => {
@@ -61,11 +57,13 @@ export default function NewsDetailPanel({
         }
       />
       <aside
+        ref={panelRef}
+        tabIndex={-1}
         aria-hidden={!open}
         className={
           // top-12 clears the sticky 48px app header (it's portaled to body).
           "fixed bottom-0 right-0 top-12 z-40 flex w-[26rem] max-w-[92vw] flex-col " +
-          "border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform " +
+          "border-l border-zinc-800 bg-zinc-900 shadow-2xl outline-none transition-transform " +
           "duration-300 ease-out motion-reduce:transition-none " +
           (open ? "translate-x-0" : "pointer-events-none translate-x-full")
         }

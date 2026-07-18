@@ -1133,3 +1133,112 @@ async def test_attach_player_photos_backfills_missing_only_and_caps(
     assert by_id["p2"] == "https://img/Cole Palmer.jpg"
     # Beyond the cap — never looked up, stays photoless.
     assert by_id["p3"] is None
+
+
+# ---------------------------------------------------------------------------
+# daily_refresh single-flight guard
+# ---------------------------------------------------------------------------
+#
+# daily_refresh is reachable from the daily cron, the startup spawn, and the
+# setup-wizard kick, and its upserts are SELECT-then-insert — overlapping
+# runs double-insert and the loser logs an IntegrityError.  The module-level
+# lock makes an overlapping caller a no-op; these tests stub the sub-jobs
+# and prove the guard holds across two of the entry points.
+
+
+def _stub_daily_refresh_subjobs(
+    monkeypatch: pytest.MonkeyPatch,
+    started: asyncio.Event,
+    release: asyncio.Event,
+    calls: list[str],
+) -> None:
+    """Replace daily_refresh's sub-jobs with a controllable barrier.
+
+    refresh_schedules stands in as the instrumented sub-job (records the
+    call, signals it has started, then blocks until released); everything
+    else is a no-op so the test exercises only the guard.  Stale-game
+    pruning still runs — against the throwaway database via patched_scope.
+    """
+
+    async def fake_refresh_schedules() -> None:
+        calls.append("schedules")
+        started.set()
+        await release.wait()
+
+    async def noop() -> None:
+        return None
+
+    monkeypatch.setattr(scheduler_refresh, "refresh_schedules", fake_refresh_schedules)
+    for name in (
+        "refresh_standings",
+        "refresh_rosters",
+        "refresh_news",
+        "refresh_team_info",
+        "refresh_locations",
+        "refresh_competition_stadiums",
+        "refresh_game_venue_coords",
+    ):
+        monkeypatch.setattr(scheduler_refresh, name, noop)
+
+
+async def test_daily_refresh_skips_an_overlapping_run(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An overlapping daily_refresh is a no-op, not a queued second run."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+    _stub_daily_refresh_subjobs(monkeypatch, started, release, calls)
+
+    first = asyncio.create_task(jobs.daily_refresh())
+    try:
+        await started.wait()
+        # A second call while the first holds the lock returns immediately
+        # without running the sub-jobs again (skip, don't queue).
+        await jobs.daily_refresh()
+        assert calls == ["schedules"]
+    finally:
+        release.set()
+    await first
+    assert calls == ["schedules"]
+
+    # The lock leaves with the run: a later, non-overlapping call proceeds.
+    await jobs.daily_refresh()
+    assert calls == ["schedules", "schedules"]
+
+
+async def test_kick_daily_refresh_is_single_flight_across_kicks(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two overlapping setup-wizard kicks run the refresh body only once."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+    _stub_daily_refresh_subjobs(monkeypatch, started, release, calls)
+
+    jobs.kick_daily_refresh()
+    try:
+        await started.wait()
+        jobs.kick_daily_refresh()  # overlaps the in-flight run
+    finally:
+        release.set()
+    await _drain_kicked_tasks()
+    assert calls == ["schedules"]
+
+
+def test_refresh_news_interval_job_is_single_instance() -> None:
+    """The hourly news job is capped at one instance (it also runs inside
+    daily_refresh), with the same coalesce semantics as the live polls."""
+    scheduler = jobs.setup_scheduler()
+    news_job = scheduler.get_job("refresh_news")
+    assert news_job is not None
+    assert news_job.max_instances == 1
+    assert news_job.coalesce is True
+
+    live_job = scheduler.get_job("live_tick")
+    assert live_job is not None
+    assert live_job.max_instances == 1

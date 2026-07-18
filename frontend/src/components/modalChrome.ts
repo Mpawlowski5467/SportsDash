@@ -24,6 +24,23 @@ const FOCUSABLE =
   'select:not([disabled]), textarea:not([disabled]), ' +
   '[tabindex]:not([tabindex="-1"])';
 
+/** Take the ref-counted body scroll lock (first caller saves overflow). */
+function lockBodyScroll(): void {
+  if (scrollLocks === 0) {
+    savedOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+  }
+  scrollLocks += 1;
+}
+
+/** Release the scroll lock; the last release restores the saved overflow. */
+function unlockBodyScroll(): void {
+  scrollLocks -= 1;
+  if (scrollLocks === 0) {
+    document.body.style.overflow = savedOverflow;
+  }
+}
+
 /**
  * ESC-to-close for a persistent overlay (e.g. a slide-over panel that
  * stays mounted and toggles `open`). Participates in the shared ESC
@@ -54,6 +71,42 @@ export function useTopmostEsc(onClose: () => void, enabled: boolean): void {
 }
 
 /**
+ * Middle ground between the two neighbours: for a slide-over panel that
+ * stays MOUNTED and toggles `open` (so useModalChrome's mount-based effect
+ * can't see the transitions). While open it participates in the ESC stack,
+ * holds the ref-counted body scroll lock, and moves focus into the panel;
+ * on close it releases all three and returns focus to the launcher.
+ * Attach the returned ref (plus `tabIndex={-1}`) to the panel element.
+ */
+export function usePanelChrome(
+  onClose: () => void,
+  open: boolean,
+): RefObject<HTMLElement | null> {
+  const panelRef = useRef<HTMLElement | null>(null);
+
+  useTopmostEsc(onClose, open);
+
+  useEffect(() => {
+    if (!open) return;
+
+    lockBodyScroll();
+
+    const launcher =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    panelRef.current?.focus({ preventScroll: true });
+
+    return () => {
+      unlockBodyScroll();
+      launcher?.focus({ preventScroll: true });
+    };
+  }, [open]);
+
+  return panelRef;
+}
+
+/**
  * Full modal chrome: topmost-only ESC, ref-counted body scroll lock,
  * initial focus, Tab trap, and focus restore. Attach the returned ref
  * (plus `tabIndex={-1}`) to the dialog container element.
@@ -69,11 +122,7 @@ export function useModalChrome(
     const token = Symbol("modal");
     escStack.push(token);
 
-    if (scrollLocks === 0) {
-      savedOverflow = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
-    }
-    scrollLocks += 1;
+    lockBodyScroll();
 
     // Remember the launcher and move focus into the dialog.
     const launcher =
@@ -116,10 +165,7 @@ export function useModalChrome(
       document.removeEventListener("keydown", onKeyDown);
       const index = escStack.indexOf(token);
       if (index !== -1) escStack.splice(index, 1);
-      scrollLocks -= 1;
-      if (scrollLocks === 0) {
-        document.body.style.overflow = savedOverflow;
-      }
+      unlockBodyScroll();
       launcher?.focus({ preventScroll: true });
     };
   }, []);

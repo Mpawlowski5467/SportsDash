@@ -12,6 +12,8 @@
  * Pure client state — no API, no `types.ts` changes.
  */
 
+import { accentOnDark } from "./color";
+
 export type ThemeId = "dark" | "light" | "newsprint" | "stadium";
 
 export interface ThemeOption {
@@ -115,11 +117,15 @@ export function setTheme(theme: ThemeId): void {
  * `<html>`; `index.css` maps the amber ramp to it under
  * `[data-theme="stadium"]`. A no-op (clears the override) when given a
  * falsy color so the CSS fallback (a vibrant amber) takes over.
+ *
+ * The accent lands on TEXT over the dark base, so a too-dark team color
+ * (navy, maroon, black) would be near-invisible: it is lifted toward a
+ * readable tone (hue preserved) before being applied.
  */
 export function setStadiumAccent(color: string | null | undefined): void {
   const root = document.documentElement;
   if (color) {
-    root.style.setProperty("--sd-accent", color);
+    root.style.setProperty("--sd-accent", accentOnDark(color));
   } else {
     clearStadiumAccent();
   }

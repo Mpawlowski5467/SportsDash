@@ -92,6 +92,9 @@ def setup_scheduler() -> AsyncIOScheduler:
         IntervalTrigger(minutes=settings.news_refresh_minutes),
         id="refresh_news",
         name="RSS news refresh",
+        # refresh_news also runs inside daily_refresh; cap instances so two
+        # hourly runs can never stack up and race the insert path.
+        max_instances=1,
         misfire_grace_time=300,
         coalesce=True,
     )

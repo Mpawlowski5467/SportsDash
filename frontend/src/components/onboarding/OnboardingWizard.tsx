@@ -4,14 +4,16 @@
  * Flow: leagues -> teams -> review -> POST /setup/follow, ending on a
  * syncing screen that invalidates every cached query and polls /today
  * until games appear (or ~20s pass), then onComplete() fires. In "manage"
- * mode a close button lets the user bail out without touching anything;
- * "first-run" mode has no escape hatch by design.
+ * mode a close button (or ESC) lets the user bail out without touching
+ * anything; "first-run" mode has no escape hatch by design, though focus
+ * is still trapped and the page scroll locked like any other overlay.
  */
 
 import { useState } from "react";
 import { api } from "../../api";
 import type { CatalogTeam, FollowSelection } from "../../types";
 import { apiErrorMessage } from "./errors";
+import { useModalChrome } from "../modalChrome";
 import LeagueStep from "./LeagueStep";
 import TeamsStep from "./TeamsStep";
 import ReviewStep from "./ReviewStep";
@@ -60,6 +62,10 @@ function StepIndicator({ current }: { current: Step }) {
 }
 
 export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
+  // Shared modal chrome: ESC stack, scroll lock, focus trap, focus restore.
+  // First-run mode deliberately stays non-dismissible (ESC hits a no-op)
+  // but still traps focus and locks scroll like every other overlay.
+  const dialogRef = useModalChrome(onClose ?? (() => {}));
   const [step, setStep] = useState<Step>("leagues");
   const [selectedLeagueIds, setSelectedLeagueIds] = useState<string[]>([]);
   // Subset of selectedLeagueIds in whole-competition mode: these follow the
@@ -167,7 +173,14 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950 text-zinc-100">
+    <div
+      ref={dialogRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label="SportsDash setup"
+      className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950 text-zinc-100 outline-none"
+    >
       <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6">
         <header className="mb-6 flex items-center gap-4">
           <span className="select-none whitespace-nowrap text-base font-bold tracking-tight">
