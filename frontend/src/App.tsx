@@ -9,7 +9,8 @@ import {
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import ThemeProvider from "./components/ThemeProvider";
-import Layout, { type TabId } from "./components/Layout";
+import Layout, { TABS, type TabId } from "./components/Layout";
+import ErrorBoundary from "./components/ErrorBoundary";
 import {
   MapFocusContext,
   type MapFocusTarget,
@@ -99,6 +100,11 @@ function AppContent() {
   const queryClient = useQueryClient();
   const setup = useSetupStatus();
   const [active, setActive] = useState<TabId>("today");
+  // Tabs whose view has been activated at least once — drives the
+  // mount-once-visited rendering at the bottom of this component.
+  const [visited, setVisited] = useState<ReadonlySet<TabId>>(
+    () => new Set([active]),
+  );
   const [manageOpen, setManageOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [firstRunActive, setFirstRunActive] = useState(false);
@@ -167,7 +173,12 @@ function AppContent() {
     );
   }
 
-  const ActiveView = VIEWS[active];
+  if (!visited.has(active)) {
+    // Adjusting state during render: React re-renders synchronously before
+    // committing, so a newly-activated tab mounts in the same pass — no
+    // blank frame between the switch and the view's first paint.
+    setVisited(new Set(visited).add(active));
+  }
 
   return (
     <MapFocusContext.Provider value={mapFocusValue}>
@@ -179,20 +190,47 @@ function AppContent() {
         onManageTeams={() => setManageOpen(true)}
         onOpenNotifications={() => setNotificationsOpen(true)}
       >
-        {/* Re-key per tab so the active view replays its enter transition on
-            every switch — including each kiosk auto-rotation, which just
-            calls onChange. Purely decorative; reduced-motion no-ops it. */}
-        <div key={active} className="sd-view-enter">
-          <Suspense
-            fallback={
-              <div className="flex justify-center py-16">
-                <SportsDashSpinner size={88} label="Loading" />
-              </div>
-            }
-          >
-            <ActiveView />
-          </Suspense>
-        </div>
+        {/* Mount-once-visited: a view mounts the first time its tab is
+            activated, then stays mounted and is hidden via the `hidden`
+            attribute. Tab switches (incl. the kiosk auto-rotation, which
+            just calls onChange) no longer remount the tree — the old
+            `key={active}` remount tore down and rebuilt the MapLibre WebGL
+            context on every rotation, re-downloading the style/tiles and
+            resetting the camera. Accepted tradeoff for this single-user
+            dashboard: hidden views keep their TanStack Query observers
+            alive, so background polling continues for visited tabs.
+            Toggling `hidden` (display:none → visible) restarts the
+            `sd-view-enter` CSS animation, so the per-switch enter
+            transition survives the change; reduced-motion still no-ops it. */}
+        {TABS.map((tab) => {
+          if (!visited.has(tab.id)) return null;
+          const View = VIEWS[tab.id];
+          return (
+            <div
+              key={tab.id}
+              className="sd-view-enter"
+              hidden={tab.id !== active}
+            >
+              {/* Per-view boundary: a render error degrades only this view
+                  (an error in a hidden view must not blank the visible
+                  one). resetKey re-tries the view on the next tab switch
+                  instead of sticking on the fallback; `key={active}` on the
+                  boundary would remount the subtree and defeat the whole
+                  mount-once-visited point above. */}
+              <ErrorBoundary resetKey={active}>
+                <Suspense
+                  fallback={
+                    <div className="flex justify-center py-16">
+                      <SportsDashSpinner size={88} label="Loading" />
+                    </div>
+                  }
+                >
+                  <View />
+                </Suspense>
+              </ErrorBoundary>
+            </div>
+          );
+        })}
       </Layout>
       {manageOpen && (
         <OnboardingWizard

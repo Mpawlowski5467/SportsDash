@@ -180,8 +180,9 @@ body {
  * ALL motion lives behind `prefers-reduced-motion: no-preference`, so the
  * reduce setting is a genuine no-op: elements simply render in their final
  * state with no animation or transition. The kiosk auto-rotation in
- * App/Layout drives a key change on the view container — these styles only
- * decorate that swap and never interfere with the rotation timer.
+ * App/Layout toggles the `hidden` attribute between the (persistently
+ * mounted) view containers — these styles only decorate that swap and never
+ * interfere with the rotation timer.
  */
 
 /* Default (reduced-motion-safe) state — no animation classes do anything
@@ -224,8 +225,10 @@ body {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  /* View / tab transition: the active view container fades + rises slightly
-   * when it mounts. App re-keys this element per tab so the swap animates. */
+  /* View / tab transition: the newly-activated view container fades + rises
+   * slightly. App keeps visited views mounted and toggles `hidden` per tab;
+   * display:none → visible restarts this animation, so the swap animates on
+   * every activation without remounting the view tree. */
   .sd-view-enter {
     animation: sd-view-in 260ms ease-out both;
   }

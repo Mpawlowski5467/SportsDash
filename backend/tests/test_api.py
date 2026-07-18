@@ -1361,6 +1361,50 @@ async def test_map_games_mode(client, seed, db, monkeypatch) -> None:
     assert any(team["team_id"] == TEAM_FOXES for team in data["teams"])
 
 
+async def test_map_without_redis_omits_unresolved_venues_without_kick(
+    client: AsyncClient, db: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No Redis → unresolved game venues are omitted and nothing is kicked.
+
+    The venue-coords cache is Redis-backed, so on a no-Redis install the map
+    must not flag pending / kick the background geocode job on every poll
+    (its writes would no-op); the game simply stays off the map until its
+    venue resolves from an in-memory source.
+    """
+    from app.scheduler import jobs
+
+    monkeypatch.setattr(get_settings(), "redis_url", None)
+    kicked: list[bool] = []
+    monkeypatch.setattr(jobs, "kick_game_venue_coords", lambda: kicked.append(True))
+    # The seed's followed teams lack coordinates, which kicks unrelated
+    # on-demand resolves — stub those so the test stays hermetic; only the
+    # game-venue kick is asserted.
+    monkeypatch.setattr(jobs, "kick_locations_if_pending", lambda: None)
+    monkeypatch.setattr(jobs, "kick_competition_stadiums", lambda: None)
+
+    async with db() as session:
+        session.add(  # in window, but its venue resolves nowhere
+            GameORM(
+                id="mock:vc-map-noredis",
+                league_id=LEAGUE_ID,
+                home_team_id=None,
+                away_team_id=None,
+                home_name="Mystery A",
+                away_name="Mystery B",
+                start_time=utcnow() + timedelta(hours=8),
+                venue="Nowhere Fields, Undiscovered City",
+                phase="scheduled",
+            )
+        )
+        await session.commit()
+
+    resp = await client.get("/api/map")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert all(game["game_id"] != "mock:vc-map-noredis" for game in data["games"])
+    assert kicked == []
+
+
 async def test_map_plots_offseason_follow_all_league(client, db, monkeypatch) -> None:
     """An off-season ``follow_all`` league still plots its whole field.
 

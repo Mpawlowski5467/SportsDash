@@ -201,7 +201,8 @@ async def _upcoming_games(
     Redis venue-coords cache.  A game whose venue resolves nowhere is omitted
     and the returned ``pending`` flag tells the route to kick a background
     geocode, so its pin appears on a later poll rather than blocking the
-    request on Nominatim.
+    request on Nominatim.  Without Redis there is no cache to fall back to or
+    warm, so an unresolvable venue is omitted with ``pending`` staying False.
     """
     now = timeutil.utcnow()
     end = now + timedelta(days=days)
@@ -217,6 +218,11 @@ async def _upcoming_games(
     # lazily (a venue can host many games; a league's groups load once).
     group_cache: dict[str, dict[str, str]] = {}
     venue_cache: dict[str, tuple[float, float] | None] = {}
+    # The venue-coords cache is Redis-backed: with no Redis configured every
+    # read is a miss and every write a no-op, so an unresolvable venue must
+    # NOT be flagged pending — that would kick the background geocode job on
+    # every poll even though its results can never be stored or read back.
+    redis_configured = bool(get_settings().redis_url)
 
     out: list[MapGameOut] = []
     pending = False
@@ -230,6 +236,11 @@ async def _upcoming_games(
             norm = venue_coords.normalize(game.venue)
             if not norm:
                 continue  # no venue name → can't place it anywhere
+            if not redis_configured:
+                # No venue cache to consult or warm — the game stays off the
+                # map without flagging a background geocode that would
+                # discard its own results.
+                continue
             if norm not in venue_cache:
                 venue_cache[norm] = await venue_coords.get_cached(game.venue)
             coords = venue_cache[norm]

@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 
+from app.config import get_settings
 from app.db import session_scope
 from app.models import domain
 from app.providers import espn_catalog
@@ -259,6 +260,11 @@ async def refresh_game_venue_coords() -> None:
     No-op without Redis (every cache write is a no-op, so there's nothing to
     warm).  Never raises: the daily cron and the on-demand kick rely on it.
     """
+    if not get_settings().redis_url:
+        # The venue-coords cache is Redis-backed, so without Redis every write
+        # below is discarded — geocoding here would spend Nominatim budget
+        # (≤1 req/s) warming a cache nothing can read back.
+        return
     try:
         now = utcnow()
         end = now + timedelta(days=_GAME_VENUE_LOOKAHEAD_DAYS)
