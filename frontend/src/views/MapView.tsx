@@ -6,13 +6,12 @@ import type { FeatureCollection, LineString } from "geojson";
 
 import { useMap, useSchedule, useTeams } from "../hooks";
 import { localDayOffset } from "../lib/time";
-import { greatCircle, hasCoords, haversineKm, toRad } from "../lib/geo";
+import { greatCircle, hasCoords, haversineKm } from "../lib/geo";
 import {
   COMPETITION_RING,
   DEFAULT_COLOR,
   createClusterElement,
   createClusterTooltipElement,
-  createFanElement,
   createMarkerElement,
   createPlaneElement,
   createTooltipElement,
@@ -36,6 +35,7 @@ import {
   type BasemapId,
 } from "./map/basemap";
 import { CameraOrbit } from "./map/orbit";
+import { FanCrowd } from "./map/fans";
 import "./map/map.css";
 import type { Game, MapGame, MapTeam } from "../types";
 import MapTeamPanel from "../components/MapTeamPanel";
@@ -589,19 +589,23 @@ export default function MapView() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<Map<string, maplibregl.Marker>>(new window.Map());
   const planesRef = useRef<maplibregl.Marker[]>([]);
-  // The one-shot "follow the plane to the away game" cinematic.
+  // The one-shot "follow the plane to the away game" cinematic. Its arrival
+  // fan crowd lives in `crowd` so cancelCinematic tears down the whole show.
   const cinematicRef = useRef<{
     raf: number;
-    fansRaf: number;
     plane: maplibregl.Marker | null;
-    fans: maplibregl.Marker[];
+    crowd: FanCrowd | null;
     cleanupTimer: number;
-  }>({ raf: 0, fansRaf: 0, plane: null, fans: [], cleanupTimer: 0 });
+  }>({ raf: 0, plane: null, crowd: null, cleanupTimer: 0 });
   const hoverPopupRef = useRef<maplibregl.Popup | null>(null);
   // The slow flyover orbit that starts after a pin-click fly-in lands (and
   // after the flight cinematic's dive). Created with the map; stopped by user
   // interaction, panel close, tab hide, mode switch, or unmount.
   const orbitRef = useRef<CameraOrbit | null>(null);
+  // Mirrors the IntersectionObserver below: false while the map's view is
+  // mounted-but-hidden, so fan crowds park their rAF loops instead of
+  // animating for nobody (the same reason the orbit stops on tab hide).
+  const mapVisibleRef = useRef(true);
   // Fresh reduced-motion for the once-attached marker click handlers — they
   // are bound inside the mount-once map effect, so their closures would keep
   // the first render's value without a ref.
@@ -752,21 +756,19 @@ export default function MapView() {
   const setCineArcRef = useRef(setCineArc);
   setCineArcRef.current = setCineArc;
 
-  // Tear down a running cinematic (rAFs, the plane, its route arc, and the
-  // arrival fans) plus any flyover orbit — every caller is about to move the
-  // camera somewhere else.
+  // Tear down a running cinematic (rAF, the plane, its route arc, and the
+  // arrival fan crowd) plus any flyover orbit — every caller is about to move
+  // the camera somewhere else.
   const cancelCinematic = (): void => {
     const c = cinematicRef.current;
     if (c.raf) cancelAnimationFrame(c.raf);
-    if (c.fansRaf) cancelAnimationFrame(c.fansRaf);
     if (c.cleanupTimer) window.clearTimeout(c.cleanupTimer);
     c.plane?.remove();
-    for (const f of c.fans) f.remove();
+    c.crowd?.stop();
     cinematicRef.current = {
       raf: 0,
-      fansRaf: 0,
       plane: null,
-      fans: [],
+      crowd: null,
       cleanupTimer: 0,
     };
     setCineArcRef.current(null);
@@ -774,131 +776,43 @@ export default function MapView() {
   };
   useEffect(() => cancelCinematic, []); // stop the cinematic on unmount
 
-  // Fans pouring into the destination stadium as the plane arrives.
+  // Fans pouring into the destination stadium as the plane arrives: clumps
+  // walking street-like routes to the gates (the shared crowd mechanic in
+  // map/fans.ts). Replaces any previous arrival crowd.
   const burstFansAt = (lon: number, lat: number, color: string): void => {
-    if (mapRef.current === null) return;
-    const N = 14;
-    const RING = 0.013; // ~1.4 km ring the fans stream in from
-    const TOTAL = 7000; // fans stream for ~7s, then disperse + clean up
-    const place = (angle: number, r: number): [number, number] => [
-      lon + (r / Math.cos(toRad(lat))) * Math.cos(angle),
-      lat + r * Math.sin(angle),
-    ];
-    const fans = Array.from({ length: N }, (_, k) => {
-      const angle = (k / N) * Math.PI * 2;
-      const el = createFanElement(
-        color,
-        Math.cos(angle) > 0,
-        (k / N) * 0.5,
-        k * 3,
-        13 + (k % 3) * 1.5,
-      );
-      const marker = new maplibregl.Marker({ element: el })
-        .setLngLat(place(angle, RING))
-        .addTo(mapRef.current!);
-      return { marker, el, angle, phase: k / N };
-    });
-    cinematicRef.current.fans = fans.map((f) => f.marker);
-    const removeFans = () => {
-      for (const f of fans) f.marker.remove();
-      cinematicRef.current.fans = [];
-      cinematicRef.current.fansRaf = 0;
-    };
-    let start = 0;
-    const DURATION = 4200; // one ring→stadium pass
-    const tick = (ts: number) => {
-      const map = mapRef.current; // re-read live; bail if the map went away
-      if (map === null) {
-        removeFans();
-        return;
-      }
-      if (start === 0) start = ts;
-      const elapsed = ts - start;
-      if (elapsed >= TOTAL) {
-        removeFans(); // terminal — do NOT reschedule
-        return;
-      }
-      const base = elapsed / DURATION;
-      const zoom = map.getZoom();
-      const zoomFade = zoom < 8 ? 0 : zoom < 10 ? (zoom - 8) / 2 : 1;
-      const tail = Math.min(1, (TOTAL - elapsed) / 1500); // fade out the last 1.5s
-      for (const f of fans) {
-        const prog = (base + f.phase) % 1; // 0 = at ring, 1 = at stadium
-        const [flng, flat] = place(f.angle, RING * (1 - prog));
-        f.marker.setLngLat([flng, flat]);
-        f.el.style.opacity = String((1 - prog) * 0.9 * zoomFade * tail);
-      }
-      cinematicRef.current.fansRaf = requestAnimationFrame(tick);
-    };
-    cinematicRef.current.fansRaf = requestAnimationFrame(tick);
+    const map = mapRef.current;
+    if (map === null) return;
+    cinematicRef.current.crowd?.stop();
+    cinematicRef.current.crowd = new FanCrowd({
+      map,
+      lon,
+      lat,
+      color,
+      isVisible: () => mapVisibleRef.current,
+    }).start();
   };
 
-  // Click-to-celebrate: a one-shot crowd streaming into the stadium of a team
-  // whose game is happening. Self-contained (its OWN markers + rAF, cleared on
-  // each new burst and on unmount) so repeated clicks never stack and it never
-  // collides with the flight cinematic's arrival fans (which live in
-  // cinematicRef). Mirrors burstFansAt's streaming math.
-  const celebrateMarkersRef = useRef<maplibregl.Marker[]>([]);
-  const celebrateRafRef = useRef(0);
+  // Click-to-celebrate: a one-shot crowd walking into the stadium of a team
+  // whose game is happening — the SAME shared mechanic as the flight
+  // cinematic's arrival crowd (map/fans.ts), just self-contained here so
+  // repeated clicks never stack and it never collides with the cinematic's
+  // crowd (which lives in cinematicRef).
+  const celebrateCrowdRef = useRef<FanCrowd | null>(null);
   const stopCelebrate = (): void => {
-    if (celebrateRafRef.current) cancelAnimationFrame(celebrateRafRef.current);
-    for (const m of celebrateMarkersRef.current) m.remove();
-    celebrateMarkersRef.current = [];
-    celebrateRafRef.current = 0;
+    celebrateCrowdRef.current?.stop();
+    celebrateCrowdRef.current = null;
   };
   const celebrateFansAt = (lon: number, lat: number, color: string): void => {
     const map = mapRef.current;
     if (map === null) return;
-    stopCelebrate(); // a fresh click replaces any in-flight burst
-    const N = 14;
-    const RING = 0.013; // ~1.4 km ring the fans stream in from
-    const TOTAL = 7000; // stream for ~7s, then disperse + clean up
-    const DURATION = 4200; // one ring→stadium pass
-    const place = (angle: number, r: number): [number, number] => [
-      lon + (r / Math.cos(toRad(lat))) * Math.cos(angle),
-      lat + r * Math.sin(angle),
-    ];
-    const fans = Array.from({ length: N }, (_, k) => {
-      const angle = (k / N) * Math.PI * 2;
-      const el = createFanElement(
-        color,
-        Math.cos(angle) > 0,
-        (k / N) * 0.5,
-        k * 3,
-        13 + (k % 3) * 1.5,
-      );
-      const marker = new maplibregl.Marker({ element: el })
-        .setLngLat(place(angle, RING))
-        .addTo(map);
-      return { marker, el, angle, phase: k / N };
-    });
-    celebrateMarkersRef.current = fans.map((f) => f.marker);
-    let start = 0;
-    const tick = (ts: number) => {
-      const map = mapRef.current; // re-read live; bail if the map went away
-      if (map === null) {
-        stopCelebrate();
-        return;
-      }
-      if (start === 0) start = ts;
-      const elapsed = ts - start;
-      if (elapsed >= TOTAL) {
-        stopCelebrate(); // terminal — do NOT reschedule
-        return;
-      }
-      const base = elapsed / DURATION;
-      const zoom = map.getZoom();
-      const zoomFade = zoom < 8 ? 0 : zoom < 10 ? (zoom - 8) / 2 : 1;
-      const tail = Math.min(1, (TOTAL - elapsed) / 1500); // fade the last 1.5s
-      for (const f of fans) {
-        const prog = (base + f.phase) % 1; // 0 = at ring, 1 = at stadium
-        const [flng, flat] = place(f.angle, RING * (1 - prog));
-        f.marker.setLngLat([flng, flat]);
-        f.el.style.opacity = String((1 - prog) * 0.9 * zoomFade * tail);
-      }
-      celebrateRafRef.current = requestAnimationFrame(tick);
-    };
-    celebrateRafRef.current = requestAnimationFrame(tick);
+    stopCelebrate(); // a fresh click replaces any in-flight crowd
+    celebrateCrowdRef.current = new FanCrowd({
+      map,
+      lon,
+      lat,
+      color,
+      isVisible: () => mapVisibleRef.current,
+    }).start();
   };
   // Fired from the marker click handler (via a ref, so it reads fresh live data
   // and reduced-motion each render): celebrate only when the clicked team has a
@@ -943,8 +857,12 @@ export default function MapView() {
     // Cut to the home stadium; the plane takes off from here.
     map.jumpTo({ center: home, zoom: 6, pitch: DEFAULT_PITCH, bearing: -10 });
     let start = 0;
+    let lastCam = 0;
     let fansStarted = false;
     const DURATION = 9000;
+    // Camera-update cadence during the flight — matches the flyover orbit's
+    // throttle (the 3D-building re-render per jumpTo is the whole cost).
+    const CAMERA_UPDATE_MS = 1000 / 24;
     const tick = (ts: number) => {
       const map = mapRef.current; // re-read live; bail if the map went away
       if (map === null) {
@@ -966,10 +884,16 @@ export default function MapView() {
       plane.setLngLat(pos);
       const ang = (Math.atan2(b[0] - a[0], b[1] - a[1]) * 180) / Math.PI;
       glyph.style.transform = `rotate(${ang}deg)`;
-      // Camera follows the plane; zoom holds wide, then dives into the stadium.
+      // Camera follows the plane; zoom holds wide, then dives into the
+      // stadium. Throttled to ~24fps: every jumpTo is a full style render
+      // (the 3D buildings make it the flight's entire cost), while the
+      // plane marker itself stays buttery at full frame rate.
       const zoom =
         p < 0.75 ? 6 : 6 + (SINGLE_TEAM_ZOOM - 6) * ((p - 0.75) / 0.25) ** 1.4;
-      map.jumpTo({ center: pos, zoom, pitch: DEFAULT_PITCH, bearing: -10 });
+      if (ts - lastCam >= CAMERA_UPDATE_MS || p === 1) {
+        lastCam = ts;
+        map.jumpTo({ center: pos, zoom, pitch: DEFAULT_PITCH, bearing: -10 });
+      }
       // Fans start gathering "while the plane is coming in".
       if (!fansStarted && p > 0.62) {
         fansStarted = true;
@@ -1167,9 +1091,12 @@ export default function MapView() {
     orbitRef.current = new CameraOrbit(map);
     // App.tsx keeps visited views mounted-but-hidden, so unmount never fires
     // on tab switch: stop the flyover orbit when the map leaves the viewport
-    // (its rAF would otherwise keep driving a camera nobody can see).
+    // (its rAF would otherwise keep driving a camera nobody can see), and
+    // mirror visibility into mapVisibleRef so fan crowds park their rAF
+    // loops for the same reason.
     const hideObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) {
+        mapVisibleRef.current = entry.isIntersecting;
         if (!entry.isIntersecting) orbitRef.current?.stop();
       }
     });
@@ -1200,8 +1127,15 @@ export default function MapView() {
     applyBasemapRef.current = applyBasemap;
 
     map.on("load", () => {
+      // 3D buildings render OPAQUE and unshaded on purpose: a translucent
+      // fill-extrusion layer forfeits the depth fast path, and the vertical
+      // gradient adds per-fragment cost — measured during the flyover orbit:
+      // 13fps @0.85+gradient vs 26fps @1.0+flat (dense Chicago, pitch 55).
+      // The look is effectively identical at pitch.
       if (map.getLayer("building-3d")) {
         map.setLayoutProperty("building-3d", "visibility", "visible");
+        map.setPaintProperty("building-3d", "fill-extrusion-opacity", 1);
+        map.setPaintProperty("building-3d", "fill-extrusion-vertical-gradient", false);
       } else if (map.getSource("openmaptiles") && !map.getLayer("sd-buildings-3d")) {
         map.addLayer({
           id: "sd-buildings-3d",
@@ -1213,7 +1147,8 @@ export default function MapView() {
             "fill-extrusion-color": "hsl(35,8%,80%)",
             "fill-extrusion-height": ["get", "render_height"],
             "fill-extrusion-base": ["get", "render_min_height"],
-            "fill-extrusion-opacity": 0.85,
+            "fill-extrusion-opacity": 1,
+            "fill-extrusion-vertical-gradient": false,
           },
         });
       }

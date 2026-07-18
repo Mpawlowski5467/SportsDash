@@ -22,6 +22,15 @@ import type { Map as MaplibreMap, MapLibreEvent } from "maplibre-gl";
 const ORBIT_DEG_PER_SEC = 5;
 /** Ease-in ramp: orbit speed scales 0→full over this long after starting. */
 const ORBIT_RAMP_MS = 1200;
+/**
+ * Camera-update cadence. Every jumpTo is a FULL style render — with 3D
+ * buildings visible that's the orbit's entire cost (measured ~13fps
+ * unthrottled) — so we sweep at 15fps: still smooth for a slow 5°/s
+ * hover, at roughly a quarter of the render load. The sweep angle
+ * accumulates by true elapsed time, so the visual speed is
+ * frame-rate independent.
+ */
+const ORBIT_UPDATE_MS = 1000 / 15;
 
 type MoveStart = MapLibreEvent<MouseEvent | TouchEvent | WheelEvent | undefined>;
 
@@ -97,19 +106,24 @@ export class CameraOrbit {
       this.map.getCanvas().removeEventListener("keydown", onKeyDown);
     };
     let start = 0;
-    let last = 0;
+    let lastJump = 0;
     const tick = (ts: number) => {
       if (start === 0) {
         start = ts;
-        last = ts;
+        lastJump = ts;
       }
-      // Clamp dt so a background-tab rAF gap doesn't jump the bearing.
-      const dt = Math.min(100, ts - last);
-      last = ts;
-      const t = Math.min(1, (ts - start) / ORBIT_RAMP_MS);
-      const ease = t * t * (3 - 2 * t); // smoothstep 0→1
-      bearing += ORBIT_DEG_PER_SEC * ease * (dt / 1000);
-      this.map.jumpTo({ center, bearing });
+      // Camera updates are throttled (see ORBIT_UPDATE_MS); the sweep angle
+      // accumulates by true elapsed time so 5°/s holds at any frame rate.
+      const sinceJump = ts - lastJump;
+      if (sinceJump >= ORBIT_UPDATE_MS) {
+        // Clamp so a background-tab rAF gap doesn't jump the bearing.
+        const step = Math.min(250, sinceJump);
+        lastJump = ts;
+        const t = Math.min(1, (ts - start) / ORBIT_RAMP_MS);
+        const ease = t * t * (3 - 2 * t); // smoothstep 0→1
+        bearing += ORBIT_DEG_PER_SEC * ease * (step / 1000);
+        this.map.jumpTo({ center, bearing });
+      }
       this.raf = requestAnimationFrame(tick);
     };
     this.raf = requestAnimationFrame(tick);
