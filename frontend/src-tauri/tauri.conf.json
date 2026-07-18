@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self' http://127.0.0.1:8765 https://tiles.openfreemap.org; worker-src 'self' blob:; font-src 'self' data:"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self' http://127.0.0.1:8765 https://tiles.openfreemap.org https://server.arcgisonline.com; worker-src 'self' blob:; font-src 'self' data:"
     }
   },
   "bundle": {

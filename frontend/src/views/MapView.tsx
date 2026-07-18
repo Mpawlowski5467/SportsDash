@@ -25,11 +25,19 @@ import {
   buildNextGames,
   buildTravelArcs,
   buildTravelInfo,
+  findFollowedTeamForSide,
   groupGamesByVenue,
   isToday,
 } from "./map/travel";
+import {
+  readBasemap,
+  setSatelliteImagery,
+  writeBasemap,
+  type BasemapId,
+} from "./map/basemap";
+import { CameraOrbit } from "./map/orbit";
 import "./map/map.css";
-import type { Game, MapTeam } from "../types";
+import type { Game, MapGame, MapTeam } from "../types";
 import MapTeamPanel from "../components/MapTeamPanel";
 import MapVenueGamesPanel, {
   type MapVenueGroup,
@@ -176,6 +184,44 @@ function ModeToggle({
   );
 }
 
+/** A segmented toggle between the vector basemap and satellite imagery. */
+function BasemapToggle({
+  value,
+  onChange,
+}: {
+  value: BasemapId;
+  onChange: (basemap: BasemapId) => void;
+}) {
+  const options: { id: BasemapId; label: string }[] = [
+    { id: "vector", label: "Vector" },
+    { id: "satellite", label: "Satellite" },
+  ];
+  return (
+    <div
+      role="group"
+      aria-label="Basemap"
+      className="inline-flex rounded-full border border-zinc-800 bg-zinc-900 p-0.5"
+    >
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          aria-pressed={value === option.id}
+          onClick={() => onChange(option.id)}
+          className={
+            "rounded-full px-3 py-1 text-xs font-medium transition-colors " +
+            (value === option.id
+              ? "bg-amber-500/20 text-amber-400"
+              : "text-zinc-400 hover:text-zinc-200")
+          }
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** A toggle chip for showing/hiding a pin source (your teams / a competition). */
 function FilterChip({
   label,
@@ -218,6 +264,15 @@ const ALL_GROUPS = "__all__";
 const ARCS_SOURCE = "sd-travel-arcs";
 const ARCS_LAYER = "sd-travel-arcs";
 
+/**
+ * Source/layer ids for the ONE-SHOT cinematic arc — the route a clicked
+ * game's flight follows. Kept separate from ARCS_SOURCE so Effect 3's
+ * Stadiums-mode re-sync can never wipe a flight mid-air, and so a games-mode
+ * flight can draw a route at all (arcDataRef is empty in games mode).
+ */
+const CINE_ARC_SOURCE = "sd-cine-arc";
+const CINE_ARC_LAYER = "sd-cine-arc";
+
 /** Amber dashed line — matches the SportsDash accent. */
 const ARC_COLOR = "#f59e0b"; // amber-500
 
@@ -259,6 +314,7 @@ function clusterForViewport(
   index: Supercluster<ClusterPointProps, ClusterAccumProps>,
   leafById: Map<string, MapMarker>,
   mode: MapMode,
+  stopOrbit: () => void,
 ): MapMarker[] {
   const b = map.getBounds();
   const bbox: [number, number, number, number] = [
@@ -285,6 +341,9 @@ function clusterForViewport(
         makeElement: () => createClusterElement(count, hasFollowed),
         makeTooltip: () => createClusterTooltipElement(count, hasFollowed, mode),
         onSelect: () => {
+          // The badge drives its own camera — kill any flyover orbit first,
+          // or its per-frame jumpTo would fight this zoom for the camera.
+          stopOrbit();
           // Zoom to where this cluster breaks apart (clamped so a tight group
           // doesn't dive all the way to street level on one click).
           const expansion = index.getClusterExpansionZoom(clusterId);
@@ -463,6 +522,11 @@ export default function MapView() {
   useEffect(() => {
     setSelected(null);
   }, [mode]);
+  // Closing the side panel stops the flyover orbit — the show belongs to the
+  // open pin/game.
+  useEffect(() => {
+    if (selected === null) orbitRef.current?.stop();
+  }, [selected]);
 
   // --- Normalized marker list for the active mode ---------------------------
   const markers = useMemo<MapMarker[]>(() => {
@@ -534,6 +598,23 @@ export default function MapView() {
     cleanupTimer: number;
   }>({ raf: 0, fansRaf: 0, plane: null, fans: [], cleanupTimer: 0 });
   const hoverPopupRef = useRef<maplibregl.Popup | null>(null);
+  // The slow flyover orbit that starts after a pin-click fly-in lands (and
+  // after the flight cinematic's dive). Created with the map; stopped by user
+  // interaction, panel close, tab hide, mode switch, or unmount.
+  const orbitRef = useRef<CameraOrbit | null>(null);
+  // Fresh reduced-motion for the once-attached marker click handlers — they
+  // are bound inside the mount-once map effect, so their closures would keep
+  // the first render's value without a ref.
+  const reducedMotionRef = useRef(reducedMotion);
+  reducedMotionRef.current = reducedMotion;
+  // Basemap (vector/satellite) — persisted like the theme/ticker prefs. The
+  // ref mirrors the state for the mount-once map effect's style handlers.
+  const [basemap, setBasemap] = useState<BasemapId>(readBasemap);
+  const basemapRef = useRef(basemap);
+  basemapRef.current = basemap;
+  // Assigned inside the map effect; applies the current basemapRef choice to
+  // the live style (retrying via styledata while the style is still loading).
+  const applyBasemapRef = useRef<(() => void) | null>(null);
   // Low-level reconciler: make the live DOM markers equal exactly this set
   // (add/remove by id). Framing the camera is renderViewport's job, not this.
   const syncMarkersRef = useRef<((current: MapMarker[]) => void) | null>(null);
@@ -594,7 +675,9 @@ export default function MapView() {
     const toRender =
       index === null
         ? full
-        : clusterForViewport(map, index, leafByIdRef.current, modeRef.current);
+        : clusterForViewport(map, index, leafByIdRef.current, modeRef.current, () =>
+            orbitRef.current?.stop(),
+          );
     syncMarkersRef.current?.(toRender);
   };
   renderViewportRef.current = renderViewport;
@@ -617,7 +700,61 @@ export default function MapView() {
     [],
   );
 
-  // Tear down a running cinematic (rAFs, the plane, and the arrival fans).
+  // Draw (or clear) the one-shot cinematic arc: the great-circle route the
+  // clicked game's flight follows. Guards every style lookup (the style may
+  // be mid-load or already torn down during unmount).
+  const setCineArc = (route: [number, number][] | null): void => {
+    const map = mapRef.current;
+    if (map === null || !map.isStyleLoaded()) return;
+    try {
+      if (route === null) {
+        if (map.getLayer(CINE_ARC_LAYER)) map.removeLayer(CINE_ARC_LAYER);
+        if (map.getSource(CINE_ARC_SOURCE)) map.removeSource(CINE_ARC_SOURCE);
+        return;
+      }
+      const data: FeatureCollection<LineString> = {
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: {},
+            geometry: { type: "LineString", coordinates: route },
+          },
+        ],
+      };
+      const source = map.getSource(CINE_ARC_SOURCE) as
+        | maplibregl.GeoJSONSource
+        | undefined;
+      if (source !== undefined) {
+        source.setData(data);
+      } else {
+        map.addSource(CINE_ARC_SOURCE, { type: "geojson", data });
+        map.addLayer({
+          id: CINE_ARC_LAYER,
+          type: "line",
+          source: CINE_ARC_SOURCE,
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": ARC_COLOR,
+            "line-width": 2.5,
+            "line-opacity": 0.9,
+          },
+        });
+      }
+    } catch {
+      // Style already gone — the map teardown removes everything anyway.
+    }
+  };
+
+  // Ref mirror: cancelCinematic clears the arc through this so it only ever
+  // touches refs — keeping it non-reactive for the mount-once effects that
+  // call it (same convention as syncArcsRef / syncMarkersRef below).
+  const setCineArcRef = useRef(setCineArc);
+  setCineArcRef.current = setCineArc;
+
+  // Tear down a running cinematic (rAFs, the plane, its route arc, and the
+  // arrival fans) plus any flyover orbit — every caller is about to move the
+  // camera somewhere else.
   const cancelCinematic = (): void => {
     const c = cinematicRef.current;
     if (c.raf) cancelAnimationFrame(c.raf);
@@ -632,6 +769,8 @@ export default function MapView() {
       fans: [],
       cleanupTimer: 0,
     };
+    setCineArcRef.current(null);
+    orbitRef.current?.stop();
   };
   useEffect(() => cancelCinematic, []); // stop the cinematic on unmount
 
@@ -799,6 +938,8 @@ export default function MapView() {
       .setLngLat(route[0])
       .addTo(map);
     cinematicRef.current.plane = plane;
+    // Draw the route the plane is about to fly (cleared on landing/cancel).
+    setCineArc(route);
     // Cut to the home stadium; the plane takes off from here.
     map.jumpTo({ center: home, zoom: 6, pitch: DEFAULT_PITCH, bearing: -10 });
     let start = 0;
@@ -844,10 +985,13 @@ export default function MapView() {
           pitch: DEFAULT_PITCH,
           duration: 700,
         });
+        // The dive eases out, then the slow flyover orbit takes over.
+        orbitRef.current?.startAfterSettled(() => !reducedMotionRef.current);
         // Let the plane land, then remove it (the fans keep arriving a bit).
         cinematicRef.current.cleanupTimer = window.setTimeout(() => {
           cinematicRef.current.plane?.remove();
           cinematicRef.current.plane = null;
+          setCineArc(null); // the flight's done — lift its route line
         }, 1600);
       }
     };
@@ -911,6 +1055,7 @@ export default function MapView() {
         (t) => t.team_id === target.teamId,
       );
       if (team === undefined || !hasCoords(team)) return;
+      cancelCinematic(); // replaces any running show (and the flyover orbit)
       map.flyTo({
         center: [team.lon, team.lat],
         zoom: SINGLE_TEAM_ZOOM,
@@ -929,6 +1074,46 @@ export default function MapView() {
     ];
     clearFocus();
   }, [focusTarget, clearFocus, reducedMotion]);
+  // --- Games mode: click ANY upcoming game in the venue panel → travel show --
+  // Replays the travel visuals for THAT fixture (not just each team's next
+  // game): a followed AWAY side flies the plane from its home venue along a
+  // great-circle (one-shot cinematic: arc draws, plane flies, fans burst on
+  // arrival, the dive settles into the flyover orbit); a followed HOME side
+  // skips the flight and just streams the fans in; anything else — or reduced
+  // motion — falls back to the plain fly-to. The panel still opens the box
+  // score modal on the same click.
+  const onVenueGameClick = (game: MapGame): void => {
+    const map = mapRef.current;
+    if (map === null || !hasCoords(game)) return;
+    const dest: [number, number] = [game.lon, game.lat];
+    const awayTeam = findFollowedTeamForSide(teams, game.away);
+    const homeTeam = findFollowedTeamForSide(teams, game.home);
+    if (!reducedMotion && awayTeam !== undefined && hasCoords(awayTeam)) {
+      runFlightCinematic(
+        [awayTeam.lon, awayTeam.lat],
+        dest,
+        awayTeam.color ?? game.away.color ?? DEFAULT_COLOR,
+      );
+      return;
+    }
+    cancelCinematic(); // replaces any running show (and the flyover orbit)
+    map.flyTo({
+      center: dest,
+      zoom: SINGLE_TEAM_ZOOM,
+      pitch: DEFAULT_PITCH,
+      essential: true,
+    });
+    if (reducedMotion) return; // no fans, no orbit — just the fly-to
+    if (homeTeam !== undefined) {
+      celebrateFansAt(
+        dest[0],
+        dest[1],
+        homeTeam.color ?? game.home.color ?? DEFAULT_COLOR,
+      );
+    }
+    orbitRef.current?.startAfterSettled(() => !reducedMotionRef.current);
+  };
+
   // Imperatively ensures the arc source+layer exist (style must be loaded) and
   // pushes the current data. Assigned inside the map effect, called from both
   // the create effect and the arc-update effect; guards every style lookup.
@@ -979,6 +1164,16 @@ export default function MapView() {
       attributionControl: { compact: true },
     });
     mapRef.current = map;
+    orbitRef.current = new CameraOrbit(map);
+    // App.tsx keeps visited views mounted-but-hidden, so unmount never fires
+    // on tab switch: stop the flyover orbit when the map leaves the viewport
+    // (its rAF would otherwise keep driving a camera nobody can see).
+    const hideObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) orbitRef.current?.stop();
+      }
+    });
+    hideObserver.observe(container);
     hoverPopupRef.current = new maplibregl.Popup({
       closeButton: false,
       closeOnClick: false,
@@ -988,6 +1183,21 @@ export default function MapView() {
     });
 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
+
+    // Apply the persisted basemap choice (vector/satellite) to the live style.
+    // The Esri imagery layer is added/removed imperatively (never a setStyle
+    // swap), so the arcs, the 3D-building fix-ups, and the DOM markers all
+    // survive a toggle. Retries via styledata while the style is loading.
+    function applyBasemap(): void {
+      if (setSatelliteImagery(map, basemapRef.current === "satellite")) return;
+      const onStyleData = () => {
+        if (!map.isStyleLoaded()) return;
+        map.off("styledata", onStyleData);
+        setSatelliteImagery(map, basemapRef.current === "satellite");
+      };
+      map.on("styledata", onStyleData);
+    }
+    applyBasemapRef.current = applyBasemap;
 
     map.on("load", () => {
       if (map.getLayer("building-3d")) {
@@ -1009,6 +1219,7 @@ export default function MapView() {
       }
       renderViewportRef.current?.(false);
       syncArcs();
+      applyBasemap(); // style is loaded — the persisted choice applies at once
     });
 
     // Ensure the arc source+layer exist (needs the style) and push the current
@@ -1085,6 +1296,11 @@ export default function MapView() {
               pitch: DEFAULT_PITCH,
               essential: true,
             });
+            // Once the fly-in lands, ease into the slow flyover orbit around
+            // the stadium (the gate keeps reduced-motion sessions still).
+            orbitRef.current?.startAfterSettled(
+              () => !reducedMotionRef.current,
+            );
             // If this team's game is happening (live or today), celebrate:
             // fans stream into its stadium as the camera dives in.
             if (spec.id.startsWith("team:")) {
@@ -1098,9 +1314,12 @@ export default function MapView() {
 
     // Re-cluster after the camera settles (pan/zoom changes which pins merge).
     // Skip while the flight cinematic runs — it jumpTo's every frame, which
-    // would otherwise recluster 60×/sec for no benefit.
+    // would otherwise recluster 60×/sec for no benefit. The flyover orbit
+    // jumpTo's every frame too, and its bearing-only sweep never changes
+    // which pins merge.
     map.on("moveend", () => {
       if (cinematicRef.current.raf !== 0) return;
+      if (orbitRef.current?.orbiting ?? false) return;
       renderViewportRef.current?.(false);
     });
 
@@ -1113,6 +1332,9 @@ export default function MapView() {
     return () => {
       // Stop any in-flight cinematic BEFORE removing the map, so its rAFs
       // don't fire jumpTo/getZoom on a destroyed MapLibre instance.
+      hideObserver.disconnect();
+      orbitRef.current?.stop();
+      orbitRef.current = null;
       cancelCinematic();
       stopCelebrate(); // and any click-to-celebrate fan burst
       for (const marker of markersRef.current.values()) marker.remove();
@@ -1121,11 +1343,14 @@ export default function MapView() {
       hoverPopupRef.current = null;
       syncMarkersRef.current = null;
       syncArcsRef.current = null;
+      applyBasemapRef.current = null;
       // Tear down the arc layer/source before the map (guarded — the style may
       // be mid-swap). map.remove() below disposes everything else.
       try {
         if (map.getLayer(ARCS_LAYER)) map.removeLayer(ARCS_LAYER);
         if (map.getSource(ARCS_SOURCE)) map.removeSource(ARCS_SOURCE);
+        if (map.getLayer(CINE_ARC_LAYER)) map.removeLayer(CINE_ARC_LAYER);
+        if (map.getSource(CINE_ARC_SOURCE)) map.removeSource(CINE_ARC_SOURCE);
       } catch {
         // Style already gone — nothing to clean up.
       }
@@ -1237,9 +1462,13 @@ export default function MapView() {
         closeTeamDetail(); // drop any team page the tour had opened
         setTouring(false);
       }
-      cancelCinematic(); // the flight cinematic only lives in Stadiums mode
-      stopCelebrate(); // and any click-to-celebrate fan burst
     }
+    // A mode switch swaps the whole pin set and closes the panel, so any
+    // one-shot show (flight cinematic, celebrate burst, flyover orbit) is
+    // torn down in BOTH directions — venue-panel game clicks can start them
+    // in games mode now, not just the Stadiums-mode focus flow.
+    cancelCinematic();
+    stopCelebrate();
     // cancelCinematic/stopCelebrate are stable-enough closures; safe to omit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
@@ -1259,11 +1488,13 @@ export default function MapView() {
     tourTimersRef.current = [];
     closeTeamDetail(); // dismiss any team page the tour had opened
     setTouring(false);
+    orbitRef.current?.stop(); // the tour owns the camera now (or nobody does)
   };
   const startTour = () => {
     const map = mapRef.current;
     const stops = teams.filter((t) => t.source === "followed" && hasCoords(t));
     if (map === null || stops.length === 0) return;
+    orbitRef.current?.stop(); // the tour's fly-ins own the camera now
     // Defensive: never stack a second fleet of timers on top of a running tour.
     tourTimersRef.current.forEach((id) => window.clearTimeout(id));
     tourTimersRef.current = [];
@@ -1346,6 +1577,7 @@ export default function MapView() {
           }
         }
         if (best !== null && bestLngLat !== null) {
+          orbitRef.current?.stop(); // this fly-to owns the camera now
           map.flyTo({ center: bestLngLat, zoom: 9, essential: true });
           onSelectRef.current(best);
         }
@@ -1356,6 +1588,18 @@ export default function MapView() {
       { timeout: 8000 },
     );
   };
+
+  // --- Basemap toggle (vector ↔ satellite imagery) --------------------------
+  // Persist like the theme/ticker prefs; the effect pushes the choice to the
+  // live map (the INITIAL persisted choice is applied by the map's load
+  // handler once its style is ready — the map effect may mount after this).
+  const onBasemapChange = (next: BasemapId): void => {
+    setBasemap(next);
+    writeBasemap(next);
+  };
+  useEffect(() => {
+    applyBasemapRef.current?.();
+  }, [basemap]);
 
   if (mapQuery.isError) {
     return (
@@ -1409,6 +1653,7 @@ export default function MapView() {
           <div className="pointer-events-auto flex flex-col gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/80 p-1.5 shadow-lg backdrop-blur-sm">
             <div className="flex flex-wrap items-center gap-1.5">
               <ModeToggle mode={mode} onChange={setMode} />
+              <BasemapToggle value={basemap} onChange={onBasemapChange} />
 
               {mode === "stadiums" && legend.hasFollowed && (
                 <button
@@ -1552,6 +1797,7 @@ export default function MapView() {
         venue={selected?.kind === "venue" ? selected.venue : null}
         leagueNames={leagueNames}
         onClose={() => setSelected(null)}
+        onGameClick={onVenueGameClick}
       />
     </div>
   );
