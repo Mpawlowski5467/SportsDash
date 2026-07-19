@@ -854,8 +854,16 @@ export default function MapView() {
     cinematicRef.current.plane = plane;
     // Draw the route the plane is about to fly (cleared on landing/cancel).
     setCineArc(route);
-    // Cut to the home stadium; the plane takes off from here.
-    map.jumpTo({ center: home, zoom: 6, pitch: DEFAULT_PITCH, bearing: -10 });
+    // Sweep over to the home stadium instead of cutting to it — the viewer
+    // follows the whole trip from takeoff to touchdown. The flight itself
+    // starts once the sweep lands (see beginFlight below).
+    map.flyTo({
+      center: home,
+      zoom: 6,
+      pitch: DEFAULT_PITCH,
+      bearing: -10,
+      duration: 1400,
+    });
     let start = 0;
     let lastCam = 0;
     let fansStarted = false;
@@ -919,7 +927,13 @@ export default function MapView() {
         }, 1600);
       }
     };
-    cinematicRef.current.raf = requestAnimationFrame(tick);
+    const beginFlight = (): void => {
+      // A cancel during the intro sweep (another click, mode switch, unmount)
+      // nulls the plane — a stale moveend listener must not start the flight.
+      if (cinematicRef.current.plane !== plane) return;
+      cinematicRef.current.raf = requestAnimationFrame(tick);
+    };
+    map.once("moveend", beginFlight);
   };
 
   useEffect(() => {
@@ -1006,9 +1020,12 @@ export default function MapView() {
   // skips the flight and just streams the fans in; anything else — or reduced
   // motion — falls back to the plain fly-to. The panel still opens the box
   // score modal on the same click.
-  const onVenueGameClick = (game: MapGame): void => {
+  // Returns true when it takes over the whole map (the flight cinematic) —
+  // the venue panel then skips the box-score modal so it never covers the
+  // flight the user clicked to watch.
+  const onVenueGameClick = (game: MapGame): boolean => {
     const map = mapRef.current;
-    if (map === null || !hasCoords(game)) return;
+    if (map === null || !hasCoords(game)) return false;
     const dest: [number, number] = [game.lon, game.lat];
     const awayTeam = findFollowedTeamForSide(teams, game.away);
     const homeTeam = findFollowedTeamForSide(teams, game.home);
@@ -1018,7 +1035,7 @@ export default function MapView() {
         dest,
         awayTeam.color ?? game.away.color ?? DEFAULT_COLOR,
       );
-      return;
+      return true; // the flight owns the map — no modal over it
     }
     cancelCinematic(); // replaces any running show (and the flyover orbit)
     map.flyTo({
@@ -1027,7 +1044,7 @@ export default function MapView() {
       pitch: DEFAULT_PITCH,
       essential: true,
     });
-    if (reducedMotion) return; // no fans, no orbit — just the fly-to
+    if (reducedMotion) return false; // no fans, no orbit — just the fly-to
     if (homeTeam !== undefined) {
       celebrateFansAt(
         dest[0],
@@ -1036,6 +1053,7 @@ export default function MapView() {
       );
     }
     orbitRef.current?.startAfterSettled(() => !reducedMotionRef.current);
+    return false;
   };
 
   // Imperatively ensures the arc source+layer exist (style must be loaded) and
