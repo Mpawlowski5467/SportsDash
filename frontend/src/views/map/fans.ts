@@ -19,9 +19,11 @@
  *   the route length instead of being a fixed duration. The old mechanic
  *   slid fans straight to the center over a hard-coded 4.2s, which read as
  *   "dragged in by a force".
- * - LINGER, then fade: at the gate each clump mills around (slow random-walk
- *   drift, staying clustered) for ~8–12s, THEN fades over ~2.5s. The fade is
- *   only at the very end of a fan's ~30s life — the old crowd was gone in 7s.
+ * - THROUGH THE GATES, then gone: at the gate each fan keeps walking
+ *   toward the stadium's center for a beat while fading — the crowd streams
+ *   INTO the venue and disappears through the gates instead of loitering
+ *   outside. (First the old crowd vanished mid-walk at 7s; then fans
+ *   lingered at the gates; this reads as actually going in.)
  *
  * Performance rules (the map keeps views mounted-but-hidden, and DOM markers
  * are expensive):
@@ -66,13 +68,9 @@ const START_MAX_M = 390;
 const MAX_FANS = 18;
 
 const FADE_IN_MS = 1000; // entering fans fade in instead of popping
-const FADE_OUT_MS = 2500; // …and only fade out at the very end of their life
-const LINGER_MIN_MS = 8000; // milling at the gate before dispersing
-const LINGER_SPAN_MS = 3500;
-const MILL_RADIUS_MIN_M = 30; // random-walk drift range around the gate
-const MILL_RADIUS_SPAN_M = 30;
-/** Stroll speed while milling (already on the time-compressed scale). */
-const MILL_MPS = 0.55 * TIME_SCALE;
+/** Arrival: past the gate the fan keeps walking toward the center for this
+ *  long while fading out — going through the gates, not loitering. */
+const ENTER_MS = 2200;
 
 /** Advance the crowd at ~30fps even when rAF fires at the display rate. */
 const FRAME_MS = 33;
@@ -120,8 +118,6 @@ export interface ClumpPlan {
   /** [start, corner, gate] in [lng, lat] — a Manhattan two-leg path. */
   route: [number, number][];
   startDelayMs: number;
-  lingerMs: number;
-  millRadiusM: number;
   fans: FanPlan[];
 }
 
@@ -218,8 +214,6 @@ export function buildCrowdPlan(
     clumps.push({
       route,
       startDelayMs: c * (1600 + rand() * 900), // staggered, never synchronized
-      lingerMs: LINGER_MIN_MS + rand() * LINGER_SPAN_MS,
-      millRadiusM: MILL_RADIUS_MIN_M + rand() * MILL_RADIUS_SPAN_M,
       fans,
     });
   }
@@ -359,12 +353,6 @@ interface FanRuntime {
   lastX: number;
   lastY: number;
   posInit: boolean;
-  // Mill state (initialized on arrival at the gate).
-  millX: number;
-  millY: number;
-  millTX: number;
-  millTY: number;
-  millNextAt: number;
 }
 
 export interface FanCrowdOptions {
@@ -392,7 +380,6 @@ export class FanCrowd {
   private pausedMs = 0;
   private startTs = 0;
   private lastWrite = 0;
-  private prevWrite = 0;
   private stopped = false;
 
   constructor(options: FanCrowdOptions) {
@@ -435,11 +422,6 @@ export class FanCrowd {
           lastX: 0,
           lastY: 0,
           posInit: false,
-          millX: 0,
-          millY: 0,
-          millTX: 0,
-          millTY: 0,
-          millNextAt: 0,
         });
       }
     }
@@ -490,7 +472,6 @@ export class FanCrowd {
       this.raf = requestAnimationFrame(this.tick);
       return;
     }
-    this.prevWrite = this.lastWrite;
     this.lastWrite = ts;
     const elapsed = ts - this.startTs - this.pausedMs;
     const zoom = this.map.getZoom();
@@ -537,58 +518,27 @@ export class FanCrowd {
       return true;
     }
 
-    const millT = t - walkMs;
-    if (millT < fan.clump.lingerMs) {
-      this.updateMill(fan, millT);
-      this.writeOpacity(fan, 0.9 * zoomFade);
-      return true;
-    }
-
-    const fadeT = millT - fan.clump.lingerMs;
-    if (fadeT < FADE_OUT_MS) {
-      // Keep drifting while fading — freezing mid-fade reads as a glitch.
-      this.updateMill(fan, millT);
-      this.writeOpacity(fan, 0.9 * (1 - fadeT / FADE_OUT_MS) * zoomFade);
+    // Through the gates: past the route's end the fan keeps drifting toward
+    // the stadium's center for a beat while fading — entering the venue,
+    // not loitering outside it.
+    const enterT = t - walkMs;
+    if (enterT < ENTER_MS) {
+      const gate = pointAlong(fan.routeM, fan.routeM.total);
+      const norm = Math.hypot(gate.x, gate.y) || 1;
+      const dirX = -gate.x / norm; // gate → center
+      const dirY = -gate.y / norm;
+      const step = fan.plan.speedMps * 0.7 * (enterT / 1000);
+      this.writePosition(
+        fan,
+        gate.x + dirX * step - dirY * fan.plan.lateral,
+        gate.y + dirY * step + dirX * fan.plan.lateral,
+      );
+      this.writeFacing(fan, faceLeftForDir(dirX));
+      this.writeOpacity(fan, 0.9 * (1 - enterT / ENTER_MS) * zoomFade);
       return true;
     }
     this.writeOpacity(fan, 0);
     return false;
-  }
-
-  /** Slow random-walk drift near the gate; targets keep the clump clustered. */
-  private updateMill(fan: FanRuntime, millT: number): void {
-    const lastLeg = fan.routeM.xs.length - 2;
-    const dir = legDir(fan.routeM, lastLeg);
-    if (fan.millNextAt === 0) {
-      const gate = pointAlong(fan.routeM, fan.routeM.total);
-      fan.millX = gate.x - dir.y * fan.plan.lateral;
-      fan.millY = gate.y + dir.x * fan.plan.lateral;
-      fan.millTX = fan.millX;
-      fan.millTY = fan.millY;
-      fan.millNextAt = 1; // retarget on the next line
-    }
-    if (millT >= fan.millNextAt) {
-      const gate = pointAlong(fan.routeM, fan.routeM.total);
-      const r = fan.clump.millRadiusM;
-      // Wander near the gate, biased toward the fan's own side of the clump
-      // so the group mills as a CLUSTER rather than collapsing to a point.
-      fan.millTX =
-        gate.x + (this.rand() - 0.5) * 2 * r - dir.y * fan.plan.lateral * 0.6;
-      fan.millTY =
-        gate.y + (this.rand() - 0.5) * 2 * r + dir.x * fan.plan.lateral * 0.6;
-      fan.millNextAt = millT + 1400 + this.rand() * 1400;
-    }
-    const dx = fan.millTX - fan.millX;
-    const dy = fan.millTY - fan.millY;
-    const dist = Math.hypot(dx, dy);
-    if (dist > 0.1) {
-      const dtMs = this.prevWrite === 0 ? FRAME_MS : this.lastWrite - this.prevWrite;
-      const step = Math.min(dist, MILL_MPS * (Math.min(100, dtMs) / 1000));
-      fan.millX += (dx / dist) * step;
-      fan.millY += (dy / dist) * step;
-      this.writePosition(fan, fan.millX, fan.millY);
-      this.writeFacing(fan, faceLeftForDir(dx / dist));
-    }
   }
 
   private writePosition(fan: FanRuntime, x: number, y: number): void {
