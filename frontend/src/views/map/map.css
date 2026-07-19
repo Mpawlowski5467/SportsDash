@@ -34,8 +34,8 @@
 .sd-map-plane svg { display: block; }
 .sd-map-plane-cine { color: var(--color-amber-300); }
 .sd-map-plane-cine svg {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 33px;
   filter: drop-shadow(0 2px 5px rgba(0,0,0,0.6));
 }
 .sd-map-fan {
@@ -44,9 +44,16 @@
   will-change: transform, opacity;
 }
 .sd-map-fan svg { display: block; }
-/* Facing: glyph is drawn walking right; flip it for fans east of the
-   stadium so everyone walks toward the gates. */
+/* Facing: figures walk right; flip them for fans east of the stadium so
+   everyone walks toward the gates. */
 .sd-map-fan-l svg { transform: scaleX(-1); }
+/* Limb swing: transform-box makes the origin the limb's own top (hip for
+   legs, shoulder for the arm), so the rotate reads as a real step. */
+.sd-map-fan .sd-leg-f,
+.sd-map-fan .sd-leg-b,
+.sd-map-fan .sd-arm {
+  transform-box: fill-box;
+}
 @keyframes sdFanStepR {
   0%, 100% { transform: scaleX(1) translateY(0); }
   50%      { transform: scaleX(1) translateY(-1px); }
@@ -55,9 +62,29 @@
   0%, 100% { transform: scaleX(-1) translateY(0); }
   50%      { transform: scaleX(-1) translateY(-1px); }
 }
+@keyframes sdFanLeg {
+  from { transform: rotate(-16deg); }
+  to   { transform: rotate(17deg); }
+}
+@keyframes sdFanArm {
+  from { transform: rotate(13deg); }
+  to   { transform: rotate(-13deg); }
+}
 @media (prefers-reduced-motion: no-preference) {
-  .sd-map-fan-r svg { animation: sdFanStepR 0.5s ease-in-out infinite; }
-  .sd-map-fan-l svg { animation: sdFanStepL 0.5s ease-in-out infinite; }
+  .sd-map-fan-r > svg { animation: sdFanStepR 0.5s ease-in-out infinite; }
+  .sd-map-fan-l > svg { animation: sdFanStepL 0.5s ease-in-out infinite; }
+  .sd-map-fan .sd-leg-f {
+    animation: sdFanLeg 0.5s ease-in-out infinite alternate;
+    transform-origin: 50% 4%;
+  }
+  .sd-map-fan .sd-leg-b {
+    animation: sdFanLeg 0.5s ease-in-out infinite alternate-reverse;
+    transform-origin: 50% 4%;
+  }
+  .sd-map-fan .sd-arm {
+    animation: sdFanArm 0.5s ease-in-out infinite alternate;
+    transform-origin: 30% 8%;
+  }
 }
 .sd-map-marker-today { animation: sdMapPulse 1.8s ease-out infinite; }
 @media (prefers-reduced-motion: reduce) {

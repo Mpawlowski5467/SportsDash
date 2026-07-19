@@ -123,6 +123,25 @@ export function buildTravelArcs(
 }
 
 /**
+ * The followed plotted team a game side belongs to — id join first, then the
+ * normalized-name join buildNextGames uses (whole-competition games carry no
+ * team_id on either side). Returns undefined when the side isn't a team the
+ * user follows, so the one-shot travel visuals (click any upcoming game in
+ * the venue panel) stay reserved for the user's own teams.
+ */
+export function findFollowedTeamForSide(
+  teams: MapTeam[],
+  side: GameSide,
+): MapTeam | undefined {
+  const team =
+    (side.team_id !== null
+      ? teams.find((t) => t.team_id === side.team_id)
+      : undefined) ??
+    teams.find((t) => teamNameKey(t.name) === teamNameKey(side.name));
+  return team !== undefined && team.source === "followed" ? team : undefined;
+}
+
+/**
  * Plotted teams that have a game HAPPENING — live (in_progress) or kicking off
  * today — mapped to the crowd colour for their stadium. Drives the
  * click-to-celebrate fan burst: clicking such a team's pin streams fans into

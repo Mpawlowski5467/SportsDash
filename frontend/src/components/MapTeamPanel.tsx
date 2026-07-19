@@ -7,6 +7,7 @@ import Portal from "./Portal";
 import { useTopmostEsc } from "./modalChrome";
 import WeatherInline from "./WeatherInline";
 import { useOpenNation, useOpenTeam } from "./TeamDetailPanel";
+import { PLANE_SVG } from "../views/map/markers";
 
 /** A followed team's flight to its next away game (computed from coordinates). */
 export interface TravelInfo {
@@ -176,7 +177,19 @@ export default function MapTeamPanel({
                   </p>
                   {travel.inTransit && (
                     <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-400">
-                      <span aria-hidden="true">✈</span> In transit
+                      {/* The map's airliner, rotated to point along the
+                          chip's reading direction (static markup). */}
+                      <span
+                        aria-hidden="true"
+                        className="inline-flex rotate-90"
+                        dangerouslySetInnerHTML={{
+                          __html: PLANE_SVG.replace(
+                            'width="22" height="27"',
+                            'width="9" height="11"',
+                          ),
+                        }}
+                      />
+                      In transit
                     </span>
                   )}
                 </div>

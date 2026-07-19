@@ -66,7 +66,9 @@ export interface MapVenueGroup {
 /**
  * Slide-in side panel for a clicked game-venue pin (map "Upcoming games"
  * mode). Lists every upcoming match at that stadium; clicking one opens the
- * full box-score modal. Mirrors MapTeamPanel's drawer chrome (always mounted
+ * full box-score modal AND fires `onGameClick` so the map can replay that
+ * fixture's travel visuals (plane for a followed away side, fans for a
+ * followed home side). Mirrors MapTeamPanel's drawer chrome (always mounted
  * so it animates both ways; portaled to body so the view's transform doesn't
  * trap it; `top-12` clears the sticky header).
  */
@@ -74,10 +76,14 @@ export default function MapVenueGamesPanel({
   venue,
   leagueNames,
   onClose,
+  onGameClick,
 }: {
   venue: MapVenueGroup | null;
   leagueNames: Record<string, string>;
   onClose: () => void;
+  /** Per-game click affordance — the map flies/celebrates for that fixture.
+   *  Optional so the panel still works standalone. */
+  onGameClick?: (game: MapGame) => void;
 }) {
   const open = venue !== null;
 
@@ -183,7 +189,10 @@ export default function MapVenueGamesPanel({
                             game.league_id
                           }
                           chip={chip}
-                          onOpen={() => setOpenGameId(game.game_id)}
+                          onOpen={() => {
+                            setOpenGameId(game.game_id);
+                            onGameClick?.(game);
+                          }}
                         />
                       </li>
                     );
