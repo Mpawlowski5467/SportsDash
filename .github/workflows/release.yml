@@ -1,7 +1,8 @@
 name: Release desktop app
 
-# Builds the macOS .dmg (PyInstaller-frozen backend sidecar + Tauri
-# shell) and attaches it to the GitHub Release for the tag.
+# Builds the macOS .dmg (PyInstaller-frozen onedir backend bundle, shipped
+# in the app's Resources + Tauri shell) and attaches it to the GitHub
+# Release for the tag.
 #
 # NOTE: without an Apple Developer ID the app is unsigned — users must
 # right-click → Open past Gatekeeper (see docs/desktop.md, and the

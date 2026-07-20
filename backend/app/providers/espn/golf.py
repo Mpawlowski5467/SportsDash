@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from datetime import date
 from typing import Any
 
@@ -135,10 +136,14 @@ def _golf_score(competitor: dict[str, Any]) -> str:
     return "E"
 
 
-def _leader_row(
-    competitor: dict[str, Any], position_label: str, phase: GamePhase
-) -> LeaderRow | None:
+def _leader_row(competitor: dict[str, Any], position: int, phase: GamePhase) -> LeaderRow | None:
     """One :class:`LeaderRow` from a golf competitor; None if malformed.
+
+    ``position`` is the caller-resolved board position (``order``, or the
+    sequential fallback when the feed omits it) so the numeric position
+    and the label can never disagree.  The label starts bare ("3");
+    :func:`_leaderboard` rewrites it to "T3" when the score ties another
+    surviving row.
 
     ``player_id`` carries the ESPN athlete id transiently (the scheduler
     rewrites it to the internal followed-team id or None).
@@ -148,10 +153,9 @@ def _leader_row(
         name = _athlete_name(competitor)
         if not name:
             raise ValueError("missing golfer name")
-        position = _coerce_int(competitor.get("order")) or 0
         return LeaderRow(
             position=position,
-            position_label=position_label,
+            position_label=str(position),
             name=name,
             score=_golf_score(competitor),
             detail=_golf_detail(competitor, phase),
@@ -165,31 +169,38 @@ def _leader_row(
 def _leaderboard(competitors: list[Any], phase: GamePhase) -> tuple[LeaderRow, ...]:
     """Build the leaderboard, deriving shared "T{n}" tie labels.
 
-    ESPN pre-sorts competitors by ``order`` but does NOT flag ties.  Rows
-    are grouped by identical display ``score`` in finishing order: a score
-    shared by two or more golfers gets a ``T``-prefixed label at the
-    position of the first golfer in the group ("T2"); a lone score keeps a
-    bare position ("1").  Position numbers come from ``order`` so they stay
-    stable even if a malformed row is skipped.
+    ESPN pre-sorts competitors by ``order`` but does NOT flag ties.  The
+    board is built in two passes so everything reflects the rows actually
+    shown: malformed rows drop out FIRST (a skipped golfer must not tie a
+    surviving one), then a score shared by two or more shown rows gets a
+    ``T``-prefixed label at the position of the first golfer in the
+    group ("T2"); a lone score keeps a bare position ("1").  Position
+    numbers come from ``order`` so they stay stable even if a malformed
+    row is skipped; when ``order`` is missing, the numeric position
+    follows the same sequential board fallback as the label.
     """
     valid = [c for c in competitors if isinstance(c, dict)]
     valid.sort(key=lambda c: _coerce_int(c.get("order")) or 0)
 
-    # Count how many golfers share each display score so ties can be marked.
-    score_counts: dict[str, int] = {}
-    for competitor in valid:
-        score_counts[_golf_score(competitor)] = score_counts.get(_golf_score(competitor), 0) + 1
-
+    # Pass 1: drop malformed rows, resolving each position exactly once so
+    # the numeric position and the label share the same fallback.
     rows: list[LeaderRow] = []
     for competitor in valid:
         position = _coerce_int(competitor.get("order")) or (len(rows) + 1)
-        score = _golf_score(competitor)
-        tied = score_counts.get(score, 0) > 1
-        label = f"T{position}" if tied else str(position)
-        row = _leader_row(competitor, label, phase)
+        row = _leader_row(competitor, position, phase)
         if row is not None:
             rows.append(row)
-    return tuple(rows)
+
+    # Pass 2: count how many shown rows share each display score and mark
+    # the ties.
+    score_counts: dict[str, int] = {}
+    for row in rows:
+        score_counts[row.score] = score_counts.get(row.score, 0) + 1
+
+    return tuple(
+        replace(row, position_label=f"T{row.position}") if score_counts[row.score] > 1 else row
+        for row in rows
+    )
 
 
 def _parse_golf_event(event: Any, league: League) -> Event | None:

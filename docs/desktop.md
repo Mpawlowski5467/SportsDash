@@ -13,13 +13,17 @@ The desktop app bundles two things the user normally runs separately:
 ```
 SportsDash.app
 ├─ the React UI            (frontend/dist, loaded by the Tauri webview)
-└─ sportsdash-backend      (the FastAPI app frozen by PyInstaller, run as
-                            a Tauri "sidecar" process)
+└─ sportsdash-backend/     (the FastAPI app frozen by PyInstaller as an
+   ├─ sportsdash-backend    *onedir* bundle — the executable …
+   └─ _internal/            … plus its libraries and data files,
+                            shipped under Contents/Resources and spawned
+                            as a child process on launch)
 ```
 
 On launch the Tauri shell ([frontend/src-tauri/src/lib.rs](../frontend/src-tauri/src/lib.rs)):
 
-1. spawns the bundled backend on `127.0.0.1:8765`,
+1. spawns the bundled backend (`Contents/Resources/sportsdash-backend/sportsdash-backend`)
+   on `127.0.0.1:8765`,
 2. waits until it is accepting connections,
 3. reveals the window (hidden until then, so the UI never paints against a
    backend that isn't up yet),
@@ -55,9 +59,11 @@ That script:
 
 1. freezes the backend with PyInstaller
    ([backend/sportsdash-backend.spec](../backend/sportsdash-backend.spec)) →
-   a single `sportsdash-backend` binary,
-2. stages it as the Tauri sidecar
-   (`frontend/src-tauri/binaries/sportsdash-backend-<target-triple>`),
+   an onedir bundle `backend/dist/sportsdash-backend/`,
+2. stages it under `frontend/src-tauri/binaries/sportsdash-backend/`, which
+   `bundle.resources` in `tauri.conf.json` ships whole into the app's
+   `Contents/Resources/` (Tauri's `externalBin` sidecar mechanism only
+   bundles single files, so the onedir directory goes through resources),
 3. runs `bun tauri build`, which builds the frontend (`--mode tauri`) and
    compiles the app.
 
@@ -119,10 +125,10 @@ SportsDash.app`) gets past it.
 - **Port 8765** is fixed for the desktop build. If something else is using
   it, the backend won't bind; change it in both `.env.tauri` and
   `BACKEND_PORT` in `lib.rs`.
-- **Startup time**: the backend is a PyInstaller *onefile* binary, which
-  self-extracts on each launch (~3–6s to first paint). Switching the spec
-  to a onedir build would make launches faster at the cost of a folder of
-  files instead of a single binary.
+- **Startup time**: the backend is a PyInstaller *onedir* bundle, so
+  launches skip the old *onefile* self-extraction (~3–6s saved to first
+  paint). The trade-off is a folder of files under `Contents/Resources/`
+  instead of a single binary in the app bundle.
 - **Notifications (ntfy) are off by default** in the desktop build
   (`SPORTSDASH_NOTIFICATIONS_ENABLED=false`); the self-hosted ntfy server
   isn't part of the bundle.
