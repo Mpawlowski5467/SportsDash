@@ -3876,28 +3876,35 @@ def test_golf_leaderboard_skips_malformed_and_non_dict_entries() -> None:
     assert [(row.position, row.position_label) for row in rows] == [(1, "1"), (3, "3")]
 
 
-def test_golf_leaderboard_tie_count_includes_skipped_row() -> None:
-    """Tie labels are computed over the whole feed BEFORE malformed rows
-    drop out, so a skipped golfer's score still ties the visible row — the
-    label mirrors the source leaderboard, not the surviving subset."""
+def test_golf_leaderboard_tie_counts_reflect_surviving_rows() -> None:
+    """Tie labels are computed over the rows actually shown: a malformed
+    golfer who drops out of the board must not tie the surviving row.
+
+    Behavior change: this replaces the old pin
+    (``test_golf_leaderboard_tie_count_includes_skipped_row``) where the
+    nameless golfer's score still forced the visible row into a "T1"
+    label even though no second row was shown."""
     competitors = [
         _golf_competitor(athlete_id="90001", name="Marlow Fenwick", order=1, score="-10"),
         _golf_competitor(athlete_id="90002", name=None, order=1, score="-10"),  # skipped
     ]
     rows = _leaderboard(competitors, GamePhase.IN_PROGRESS)
-    assert [(row.position, row.position_label) for row in rows] == [(1, "T1")]
+    assert [(row.position, row.position_label) for row in rows] == [(1, "1")]
 
 
-def test_golf_leaderboard_falls_back_to_sequential_position_without_order() -> None:
-    # A missing order only falls back to board sequence for the LABEL; the
-    # numeric position degrades to 0 (no order in the feed).  A string
-    # order still coerces.
+def test_golf_leaderboard_sequential_fallback_covers_position_and_label() -> None:
+    # A missing order falls back to board sequence for BOTH the label and
+    # the numeric position (they can no longer disagree).
+    # Behavior change: the old pin
+    # (``test_golf_leaderboard_falls_back_to_sequential_position_without_order``)
+    # asserted the numeric position degraded to 0 while the label said "1".
+    # A string order still coerces.
     competitors = [
         _golf_competitor(athlete_id="90001", name="Marlow Fenwick", order=None, score="-10"),
         _golf_competitor(athlete_id="90002", name="Dashiell Crowe", order="3", score="-8"),
     ]
     rows = _leaderboard(competitors, GamePhase.IN_PROGRESS)
-    assert [(row.position, row.position_label) for row in rows] == [(0, "1"), (3, "3")]
+    assert [(row.position, row.position_label) for row in rows] == [(1, "1"), (3, "3")]
 
 
 def test_golf_leader_row_carries_espn_athlete_id_transiently() -> None:
