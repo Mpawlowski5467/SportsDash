@@ -158,9 +158,11 @@ function FollowedTeamLoader({
             location: stadiumRow.location,
             capacity: stadiumRow.capacity,
             imageUrl: stadiumRow.image_url,
+            description: stadiumRow.venue_description,
           }
         : null,
       description: stadiumRow?.description ?? null,
+      descriptionSource: stadiumRow?.description_source ?? null,
       founded: stadiumRow?.founded_year ?? null,
     };
   }, [team, leagueName, scheduleQuery.data, resultsQuery.data, rosterQuery.data, newsQuery.data, stadiumRow]);
@@ -242,9 +244,11 @@ function NationLoader({
             location: homeGround.location,
             capacity: homeGround.capacity,
             imageUrl: homeGround.image_url,
+            description: homeGround.venue_description,
           }
         : null,
       description: homeGround?.description ?? null,
+      descriptionSource: homeGround?.description_source ?? null,
       founded: homeGround?.founded_year ?? null,
     };
   }, [data, mapRow, homeGround, name]);

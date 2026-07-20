@@ -1,4 +1,6 @@
 
+import { useState } from "react";
+
 import type { Game, NewsItem, Player } from "../types";
 import { formatShortDate, relativeTime } from "../lib/time";
 import Portal from "./Portal";
@@ -34,8 +36,10 @@ export interface TeamProfile {
     location: string | null;
     capacity: number | null;
     imageUrl: string | null;
+    description: string | null; // stadium "About" prose (TheSportsDB)
   } | null;
   description: string | null; // club "About" history paragraph
+  descriptionSource: string | null; // "thesportsdb" | "wikipedia" (attribution)
   founded: number | null; // founding year
 }
 
@@ -169,8 +173,12 @@ export default function TeamProfileView({
               <p className="text-sm text-red-400">Couldn't load this team.</p>
             ) : (
               <div className="space-y-5">
-                {(profile.description || profile.founded !== null) && (
+                {(profile.description ||
+                  profile.founded !== null ||
+                  profile.stadium?.description) && (
+                  // Keyed by team so switching teams re-collapses the prose.
                   <Section
+                    key={profile.name}
                     title={
                       profile.founded !== null
                         ? `About · Founded ${profile.founded}`
@@ -178,9 +186,24 @@ export default function TeamProfileView({
                     }
                   >
                     {profile.description && (
-                      <p className="text-sm leading-relaxed text-zinc-300">
-                        {profile.description}
-                      </p>
+                      <>
+                        <ClampedText text={profile.description} />
+                        {profile.descriptionSource && (
+                          <Attribution source={profile.descriptionSource} />
+                        )}
+                      </>
+                    )}
+                    {profile.stadium?.description && (
+                      <div className={profile.description ? "mt-3" : ""}>
+                        <h4 className="mb-1 text-xs font-semibold text-zinc-400">
+                          Stadium
+                          {profile.stadium.venue
+                            ? ` · ${profile.stadium.venue}`
+                            : ""}
+                        </h4>
+                        <ClampedText text={profile.stadium.description} />
+                        <Attribution source="thesportsdb" />
+                      </div>
                     )}
                   </Section>
                 )}
@@ -362,6 +385,60 @@ function Section({
       </h3>
       {children}
     </section>
+  );
+}
+
+/** Human label for an "About" upstream source (backend `description_source`). */
+const SOURCE_LABEL: Record<string, string> = {
+  thesportsdb: "TheSportsDB",
+  wikipedia: "Wikipedia",
+};
+
+/** Muted provenance line under an "About" prose block. */
+function Attribution({ source }: { source: string }) {
+  return (
+    <p className="mt-1 text-xs text-zinc-600">
+      via {SOURCE_LABEL[source] ?? source}
+    </p>
+  );
+}
+
+/**
+ * Roughly how many characters fill four `text-sm` lines in this panel — the
+ * point at which prose gets clamped. Decided by length rather than layout
+ * measurement: deterministic across fonts/zoom, and erring low only ever
+ * shows a harmless toggle on an already-short paragraph.
+ */
+const CLAMP_THRESHOLD = 280;
+
+/**
+ * Long "About" prose clamped to four lines behind a "Read more" toggle (a
+ * real button, so it's keyboard- and screen-reader-operable). `pre-line`
+ * keeps the paragraph breaks TheSportsDB ships in its descriptions.
+ */
+function ClampedText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const clampable = text.length > CLAMP_THRESHOLD;
+  return (
+    <div>
+      <p
+        className={`whitespace-pre-line text-sm leading-relaxed text-zinc-300 ${
+          clampable && !expanded ? "line-clamp-4" : ""
+        }`}
+      >
+        {text}
+      </p>
+      {clampable && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+          className="mt-1 text-xs font-medium text-zinc-400 transition hover:text-zinc-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+        >
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      )}
+    </div>
   );
 }
 

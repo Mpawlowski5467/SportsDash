@@ -26,6 +26,8 @@ function makeTeam(overrides: Partial<MapTeam>): MapTeam {
     location: null,
     surface: null,
     description: null,
+    description_source: null,
+    venue_description: null,
     founded_year: null,
     next_opponent: null,
     next_match_time: null,

@@ -1140,6 +1140,8 @@ async def test_map_returns_only_teams_with_coordinates_and_facts(
     foxes_venue = "Glimmer Arena"
     foxes_logo = "https://logos.example.com/glimmer-foxes.png"
     foxes_image = "https://images.example.com/glimmer-arena.jpg"
+    foxes_description = "Glimmer Foxes are a fictional basketball club."
+    foxes_venue_description = "Glimmer Arena has hosted the Foxes since 1999."
     async with db() as session:
         foxes = await session.get(TeamORM, TEAM_FOXES)
         foxes.logo_url = foxes_logo
@@ -1151,6 +1153,9 @@ async def test_map_returns_only_teams_with_coordinates_and_facts(
         foxes.venue_image_url = foxes_image
         foxes.venue_location = "Glimmerwood, Foxhollow"
         foxes.venue_surface = "Hardwood"
+        foxes.description = foxes_description
+        foxes.description_source = "thesportsdb"
+        foxes.venue_description = foxes_venue_description
         # Quarry Hawks deliberately left without coordinates.
         await session.commit()
 
@@ -1188,6 +1193,10 @@ async def test_map_returns_only_teams_with_coordinates_and_facts(
     assert located["image_url"] == foxes_image
     assert located["location"] == "Glimmerwood, Foxhollow"
     assert located["surface"] == "Hardwood"
+    # The club "About" facts (history, attribution, stadium prose) flow too.
+    assert located["description"] == foxes_description
+    assert located["description_source"] == "thesportsdb"
+    assert located["venue_description"] == foxes_venue_description
 
 
 async def test_map_empty_when_no_team_has_coordinates(

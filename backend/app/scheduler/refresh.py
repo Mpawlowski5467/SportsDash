@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 
@@ -495,40 +495,66 @@ async def refresh_locations() -> None:
         logger.exception("refresh_locations failed")
 
 
-async def _resolve_team_info(team: domain.Team, sport: str) -> stadiums.TeamInfo | None:
+@dataclass(frozen=True)
+class _AboutFacts:
+    """One team's resolved "About" payload, from whichever source supplied it."""
+
+    description: str | None = None
+    founded: int | None = None
+    venue_description: str | None = None  # stadium prose (TheSportsDB only)
+    # Which upstream supplied ``description`` ("thesportsdb" | "wikipedia"),
+    # so the profile page can attribute the text; None when there is none.
+    description_source: str | None = None
+
+
+async def _resolve_team_info(team: domain.Team, sport: str) -> _AboutFacts | None:
     """Resolve one team's "About" facts: TheSportsDB first, Wikipedia fallback.
 
-    TheSportsDB's ``searchteams`` description is sport-correct and reliable;
-    Wikipedia only fills a missing description (its lead paragraph).  All
-    defensive — returns ``None`` when neither source has anything.
+    TheSportsDB's ``searchteams`` description is sport-correct and reliable,
+    and the team's venue record adds the stadium's own prose; Wikipedia only
+    fills a missing club description (its lead paragraph), never the venue
+    text.  All defensive — returns ``None`` when neither source has anything.
     """
     info = await stadiums.lookup_team_info(team.name, sport=sport)
     description = info.description if info is not None else None
     founded = info.founded if info is not None else None
+    venue_description = info.venue_description if info is not None else None
+    source = "thesportsdb" if description is not None else None
 
     if description is None:
         summary = await wiki.team_summary(team.name, sport=sport)
         if summary is not None and summary.extract:
             description = summary.extract
+            source = "wikipedia"
 
-    if description is None and founded is None:
+    if description is None and founded is None and venue_description is None:
         return None
-    return stadiums.TeamInfo(description=description, founded=founded)
+    return _AboutFacts(
+        description=description,
+        founded=founded,
+        venue_description=venue_description,
+        description_source=source,
+    )
 
 
 async def refresh_team_info() -> None:
-    """Resolve + cache club "About" facts (description + founded) per team.
+    """Resolve + cache club "About" facts (description + founded + venue prose).
 
-    Only teams still missing a description are processed (founding year is
-    usually resolved in the same pass), so an enriched team is never
-    re-fetched.  Per-team failures are isolated and the job never raises —
-    the scheduler and the startup kick both rely on that.
+    Only teams still missing the club description OR their venue's prose are
+    processed (both usually resolve in the same pass), so an enriched team is
+    never re-fetched — while a team enriched before venue prose existed still
+    gets it backfilled.  Per-team failures are isolated and the job never
+    raises — the scheduler and the startup kick both rely on that.
     """
     try:
         leagues, _ = await _load_leagues_and_teams()
         async with session_scope() as session:
             team_rows = await repository.list_teams(session)
-            pending = [_team_from_row(row) for row in team_rows if row.description is None]
+            pending = [
+                _team_from_row(row)
+                for row in team_rows
+                if row.description is None or row.venue_description is None
+            ]
 
         resolved = 0
         for team in pending:
@@ -545,6 +571,8 @@ async def refresh_team_info() -> None:
                         team.id,
                         description=info.description,
                         founded_year=info.founded,
+                        venue_description=info.venue_description,
+                        description_source=info.description_source,
                     )
                 resolved += 1
             except Exception:
@@ -589,7 +617,8 @@ async def _daily_refresh() -> None:
     await refresh_standings()
     await refresh_rosters()
     await refresh_news()
-    # Club "About" facts (history + founded year) for followed teams' pages.
+    # Club "About" facts (history, founded year, stadium prose) for followed
+    # teams' pages.
     await refresh_team_info()
     # After schedules, so the home-venue fallback can read stored games.
     await refresh_locations()

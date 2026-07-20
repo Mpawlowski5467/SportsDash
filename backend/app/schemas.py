@@ -189,6 +189,13 @@ class MapTeamOut(BaseModel):
     # enriched from TheSportsDB / Wikipedia); null for competition pins.
     description: str | None = None
     founded_year: int | None = None
+    # Which upstream supplied `description` ("thesportsdb" | "wikipedia"), for
+    # attribution in the profile; null until resolved (and always null for
+    # competition pins).
+    description_source: str | None = None
+    # The stadium's own "About" prose (TheSportsDB venue record, followed
+    # teams only); null when the venue has none / is unresolved.
+    venue_description: str | None = None
     # The match that puts a team at this venue (host-country tournaments):
     # set when the pin is a next-match host venue rather than a home ground.
     next_opponent: str | None = None

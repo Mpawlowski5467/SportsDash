@@ -79,6 +79,11 @@ class TeamORM(Base):
     # enriched by name from TheSportsDB (Wikipedia fallback) — null until resolved.
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     founded_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The stadium's own "About" prose (TheSportsDB ``strStadiumDescription``)
+    # and the club description's upstream source ("thesportsdb" | "wikipedia"),
+    # so the profile page can attribute its text — null until resolved.
+    venue_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class GameORM(Base):

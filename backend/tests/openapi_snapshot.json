@@ -1254,6 +1254,17 @@
             ],
             "title": "Description"
           },
+          "description_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description Source"
+          },
           "founded_year": {
             "anyOf": [
               {
@@ -1404,6 +1415,17 @@
               }
             ],
             "title": "Venue"
+          },
+          "venue_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Venue Description"
           },
           "weather": {
             "anyOf": [
