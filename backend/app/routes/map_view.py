@@ -155,6 +155,8 @@ async def map_view(
                 surface=team.venue_surface,
                 description=team.description,
                 founded_year=team.founded_year,
+                description_source=team.description_source,
+                venue_description=team.venue_description,
                 source="followed",
             )
         )

@@ -62,6 +62,9 @@ class TeamInfo:
 
     description: str | None = None  # history paragraph (``strDescriptionEN``)
     founded: int | None = None  # founding year (``intFormedYear``)
+    # The stadium's own prose (``strStadiumDescription`` from the venue
+    # record), for the "About" section's stadium sub-section.
+    venue_description: str | None = None
 
 
 async def lookup_stadium(team_name: str, *, sport: str | None = None) -> TeamLocation | None:
@@ -98,13 +101,17 @@ async def lookup_stadium(team_name: str, *, sport: str | None = None) -> TeamLoc
 
 
 async def lookup_team_info(team_name: str, *, sport: str | None = None) -> TeamInfo | None:
-    """Resolve a club's "About" facts (description + founded) by name.
+    """Resolve a club's "About" facts (description + founded + venue prose).
 
     Reads the same ``searchteams.php`` hit as :func:`lookup_stadium` —
-    ``strDescriptionEN`` and ``intFormedYear`` — and returns a
-    :class:`TeamInfo`.  Cached per ``(name, sport)`` and never raises: any
-    failure or a hit with neither fact returns ``None`` so the caller can
-    fall back to another source (e.g. Wikipedia).
+    ``strDescriptionEN`` and ``intFormedYear`` — and, when the hit carries an
+    ``idVenue``, the venue record's ``strStadiumDescription`` (one extra
+    paced ``lookupvenue.php`` call).  Cached per ``(name, sport)`` and never
+    raises: any failure or a hit with none of the three facts returns
+    ``None`` so the caller can fall back to another source (e.g. Wikipedia).
+    A failed venue lookup degrades to a missing ``venue_description`` only —
+    the club facts that did resolve are still returned (and cached), exactly
+    like :func:`_build_location` keeps partial venue facts.
     """
     name = (team_name or "").strip()
     if not name:
@@ -122,8 +129,14 @@ async def lookup_team_info(team_name: str, *, sport: str | None = None) -> TeamI
     if team is not None:
         description = _clean(team.get("strDescriptionEN"))
         founded = _coerce_int(team.get("intFormedYear"))
-        if description is not None or founded is not None:
-            info = TeamInfo(description=description, founded=founded)
+        venue = await _lookup_venue(team.get("idVenue"))
+        venue_description = _clean(venue.get("strStadiumDescription")) if venue else None
+        if description is not None or founded is not None or venue_description is not None:
+            info = TeamInfo(
+                description=description,
+                founded=founded,
+                venue_description=venue_description,
+            )
     _info_cache[cache_key] = info
     return info
 

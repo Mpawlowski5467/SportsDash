@@ -1074,6 +1074,58 @@ async def test_save_standings_drops_team_ids_no_longer_followed(
 
 
 # ---------------------------------------------------------------------------
+# Team "About" facts (club history + stadium prose)
+# ---------------------------------------------------------------------------
+
+
+async def test_set_team_info_persists_about_facts(seeded: AsyncSession) -> None:
+    """set_team_info caches the club "About" facts, including attribution."""
+    await repository.set_team_info(
+        seeded,
+        TEAM_COMETS,
+        description="Ashport Comets are a fictional basketball club.",
+        founded_year=1974,
+        venue_description="Ashport Fieldhouse has hosted the Comets since 1974.",
+        description_source="thesportsdb",
+    )
+    await seeded.flush()
+
+    stored = await repository.get_team(seeded, TEAM_COMETS)
+    assert stored is not None
+    assert stored.description == "Ashport Comets are a fictional basketball club."
+    assert stored.founded_year == 1974
+    assert stored.venue_description == "Ashport Fieldhouse has hosted the Comets since 1974."
+    assert stored.description_source == "thesportsdb"
+
+
+async def test_set_team_info_partial_update_never_wipes(seeded: AsyncSession) -> None:
+    """A None field in a later write leaves the resolved fact untouched."""
+    await repository.set_team_info(
+        seeded,
+        TEAM_COMETS,
+        description="Ashport Comets are a fictional basketball club.",
+        description_source="thesportsdb",
+    )
+    await seeded.flush()
+    # A re-resolve that found only the founding year must not clear the rest.
+    await repository.set_team_info(seeded, TEAM_COMETS, founded_year=1974)
+    await seeded.flush()
+
+    stored = await repository.get_team(seeded, TEAM_COMETS)
+    assert stored is not None
+    assert stored.description == "Ashport Comets are a fictional basketball club."
+    assert stored.description_source == "thesportsdb"
+    assert stored.founded_year == 1974
+
+
+async def test_set_team_info_unknown_team_is_noop(seeded: AsyncSession) -> None:
+    """An unknown team id logs and does nothing rather than raising."""
+    await repository.set_team_info(seeded, "no-such-team", description="Nowhere")
+    await seeded.flush()
+    assert await repository.get_team(seeded, "no-such-team") is None
+
+
+# ---------------------------------------------------------------------------
 # Team locations (map view)
 # ---------------------------------------------------------------------------
 

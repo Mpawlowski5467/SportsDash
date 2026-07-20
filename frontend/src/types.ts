@@ -120,6 +120,11 @@ export interface MapTeam {
   surface: string | null;
   description: string | null; // club "About" history paragraph (followed teams)
   founded_year: number | null; // founding year (followed teams)
+  // Which upstream supplied `description` ("thesportsdb" | "wikipedia"), for
+  // attribution in the profile; null until resolved.
+  description_source: string | null;
+  // The stadium's own "About" prose (TheSportsDB venue record, followed teams).
+  venue_description: string | null;
   next_opponent: string | null; // set when the pin is a next-match host venue
   next_match_time: string | null; // ISO 8601 UTC
   group: string | null; // standings group (e.g. "Group A"), for map filtering

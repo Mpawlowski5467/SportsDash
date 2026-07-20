@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import (
 
 from app.models import domain
 from tests.db_engine import create_test_schema, make_test_engine
-from app.models.orm import EventORM, TeamCompetitionORM
+from app.models.orm import EventORM, TeamCompetitionORM, TeamORM
 from app.providers import registry
 from app import background
 from app.scheduler import common as scheduler_common
@@ -35,7 +35,7 @@ from app.scheduler import jobs
 from app.scheduler import live as scheduler_live
 from app.scheduler import refresh as scheduler_refresh
 from app.scheduler import stadium_cache as scheduler_stadium_cache
-from app.services import repository
+from app.services import repository, stadiums, wiki
 from app.timeutil import utcnow
 
 PROVIDER_ID = "faketest"
@@ -1242,3 +1242,207 @@ def test_refresh_news_interval_job_is_single_instance() -> None:
     live_job = scheduler.get_job("live_tick")
     assert live_job is not None
     assert live_job.max_instances == 1
+
+
+# ---------------------------------------------------------------------------
+# refresh_team_info — club "About" enrichment (TheSportsDB + Wikipedia fallback)
+# ---------------------------------------------------------------------------
+#
+# The job caches the club's history paragraph, founding year and stadium prose
+# on the team row, recording which upstream supplied the club description so
+# the profile page can attribute it.  All fixtures are fictional; the
+# TheSportsDB / Wikipedia lookups are stubbed on their modules.
+
+ABOUT_LEAGUE = "cinder-league"
+ABOUT_TEAM = "cinder-foxes"
+
+
+async def _seed_about_team(
+    db: async_sessionmaker[AsyncSession],
+    *,
+    description: str | None = None,
+    venue_description: str | None = None,
+    description_source: str | None = None,
+) -> None:
+    """A followed fictional club, optionally pre-enriched."""
+    async with db() as session:
+        await repository.upsert_league(session, _league(ABOUT_LEAGUE))
+        await repository.upsert_team(
+            session,
+            domain.Team(
+                id=ABOUT_TEAM,
+                league_id=ABOUT_LEAGUE,
+                name="Cinder Foxes",
+                abbreviation="CIN",
+                provider_key="cinder-foxes",
+            ),
+        )
+        await session.flush()  # parents before children: postgres enforces FKs
+        row = await session.get(TeamORM, ABOUT_TEAM)
+        assert row is not None
+        row.description = description
+        row.venue_description = venue_description
+        row.description_source = description_source
+        await session.commit()
+
+
+def _stub_about_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    tsdb_info: stadiums.TeamInfo | None,
+    wiki_summary: wiki.WikiSummary | None = None,
+) -> dict[str, list[str]]:
+    """Stub both "About" upstreams; returns recorded call names per source."""
+    calls: dict[str, list[str]] = {"tsdb": [], "wiki": []}
+
+    async def fake_lookup_team_info(name: str, *, sport: str | None = None):
+        calls["tsdb"].append(name)
+        return tsdb_info
+
+    async def fake_team_summary(name: str, *, sport: str | None = None):
+        calls["wiki"].append(name)
+        return wiki_summary
+
+    monkeypatch.setattr(scheduler_refresh.stadiums, "lookup_team_info", fake_lookup_team_info)
+    monkeypatch.setattr(scheduler_refresh.wiki, "team_summary", fake_team_summary)
+    return calls
+
+
+async def _about_row(db: async_sessionmaker[AsyncSession]) -> TeamORM:
+    async with db() as session:
+        row = await session.get(TeamORM, ABOUT_TEAM)
+        assert row is not None
+        return row
+
+
+async def test_refresh_team_info_writes_tsdb_facts_with_source(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full TheSportsDB hit lands on the row, attributed to TheSportsDB."""
+    await _seed_about_team(db)
+    calls = _stub_about_sources(
+        monkeypatch,
+        tsdb_info=stadiums.TeamInfo(
+            description="Cinder Foxes are a fictional club from Emberfall.",
+            founded=1921,
+            venue_description="Cinder Arena has hosted the Foxes since 1921.",
+        ),
+    )
+
+    await scheduler_refresh.refresh_team_info()
+
+    row = await _about_row(db)
+    assert row.description == "Cinder Foxes are a fictional club from Emberfall."
+    assert row.founded_year == 1921
+    assert row.venue_description == "Cinder Arena has hosted the Foxes since 1921."
+    assert row.description_source == "thesportsdb"
+    # A TheSportsDB description means Wikipedia is never consulted.
+    assert calls["tsdb"] == ["Cinder Foxes"]
+    assert calls["wiki"] == []
+
+
+async def test_refresh_team_info_falls_back_to_wikipedia(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TheSportsDB without a club description → Wikipedia's lead fills it.
+
+    The venue prose still comes from TheSportsDB (Wikipedia is only ever the
+    club-description fallback), so one refresh can mix sources on a row.
+    """
+    await _seed_about_team(db)
+    calls = _stub_about_sources(
+        monkeypatch,
+        tsdb_info=stadiums.TeamInfo(
+            founded=1921,
+            venue_description="Cinder Arena has hosted the Foxes since 1921.",
+        ),
+        wiki_summary=wiki.WikiSummary(
+            title="Cinder Foxes",
+            extract="The Cinder Foxes are an Emberfall football club.",
+        ),
+    )
+
+    await scheduler_refresh.refresh_team_info()
+
+    row = await _about_row(db)
+    assert row.description == "The Cinder Foxes are an Emberfall football club."
+    assert row.description_source == "wikipedia"
+    assert row.founded_year == 1921
+    assert row.venue_description == "Cinder Arena has hosted the Foxes since 1921."
+    assert calls["wiki"] == ["Cinder Foxes"]
+
+
+async def test_refresh_team_info_neither_source_leaves_row_untouched(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No facts anywhere → nothing is written, and the job does not raise."""
+    await _seed_about_team(db)
+    _stub_about_sources(monkeypatch, tsdb_info=None, wiki_summary=None)
+
+    await scheduler_refresh.refresh_team_info()
+
+    row = await _about_row(db)
+    assert row.description is None
+    assert row.founded_year is None
+    assert row.venue_description is None
+    assert row.description_source is None
+
+
+async def test_refresh_team_info_skips_fully_enriched_team(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A team with club description AND venue prose is never re-fetched."""
+    await _seed_about_team(
+        db,
+        description="Cinder Foxes are a fictional club from Emberfall.",
+        venue_description="Cinder Arena has hosted the Foxes since 1921.",
+        description_source="thesportsdb",
+    )
+    calls = _stub_about_sources(
+        monkeypatch,
+        tsdb_info=stadiums.TeamInfo(description="stale"),
+        wiki_summary=wiki.WikiSummary(title="Cinder Foxes", extract="stale"),
+    )
+
+    await scheduler_refresh.refresh_team_info()
+
+    assert calls == {"tsdb": [], "wiki": []}
+    row = await _about_row(db)
+    assert row.description == "Cinder Foxes are a fictional club from Emberfall."
+
+
+async def test_refresh_team_info_backfills_venue_prose_for_legacy_row(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A club enriched before venue prose existed is still pending.
+
+    Its description is already set, but a missing ``venue_description`` keeps
+    the team in the job's pending set, so the next refresh backfills the
+    stadium prose (and the previously-untracked description source).
+    """
+    await _seed_about_team(db, description="Cinder Foxes are a fictional club from Emberfall.")
+    calls = _stub_about_sources(
+        monkeypatch,
+        tsdb_info=stadiums.TeamInfo(
+            description="Cinder Foxes are a fictional club from Emberfall.",
+            founded=1921,
+            venue_description="Cinder Arena has hosted the Foxes since 1921.",
+        ),
+    )
+
+    await scheduler_refresh.refresh_team_info()
+
+    assert calls["tsdb"] == ["Cinder Foxes"]
+    row = await _about_row(db)
+    assert row.venue_description == "Cinder Arena has hosted the Foxes since 1921."
+    assert row.description_source == "thesportsdb"

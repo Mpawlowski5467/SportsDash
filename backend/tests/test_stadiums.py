@@ -43,6 +43,118 @@ async def test_lookup_team_info_reads_description_and_founded(
     assert info.founded == 1905
 
 
+async def test_lookup_team_info_reads_venue_description(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hit with an ``idVenue`` also yields the venue record's prose.
+
+    The stadium sub-section of the "About" page reads
+    ``strStadiumDescription`` from ``lookupvenue.php`` — one extra paced call
+    keyed by the search hit's ``idVenue``.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "searchteams.php" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "teams": [
+                        {
+                            "strTeam": "Cinder Foxes",
+                            "strSport": "Soccer",
+                            "strStadium": "Cinder Arena",
+                            "strDescriptionEN": "Cinder Foxes are a fictional club.",
+                            "intFormedYear": "1921",
+                            "idVenue": "4242",
+                        }
+                    ]
+                },
+            )
+        assert "lookupvenue.php" in request.url.path
+        assert request.url.params["id"] == "4242"
+        return httpx.Response(
+            200,
+            json={
+                "venues": [
+                    {
+                        "strVenue": "Cinder Arena",
+                        "strStadiumDescription": "Cinder Arena has hosted the Foxes since 1921.",
+                    }
+                ]
+            },
+        )
+
+    install_tsdb_handler(monkeypatch, handler)
+
+    info = await stadiums.lookup_team_info("Cinder Foxes", sport="soccer")
+    assert info is not None
+    assert info.description == "Cinder Foxes are a fictional club."
+    assert info.founded == 1921
+    assert info.venue_description == "Cinder Arena has hosted the Foxes since 1921."
+
+
+async def test_lookup_team_info_venue_failure_keeps_team_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed venue lookup degrades to no venue prose, never to no facts."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "searchteams.php" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "teams": [
+                        {
+                            "strTeam": "Cinder Foxes",
+                            "strSport": "Soccer",
+                            "strDescriptionEN": "Cinder Foxes are a fictional club.",
+                            "intFormedYear": "1921",
+                            "idVenue": "4242",
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(429, text="<html>rate limited</html>")
+
+    install_tsdb_handler(monkeypatch, handler)
+
+    info = await stadiums.lookup_team_info("Cinder Foxes", sport="soccer")
+    assert info is not None
+    assert info.description == "Cinder Foxes are a fictional club."
+    assert info.founded == 1921
+    assert info.venue_description is None
+
+
+async def test_lookup_team_info_without_venue_id_makes_no_venue_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ``idVenue`` on the hit → no ``lookupvenue.php`` request is spent."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={
+                "teams": [
+                    {
+                        "strTeam": "Cinder Foxes",
+                        "strSport": "Soccer",
+                        "strDescriptionEN": "Cinder Foxes are a fictional club.",
+                        "idVenue": "0",
+                    }
+                ]
+            },
+        )
+
+    install_tsdb_handler(monkeypatch, handler)
+
+    info = await stadiums.lookup_team_info("Cinder Foxes", sport="soccer")
+    assert info is not None
+    assert info.venue_description is None
+    assert [path for path in calls if "lookupvenue" in path] == []
+
+
 async def test_lookup_team_info_none_when_no_facts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

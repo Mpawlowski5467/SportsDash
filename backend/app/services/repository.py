@@ -156,14 +156,19 @@ async def set_team_info(
     *,
     description: str | None = None,
     founded_year: int | None = None,
+    venue_description: str | None = None,
+    description_source: str | None = None,
 ) -> None:
     """Cache a team's "About" facts (history paragraph + founding year).
 
     Written by the team-info refresh job once resolved (TheSportsDB /
-    Wikipedia); the description column is ``Text`` so it isn't clipped.
-    No-op (logged) when the team is unknown.  A value already set is only
-    overwritten by a non-``None`` replacement, so a later source with less
-    data never wipes resolved facts.
+    Wikipedia); the description columns are ``Text`` so they aren't clipped.
+    ``venue_description`` is the stadium's own prose and ``description_source``
+    records which upstream supplied ``description`` ("thesportsdb" |
+    "wikipedia") so the profile can attribute it.  No-op (logged) when the
+    team is unknown.  A value already set is only overwritten by a
+    non-``None`` replacement, so a later source with less data never wipes
+    resolved facts.
     """
     row = await session.get(TeamORM, team_id)
     if row is None:
@@ -173,6 +178,10 @@ async def set_team_info(
         row.description = description
     if founded_year is not None:
         row.founded_year = founded_year
+    if venue_description is not None:
+        row.venue_description = venue_description
+    if description_source is not None:
+        row.description_source = description_source
 
 
 async def list_teams_with_location(session: AsyncSession) -> list[TeamORM]:

@@ -50,6 +50,11 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("teams", "founded_year", "INTEGER"),
     # Whole-competition (follow_all) news: keyed by league instead of team.
     ("news_items", "league_id", "VARCHAR(64)"),
+    # The stadium's own "About" prose (TheSportsDB venue record) and which
+    # source supplied the club description ("thesportsdb" | "wikipedia") —
+    # the profile page attributes its text to the upstream source.
+    ("teams", "venue_description", "TEXT"),
+    ("teams", "description_source", "VARCHAR(16)"),
 )
 
 
