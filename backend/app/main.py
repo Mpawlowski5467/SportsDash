@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("SportsDash shut down")
 
 
-app = FastAPI(title="SportsDash", version="1.2.0", lifespan=lifespan)
+app = FastAPI(title="SportsDash", version="1.3.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
