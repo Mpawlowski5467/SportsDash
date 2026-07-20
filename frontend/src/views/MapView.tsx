@@ -36,6 +36,7 @@ import {
 } from "./map/basemap";
 import { CameraOrbit } from "./map/orbit";
 import { FanCrowd } from "./map/fans";
+import { warmTilesAlong, warmTilesAround } from "./map/tilewarm";
 import "./map/map.css";
 import type { Game, MapGame, MapTeam } from "../types";
 import MapTeamPanel from "../components/MapTeamPanel";
@@ -859,15 +860,21 @@ export default function MapView() {
     // starts once the sweep lands (see beginFlight below).
     map.flyTo({
       center: home,
-      zoom: 6,
-      pitch: DEFAULT_PITCH,
+      zoom: 5.5,
+      pitch: 30,
       bearing: -10,
       duration: 1400,
     });
     let start = 0;
     let lastCam = 0;
     let fansStarted = false;
-    const DURATION = 9000;
+    // 12s cruise: slower than the original 9s so new-city tiles keep up,
+    // and the destination's detail tiles are pre-warmed into the HTTP
+    // cache below (the flight's stutter was tile fetch+parse bursts,
+    // measured p95 ~140ms — not the camera math).
+    const DURATION = 12000;
+    warmTilesAround(map, dest[0], dest[1]); // dive detail tiles
+    warmTilesAlong(map, route); // cruise route tiles at z5/z6
     // Camera-update cadence during the flight — matches the flyover orbit's
     // throttle (the 3D-building re-render per jumpTo is the whole cost).
     const CAMERA_UPDATE_MS = 1000 / 24;
@@ -892,15 +899,23 @@ export default function MapView() {
       plane.setLngLat(pos);
       const ang = (Math.atan2(b[0] - a[0], b[1] - a[1]) * 180) / Math.PI;
       glyph.style.transform = `rotate(${ang}deg)`;
-      // Camera follows the plane; zoom holds wide, then dives into the
-      // stadium. Throttled to ~24fps: every jumpTo is a full style render
-      // (the 3D buildings make it the flight's entire cost), while the
-      // plane marker itself stays buttery at full frame rate.
+      // Camera follows the plane; zoom holds at 5.5 (MapLibre renders z5
+      // tiles there — 4x fewer mid-flight tile loads than z6), then dives
+      // into the stadium (from 80% — later than before, so the detail
+      // tiles that were pre-warmed at flight start are only needed at the
+      // end). Throttled to ~24fps: every jumpTo is a full style render,
+      // while the plane marker itself stays buttery at full frame rate.
       const zoom =
-        p < 0.75 ? 6 : 6 + (SINGLE_TEAM_ZOOM - 6) * ((p - 0.75) / 0.25) ** 1.4;
+        p < 0.8 ? 5.5 : 5.5 + (SINGLE_TEAM_ZOOM - 5.5) * ((p - 0.8) / 0.2) ** 1.4;
+      // Cruise at pitch 30 (a near-top-down travel view): at pitch 55 the
+      // horizon puts hundreds of extra tiles in frame — that tile count,
+      // not tile fetches, is the cruise's per-render cost. The dive eases
+      // back to DEFAULT_PITCH for the stadium reveal.
+      const pitch =
+        p < 0.8 ? 30 : 30 + (DEFAULT_PITCH - 30) * ((p - 0.8) / 0.2);
       if (ts - lastCam >= CAMERA_UPDATE_MS || p === 1) {
         lastCam = ts;
-        map.jumpTo({ center: pos, zoom, pitch: DEFAULT_PITCH, bearing: -10 });
+        map.jumpTo({ center: pos, zoom, pitch, bearing: -10 });
       }
       // Fans start gathering "while the plane is coming in".
       if (!fansStarted && p > 0.62) {
