@@ -21,3 +21,7 @@ backups/
 # Misc
 .DS_Store
 *.log
+
+# Throwaway screen recordings / preview captures from map & UI tuning sessions
+*.mp4
+*-preview.png
