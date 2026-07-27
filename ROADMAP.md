@@ -8,6 +8,17 @@ See the [README](README.md) for what the app already does today.
 
 ## ✅ Recently shipped
 
+- **Golf events on the Calendar** (2026-07-27) — multi-day tournaments now
+  draw on the Calendar grid as all-day span bars that open their leaderboard
+  on click, and ride along in the `.ics` subscription as all-day entries, so
+  a subscribed calendar shows a major as a bar across the weekend rather than
+  nothing at all. (Golf only: it is the one sport modeled as a leaderboard
+  `Event` — a tennis match is a two-sided game, so it was already on the
+  grid as an ordinary fixture.)
+- **UFC method of victory** (2026-07-27) — a finished bout now shows *how*
+  it ended, not just who won: the status pill reads "FINAL · KO/TKO", the
+  card carries an `R2 4:21` chip, and the detail modal leads with the full
+  result (method, the promotion's own wording, round and stoppage time).
 - **Native macOS desktop app** — a real `SportsDash.app` (Tauri shell) with
   the FastAPI backend frozen in via PyInstaller and bundled inside it, so it
   launches with no browser, no Docker, and no Python install. One-command
@@ -60,14 +71,9 @@ The desktop app exists; making it *easy to get and trust* is the next step.
 Known gaps inside features that already ship, rather than new directions.
 Each is a small, bounded piece of work.
 
-- **Golf & tennis events on the Calendar** — leaderboard events show up on
-  Today, but the Calendar grid still plots games only; multi-day tournaments
-  need span-style entries there.
 - **NHL intermission, verified live** — the between-periods mapping is a
   defensive `END_PERIOD` heuristic that has never been checked against a live
   NHL feed. Next chance to confirm it: the 2026-27 season, from October.
-- **UFC method of victory** — a finished bout shows who won and in which
-  round, but not how it ended (KO/TKO, submission, decision).
 - **Prometheus-style `/metrics`** — `/api/health` already reports the database
   probe and every provider's circuit-breaker state; exposing the same numbers
   as scrapeable metrics is a small step, if the homelab ever wants graphs.

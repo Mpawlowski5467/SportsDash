@@ -41,8 +41,9 @@ tennis, MMA, golf, and volleyball.**
 - **Today** — every game for the teams and leagues you follow, with live
   scores, period/clock, and auto-refresh that polls faster while a game is in
   progress. Click any card for a box score (line scores + top performers).
-- **Calendar** — month/week calendar of all games, colored per team, plus an
-  `.ics` / `webcal://` feed you can subscribe to from any calendar app.
+- **Calendar** — month/week calendar of all games, colored per team, with
+  multi-day golf tournaments drawn as span bars, plus an `.ics` /
+  `webcal://` feed you can subscribe to from any calendar app.
 - **Standings** — per-league tables with sport-appropriate columns and
   conference/division grouping; team crests inline.
 - **Leaders** — league-wide stat leaders (points, home runs, goals…), with
@@ -76,8 +77,8 @@ slide-over panels you reach by clicking a team or game anywhere in the UI.
 
 | Tab | What you see / do |
 |---|---|
-| **Today** | The landing page: every game for your follows on the local calendar day, with live score, period, and clock. It auto-refreshes — fast while a game is in progress, slow otherwise. Click a card for a **box score** (line scores + top performers). In-progress golf/tennis leaderboards show up here too. |
-| **Calendar** | A month / week grid of all your fixtures, color-coded per team. **Subscribe** hands you ready-made `webcal://` feeds (all games, or one per team) and a one-off `.ics` export. |
+| **Today** | The landing page: every game for your follows on the local calendar day, with live score, period, and clock. It auto-refreshes — fast while a game is in progress, slow otherwise. Click a card for a **box score** (line scores + top performers). In-progress golf leaderboards show up here too. |
+| **Calendar** | A month / week grid of all your fixtures, color-coded per team, with golf tournaments spanning the days they run over (click one for its leaderboard). **Subscribe** hands you ready-made `webcal://` feeds (all games, or one per team) and a one-off `.ics` export. |
 | **Matchup** | A pre-game **preview browser**: upcoming games with head-to-head context — recent form, last meetings, and where each side sits — so you can scan what's coming before it starts. |
 | **League** | Pick one of your leagues and drill in through three sub-tabs: **Standings** (sport-appropriate columns, conference/division grouping), **Leaders** (stat leaders, or the soccer Golden Boot), and **Bracket** (cup knockouts and best-of-N playoff series, grouped by round). |
 | **Results** | Recent **finals** per followed team, newest first, with streak and last-10 chips. |
@@ -288,10 +289,14 @@ can live inside Apple Calendar, Google Calendar, or any calendar app that
 supports subscriptions.
 
 - **All games:** `http://<your-host>:3000/api/calendar.ics` (covers −30 …
-  +60 days). For a *live, auto-updating* subscription use the `webcal://`
-  scheme — `webcal://<your-host>:3000/api/calendar.ics`.
+  +60 days, and carries golf tournaments as all-day entries). For a
+  *live, auto-updating* subscription use the `webcal://` scheme —
+  `webcal://<your-host>:3000/api/calendar.ics`.
 - **One team:** append `?team_id=<team-id>`, e.g.
-  `webcal://<your-host>:3000/api/calendar.ics?team_id=<team-id>`.
+  `webcal://<your-host>:3000/api/calendar.ics?team_id=<team-id>` — that
+  team's games only (a tournament belongs to no team, so a followed golfer
+  has no per-team feed of their own and isn't offered one in **Subscribe**;
+  their tournaments ride in the all-games feed above).
 
 (Point calendar apps at port 3000, not 8001: the frontend proxies `/api`
 through to the backend, while the backend's own port is bound to loopback and

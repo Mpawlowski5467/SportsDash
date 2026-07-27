@@ -119,7 +119,9 @@ async def upsert_games(session, games: Sequence[domain.Game]) -> int
     # an incoming FINAL state is authoritative from any stored phase
     # (games that ended while the app was down heal on daily refresh);
     # postponed/canceled rows may be reinstated by an incoming
-    # scheduled/in_progress state. All provider strings are clipped to
+    # scheduled/in_progress state. A game's fight_* columns (MMA method
+    # of victory) merge like the crest/color ones: an incoming None
+    # never wipes a stored result. All provider strings are clipped to
     # their column widths on write. Returns number of rows touched.
 async def prune_stale_games(session, now_utc: datetime) -> int
     # delete ghost rows: 'scheduled' with start older than now-3d,
@@ -289,8 +291,10 @@ endpoint modules. `app/services/serialize.py` provides
 `game_to_out(row: GameORM, league: LeagueORM) -> GameOut` (scores are
 `None` while `phase == "scheduled"`; `followed_team_ids` = non-null
 home/away team ids). `app/services/ics.py` provides
-`games_to_ics(rows, leagues_by_id) -> str` (hand-rolled VCALENDAR, UTC
-`DTSTART`, escaped text).
+`games_to_ics(rows, leagues_by_id, *, events=()) -> str` (hand-rolled
+VCALENDAR, UTC `DTSTART`, escaped text; the keyword-only `events` adds
+all-day leaderboard spans — see *MMA method of victory + leaderboard
+events on the calendar* below).
 
 Route table (all under `/api`, response models from `schemas.py`):
 
@@ -306,7 +310,7 @@ Route table (all under `/api`, response models from `schemas.py`):
 | `GET /roster/{team_id}` | `RosterOut` | 404 unknown team |
 | `GET /results/{team_id}?limit=25` | `list[GameOut]` | finals, newest first |
 | `GET /news?team_id=&limit=50` | `list[NewsItemOut]` | |
-| `GET /calendar.ics` | `text/calendar` | all games −30d…+60d, `Content-Disposition: attachment; filename=sportsdash.ics` |
+| `GET /calendar.ics?team_id=` | `text/calendar` | all games −30d…+60d **plus every leaderboard event overlapping that window** (all-day spans); `Content-Disposition: attachment; filename=sportsdash.ics`. `?team_id=` narrows to that team's games, omits events, and renames the file `sportsdash-{team_id}.ics`; 404 unknown team |
 
 404s raise `HTTPException(404, "...")`. Unknown query params ignored.
 
@@ -839,7 +843,11 @@ already — currently only player/fighter/team; ADD golf→"golfer".)
 - TodayView: render `today.events` above or alongside games — a compact
   event card (name, round_label, top-3 + followed golfer's line).
 - CalendarView: optionally show event spans (start..end) as multi-day
-  background events — nice-to-have; at minimum don't break.
+  background events — nice-to-have; at minimum don't break. **Landed
+  2026-07-27**, as solid all-day spans rather than FullCalendar
+  *background* events (a background fill is unreadable under the light /
+  newsprint themes and can't be clicked open) — see "MMA method of
+  victory + leaderboard events on the calendar" for the shipped contract.
 - Onboarding: golf league picker uses entity_noun "golfer" ("Pick your
   golfers"); sport heading "golf"→"Golf".
 - Add `api.events(start,end)` + `api.event(id)` and `useEvents`,
@@ -1725,3 +1733,253 @@ to nothing when unpriced.
   → the season's FINAL games, redis-cached, never stored in ``games``.
 - ``LeagueOut`` carries ``provider`` so the frontend gates the season
   pickers (espn team sports only).
+
+## MMA method of victory + leaderboard events on the calendar (2026-07-27)
+
+Two of the *Loose ends* from the root ROADMAP.md, landed together (NHL
+live-intermission verification and `/metrics` are still open). Both are
+strictly additive: one new nullable field on `GameOut`, four new nullable
+`games` columns, and one existing endpoint (`/calendar.ics`) carrying
+extra entries.
+
+### Method of victory for finished bouts
+
+An MMA "score" is a round count (`1-0`), which says nothing about the
+fight, so a finished bout now carries HOW it ended.
+
+- `domain.FightMethod` — a closed str-enum, same idiom as
+  `Sport`/`GamePhase`/`PlayerStatus`: `ko` (covers KO *and* TKO — ESPN
+  spells both "KO/TKO"), `submission`, `decision`, `disqualification`,
+  `no_contest`, `draw`. Provider free text is classified into it so
+  nothing downstream pattern-matches a sport's vocabulary.
+- `domain.FightResult` (frozen): `method: FightMethod`, plus optional
+  `detail` (the provider's own flavour — "Unanimous", "Rear-Naked
+  Choke"), `round` (1-based), `clock` ("4:21"). Only `method` is
+  required — a partially known result is still worth showing.
+  `domain.Game.fight_result: FightResult | None = None`, after `series`.
+- `schemas.FightResultOut` (`method: str`, `detail?`, `round?`,
+  `clock?`) and `GameOut.fight_result: FightResultOut | None = None`,
+  mirrored in `types.ts` as `FightMethod` (string union), `FightResult`
+  and `Game.fight_result`. The **contracts triple** — domain, schema, TS
+  — changes together as always. Every endpoint serving `GameOut`
+  (`/today`, `/schedule`, `/schedule/{team_id}`, `/games/{id}`,
+  `/results/{team_id}`, `/history/results/{team_id}`, `/matchup/…`,
+  `/nation/…`) carries it for free — no route code changed, the field
+  rides the shared serializer. `null` for every non-MMA sport, every
+  unfinished bout, and any bout the provider never explained.
+  (`/map`'s `MapGameOut` is its own narrower shape and does not carry
+  it. `/history/results/{team_id}` is in that list for shape only — it
+  404s for an MMA team, see the season-history note below.)
+- Persistence: `GameORM` gains `fight_method VARCHAR(24)`,
+  `fight_detail VARCHAR(64)`, `fight_round INTEGER`,
+  `fight_clock VARCHAR(16)` — all nullable, all appended to
+  `migrations._ADDITIVE_COLUMNS`, so an existing homelab database gains
+  them at startup. `repository.upsert_games` writes them clipped, and
+  **never lets an incoming `None` wipe a stored result** (only the
+  schedule refresh enriches bouts, so most later refreshes carry no
+  method). The merge is **per field, not per block**: an incoming
+  `fight_result` overwrites `fight_method` outright, but `fight_detail` /
+  `fight_round` / `fight_clock` are written only when the incoming value
+  is non-`None`. The round, time and flavour come from a separate
+  core-API call that can fail on its own, so a thinner incoming result
+  (method only) must not erase a richer stored one — the same overlay
+  `espn/individual.py::_merge_fight_results` applies upstream. (The
+  crest/color columns merge on *truthiness* and only ever have one
+  source; `fight_*` is a stricter `is not None` test across two, so
+  "same rule as the crest/color columns" is NOT an accurate shorthand
+  for it.)
+- `serialize._fight_result_out(domain.FightResult | None)` and
+  `serialize._row_fight_result_out(GameORM)` feed `domain_game_to_out`
+  and `game_to_out` respectively, so the stored and the never-stored
+  (season-history) paths emit identical JSON.
+- **When `GameOut.fight_result` is present.** Only for a FINAL bout, and
+  each path enforces that differently:
+  - stored (`game_to_out` → `_row_fight_result_out`) returns `None`
+    unless `row.phase == "final"` **and** `fight_method` is set. The
+    phase gate is load-bearing, not belt-and-braces: the `fight_*`
+    columns deliberately outlive the phase (nothing wipes them), so a
+    bout ESPN reopens — a corrected state, a result under review — would
+    otherwise keep serving the superseded finish while it is back to
+    `in_progress`.
+  - never-stored (`domain_game_to_out` → `_fight_result_out`) has no
+    phase gate and needs none: a domain `Game` only ever carries a
+    `fight_result` for a finished bout, because
+    `espn/individual.py::_scoreboard_fight_result` returns `None` unless
+    the parsed state is `GamePhase.FINAL`, and `_attach_fight_results`
+    only targets FINAL bouts. **That path is unreachable for MMA
+    today** — its one caller is `services/season_results.py`, which
+    `supports_history` gates to team sports (see below). It is kept
+    symmetric so the field rides along for free if that ever opens up.
+  - the frontend applies the same rule independently
+    (`fightResultOf(game)` is null unless `phase === "final"`), so a
+    server that ever regressed here still wouldn't render a result on a
+    live bout.
+- ESPN adapter (`espn/individual.py`): ONE keyword classifier
+  (`_classify_fight_method`, `_FIGHT_METHOD_PATTERNS`) over two sources.
+  Pattern order is load-bearing — no_contest > disqualification >
+  submission > ko > draw > decision — so "Technical Submission" isn't a
+  knockout and "Split Draw" isn't a decision; matches are word-bounded
+  and only abbreviations ESPN actually publishes (`dq`, `sub`) are
+  matched, since `\bdec\b` would read a date and `\bnc\b` a state code.
+  (a) `_scoreboard_fight_result` reads the already-fetched
+  `status.type.detail` ("Final - Decision - Unanimous") for free — often
+  just "Final", which classifies as nothing; (b) `_parse_bout_status`
+  reads the core API's per-bout status feed, which also carries the round
+  and stoppage time. `_merge_fight_results` lets the core feed win on the
+  method while anything it omits survives from the scoreboard, so a core
+  outage still leaves whatever the card spelled out.
+- Fan-out bound (`espn/provider.py::_attach_fight_results`, mirroring the
+  `_STAT_LINE_*` roster backfill): exactly ONE core call per finished
+  bout, for bouts that are FINAL, involve the followed fighter, fall
+  inside the requested window and have a known status URL; sorted
+  newest-first and capped at `_FIGHT_RESULT_MAX_BOUTS = 8` with
+  `_FIGHT_RESULT_CONCURRENCY = 4`. `_mma_status_urls` prefers the
+  payload's own `status.$ref` (rewritten http→https, rejected otherwise)
+  and otherwise builds the core URL from the card's event id + the bout's
+  competition id — UFC is the one place those ids differ. Per-bout
+  `httpx.HTTPError`, `TransientProviderError` *and* `ValueError` are
+  swallowed so a bout-status blip can't trip the provider breaker — the
+  last of those covers `json.JSONDecodeError`, because the core API
+  answers an outage with an HTML error page under a `200`, and a
+  best-effort garnish must degrade on that exactly as on a dropped
+  connection.
+- Deliberately NOT enriched: `get_live_games` — no team scope, so it
+  could only fan out over every bout on every card.
+- **MMA has no season archive at all**, so there is no "history" path to
+  enrich or to reason about: `espn_history.supports_history(sport)` is
+  `sport not in INDIVIDUAL_SPORTS and sport not in LEADERBOARD_SPORTS`,
+  and MMA is an individual sport. `fetch_season_results` returns `[]`
+  before it builds a URL, and `GET /history/results/{team_id}` 404s
+  ("No season archive for this league") for a followed fighter. A
+  fighter's past bouts come from the stored `games` rows the schedule
+  refresh already enriched — i.e. `/results/{team_id}` — so nothing is
+  lost, but do NOT describe this as a fan-out decision: the code path
+  does not exist. (An earlier draft of this section listed
+  `fetch_season_results` alongside `get_live_games` as "deliberately not
+  enriched, unbounded fan-out over a whole career". That was wrong on
+  both counts and is corrected here.)
+- Frontend (`components/StatusBadge.tsx` owns the helpers, exported):
+  `fightMethodLabel(method)` via an exhaustive
+  `Record<FightMethod, string>` (adding a method upstream fails `tsc`
+  rather than rendering `undefined`), `fightResultOf(game)` (null unless
+  `phase === "final"`), `fightRoundLabel(result)` (`"R2 4:21"`),
+  `fightResultSummary(result)` (`"KO/TKO · Punches · R2 4:21"`). The
+  final pill reads `FINAL · KO/TKO` with the full summary as its title;
+  `GameCard` adds a zinc `R2 4:21` chip in the slot the odds chip vacates
+  once a game is final; `GameDetailModal` leads with a **Result** block —
+  for an individual sport it is the only body content there is.
+
+### Leaderboard events on the calendar and in the .ics feed
+
+Golf `Event`s (multi-day tournaments) now appear on the Calendar grid and
+in the subscription feed as multi-day ALL-DAY entries. No API shape
+changed — the calendar sources them from the existing `GET /events`, so
+there is no openapi drift from this half.
+
+**GOLF ONLY — not "golf/tennis".** `domain.LEADERBOARD_SPORTS` is
+`frozenset({Sport.GOLF})`. A tennis match is a two-sided `Game` (its
+tournament is carried as the `series` label), never an `Event`, so no
+tennis entry can reach `/events`, the calendar grid, or the `.ics` feed —
+tennis has been on the Calendar as an ordinary timed fixture since Phase
+4. Any "golf/tennis events" phrasing is a factual error; it was corrected
+throughout the docs, the module docstrings and the code comments on
+2026-07-27. This is the wording to reuse: *"leaderboard competitions
+(golf tournaments — golf is the only sport modeled as an `Event`)"*. If a
+second leaderboard sport is ever added it joins `LEADERBOARD_SPORTS`
+first, and the docs follow the set, not the other way round.
+
+- `services/ics.py::games_to_ics` gains a keyword-only
+  `events: Sequence[EventORM] = ()`; existing two-arg callers still
+  render a games-only feed. The private `_event_lines` was renamed
+  `_game_lines` (ambiguous once a domain `Event` is also a VEVENT), and
+  `_event_span_lines` renders the new all-day entries:
+  `UID:event:{event.id}@sportsdash`, `DTSTART;VALUE=DATE:YYYYMMDD`,
+  `DTEND;VALUE=DATE:YYYYMMDD`, `SUMMARY:{event.name} ({league.name})`,
+  optional `LOCATION`, and for a FINAL event a
+  `DESCRIPTION:Winner: {name} ({score})` from the first leaderboard row
+  (the stored board is position-ordered; read defensively, as
+  `serialize.event_to_out` reads it).
+- The event `UID` is **prefixed `event:`** (`ics._EVENT_UID_PREFIX`),
+  mirroring the grid's `SPAN_ID_PREFIX`, for the same reason and not a
+  weaker one: a game id and an event id are both `"{provider}:{key}"`
+  strings and one `VCALENDAR` holds both kinds side by side, so nothing
+  but the prefix keeps their identities apart. The ICS namespace is NOT
+  safer than the grid's — it is the same id space in the same container.
+  It only *looks* safer because nothing parses the UID back out, whereas
+  the grid round-trips its id through `eventIdFromSpanId` to pick a
+  modal; but a UID is what a subscribed client matches an entry on across
+  refreshes, so a collision would have one kind silently overwrite the
+  other. Pinned by
+  `test_event_uid_is_prefixed_so_it_cannot_collide_with_a_game`, which
+  renders a game and an event that share one id string. (Colons need no
+  RFC 5545 escaping in a TEXT value, and game UIDs already contain one.)
+- **`DTEND` is EXCLUSIVE** for `VALUE=DATE` (RFC 5545) — it is the day
+  *after* the last day, so a Thu–Sun major ends on the Monday. A null
+  `end_time`, or one predating the start, collapses to a single day.
+- The DATE values are **local calendar days in `SPORTSDASH_TIMEZONE`**,
+  not UTC dates: an all-day date is a display value, so this is the usual
+  response-boundary conversion (`ics.py` reads `get_settings().tzinfo`,
+  as `services/events.py` / `notify.py` / `weather.py` do). Storage and
+  comparison stay UTC.
+- `/calendar.ics` feeds `repository.events_between()` over the same
+  −30d…+60d window (an event OVERLAPS a range where a game falls inside
+  one). A `?team_id=` feed omits events entirely — an event has no team
+  side, so no team's calendar owns it; the grid follows the same rule, so
+  the UI and the feed agree. `events_between`'s overlap semantics are
+  **Phase-5 behaviour that predates this feature**;
+  `test_events_between_matches_overlap_not_just_start` (added here) is a
+  regression net around code the calendar merely became the second caller
+  of — do not count it as coverage of the calendar/ICS work, which is
+  covered by `tests/test_calendar_events.py`.
+- **A followed golfer has no per-team feed, by decision.** Individual
+  sports are followed as athlete-as-team `TeamORM` rows, and a golfer
+  (the one `LEADERBOARD_SPORTS` case) never appears on either side of a
+  game — so the rule above leaves their `?team_id=` feed permanently
+  empty. Considered and rejected: filtering events by the golfers in
+  them. The only link from a stored event back to a followed golfer is
+  `leaderboard[].player_id` (rewritten ESPN-id → internal-id by
+  `scheduler/common.py::_tag_followed_golfers`), which exists only once
+  the provider publishes a field — future tournaments arrive from the
+  season calendar with an empty board, so such a feed would carry the
+  tournaments the golfer has already played and none of the ones they are
+  about to. That is the wrong half for a *subscription*, and it fails in
+  a way the user can't see. Instead the **frontend never offers the
+  row**: `CalendarView`'s `LEADERBOARD_SPORTS` (mirroring the backend
+  set) filters leaderboard-sport follows out of the Subscribe menu, which
+  then notes that tournaments ride in the all-teams feed. Tennis/MMA
+  athletes are athlete-as-team too but their matches ARE games, so their
+  per-team feeds work and they are deliberately NOT filtered. The backend
+  is unchanged — one rule, "a per-team feed is that team's games", with
+  no sport special-casing in the route.
+- Frontend: `api.events({start, end}) -> Promise<SportEvent[]>` →
+  `GET /events?start=&end=`, and `useEvents(start, end)`, queryKey
+  `["events", start, end]`, default cache policy. `api.event(id)` was
+  deliberately not added — the calendar's modal renders from the
+  already-loaded event, as Today's does.
+- `src/views/calendar/eventSpans.ts` — a pure helper with its own vitest
+  suite, same pattern as `views/map/travel.ts`: `eventSpan(event) ->
+  EventSpan {id, eventId, title, sport, start, end}` where `end` is the
+  EXCLUSIVE local day key (FullCalendar's all-day `end` has iCalendar's
+  off-by-one, so both sides derive it from one expression),
+  `eventIdFromSpanId(spanId) -> string | null`, `SPAN_ID_PREFIX =
+  "event:"`. Game ids and event ids are both `"{provider}:{key}"` and now
+  share one FullCalendar list, hence the prefix rather than a loosely
+  typed `extendedProps` discriminator. Its `SPORT_GLYPH` map holds
+  **golf only** — the one sport that can reach it; the map keeps the
+  per-sport shape for a future leaderboard sport, and `eventSpan` falls
+  back to the bare event name for any sport without an entry.
+- `CalendarView` draws spans with a solid `leagueFallbackColor(sport)`
+  fill and `isLightColor`-derived text (the only theme-proof option —
+  a translucent fill would be unreadable under the light/newsprint
+  `[data-theme]`s), a ⛳ glyph in the title, and opens the existing
+  `EventLeaderboardModal` on click. Hidden while the team filter is set,
+  matching the per-team feed. The refresh button spins on
+  `scheduleQuery.isFetching || eventsQuery.isFetching` — events are
+  primary content, unlike the secondary weather batch. Changing the
+  visible range **clears `selectedEventId`**: the new window re-queries
+  `/api/events`, so a tournament picked in the old one is no longer on
+  the grid, and a lingering id would re-open the modal by itself the next
+  time the user navigated to a window that contains that tournament.
+- This closes the Phase 5 *Frontend (views owner)* nice-to-have
+  "CalendarView: optionally show event spans" and adds the
+  `api.events`/`useEvents` pair that section prescribed but never landed.
