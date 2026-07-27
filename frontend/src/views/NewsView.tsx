@@ -4,6 +4,7 @@ import { useNews, useRefreshNews, useTeams } from "../hooks";
 import { relativeTime } from "../lib/time";
 import type { League, NewsItem, NewsScope, Team } from "../types";
 import NewsDetailPanel from "../components/NewsDetailPanel";
+import StaleBanner from "../components/StaleBanner";
 
 /** What a news card shows for its source: a followed team or a competition. */
 interface NewsBadge {
@@ -240,7 +241,7 @@ export default function NewsView() {
     return map;
   }, [leagues]);
 
-  if (teamsQuery.isError) {
+  if (teamsQuery.isError && !teamsQuery.data) {
     return (
       <p className="text-sm text-red-400">
         Failed to load teams: {teamsQuery.error?.message ?? "unknown error"}
@@ -258,8 +259,11 @@ export default function NewsView() {
       ? leaguesById[scope.leagueId]?.name
       : undefined;
 
+  // A failed poll must not blank a grid that already loaded — the full-width
+  // error is for "nothing to show at all"; otherwise the cached articles stay
+  // up behind a stale banner (same policy as TodayView).
   let body: ReactNode;
-  if (newsQuery.isError) {
+  if (newsQuery.isError && !items) {
     body = (
       <p className="text-sm text-red-400">
         Failed to load news: {newsQuery.error?.message ?? "unknown error"}
@@ -308,6 +312,12 @@ export default function NewsView() {
         <p className="text-sm text-red-400">
           Refresh failed: {refresh.error?.message ?? "unknown error"}
         </p>
+      )}
+      {newsQuery.isError && items && (
+        <StaleBanner
+          message="Connection lost — showing the last loaded articles."
+          onRetry={() => void newsQuery.refetch()}
+        />
       )}
       {body}
       <NewsDetailPanel

@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { useGameOdds, useTeams, useToday } from "../hooks";
 import GameCard from "../components/GameCard";
 import EventLeaderboardModal from "../components/EventLeaderboardModal";
+import StaleBanner from "../components/StaleBanner";
 import type { League, SportEvent } from "../types";
 
 /**
@@ -267,18 +268,10 @@ export default function TodayView() {
   return (
     <div className="space-y-4">
       {stale && (
-        <div className="flex items-center justify-between gap-3 rounded-md border border-amber-900/50 bg-amber-950/20 px-3 py-1.5">
-          <p className="text-xs text-amber-400">
-            Connection lost — showing the last loaded scores.
-          </p>
-          <button
-            type="button"
-            onClick={() => void todayQuery.refetch()}
-            className="shrink-0 text-xs font-medium text-amber-300 underline-offset-2 hover:underline"
-          >
-            Retry
-          </button>
-        </div>
+        <StaleBanner
+          message="Connection lost — showing the last loaded scores."
+          onRetry={() => void todayQuery.refetch()}
+        />
       )}
       <header className="flex flex-wrap items-end justify-between gap-2">
         <div>

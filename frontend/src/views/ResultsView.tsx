@@ -5,6 +5,7 @@ import type { Game, GameSide, Sport } from "../types";
 import TeamLogo from "../components/TeamLogo";
 import Select, { type SelectOption } from "../components/Select";
 import { useManageTeams } from "../components/ManageTeamsContext";
+import StaleBanner from "../components/StaleBanner";
 import { OUTCOME_CHIP } from "../lib/outcome";
 import { CURRENT_SEASON, seasonOptions, supportsArchives } from "../lib/seasons";
 
@@ -280,7 +281,7 @@ export default function ResultsView() {
     return out;
   }, [games]);
 
-  if (teamsQuery.isError) {
+  if (teamsQuery.isError && !teamsQuery.data) {
     return (
       <p className="text-sm text-red-400">
         Failed to load teams: {teamsQuery.error?.message ?? "unknown error"}
@@ -305,8 +306,10 @@ export default function ResultsView() {
     );
   }
 
+  // Only replace the list when there is nothing cached to show; a failed
+  // refetch keeps the last results up behind a stale banner (see TodayView).
   let body: ReactNode;
-  if (activeQuery.isError) {
+  if (activeQuery.isError && !games) {
     body =
       seasonYear !== undefined ? (
         <p className="text-sm text-zinc-500">
@@ -376,6 +379,12 @@ export default function ResultsView() {
           />
         )}
       </div>
+      {activeQuery.isError && games && (
+        <StaleBanner
+          message="Connection lost — showing the last loaded results."
+          onRetry={() => void activeQuery.refetch()}
+        />
+      )}
       {body}
     </div>
   );

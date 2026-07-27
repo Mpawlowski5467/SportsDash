@@ -60,6 +60,12 @@ export default function NewsDetailPanel({
         ref={panelRef}
         tabIndex={-1}
         aria-hidden={!open}
+        // The drawer stays mounted (and portaled to <body>, so it outlives the
+        // view being hidden), which would otherwise leave the Close button and
+        // the "Read full article" link tabbable off-screen from every tab.
+        // `inert` takes the closed subtree out of the tab order for real —
+        // `pointer-events-none` only stops the mouse.
+        inert={!open}
         className={
           // top-12 clears the sticky 48px app header (it's portaled to body).
           "fixed bottom-0 right-0 top-12 z-40 flex w-[26rem] max-w-[92vw] flex-col " +

@@ -3,6 +3,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useLeaders, useScorers, useSetupLeagues, useTeams } from "../hooks";
 import TeamLogo from "../components/TeamLogo";
 import Select, { type SelectOption } from "../components/Select";
+import StaleBanner from "../components/StaleBanner";
 
 export default function LeadersView() {
   const teamsQuery = useTeams();
@@ -34,7 +35,7 @@ export default function LeadersView() {
   const scorers = scorersQuery.data;
   const showGoldenBoot = (scorers?.rows.length ?? 0) > 0;
 
-  if (teamsQuery.isError) {
+  if (teamsQuery.isError && !teamsQuery.data) {
     return (
       <p className="text-sm text-red-400">
         Failed to load leagues: {teamsQuery.error?.message ?? "unknown error"}
@@ -51,6 +52,9 @@ export default function LeadersView() {
   }
 
   const data = leadersQuery.data;
+  // A failed refetch keeps the cached board on screen behind a stale banner
+  // rather than blanking it (see TodayView); only an empty cache errors out.
+  const stale = !showGoldenBoot && leadersQuery.isError && data !== undefined;
 
   let body: ReactNode;
   if (showGoldenBoot && scorers) {
@@ -103,7 +107,7 @@ export default function LeadersView() {
         </ol>
       </div>
     );
-  } else if (leadersQuery.isError) {
+  } else if (leadersQuery.isError && !data) {
     body = (
       <p className="text-sm text-red-400">
         Failed to load leaders: {leadersQuery.error?.message ?? "unknown error"}
@@ -188,6 +192,12 @@ export default function LeadersView() {
         onChange={setSelected}
         ariaLabel="Choose league"
       />
+      {stale && (
+        <StaleBanner
+          message="Connection lost — showing the last loaded leaders."
+          onRetry={() => void leadersQuery.refetch()}
+        />
+      )}
       {body}
     </div>
   );

@@ -7,6 +7,7 @@ import TeamLogo from "../components/TeamLogo";
 import Select, { type SelectOption } from "../components/Select";
 import { useOpenNation, useOpenTeam } from "../components/TeamDetailPanel";
 import { useManageTeams } from "../components/ManageTeamsContext";
+import StaleBanner from "../components/StaleBanner";
 import { CURRENT_SEASON, seasonOptions, supportsArchives } from "../lib/seasons";
 
 /** Per-team display metadata pulled from the /teams payload, keyed by id. */
@@ -324,7 +325,7 @@ export default function StandingsView() {
     return map;
   }, [teamsQuery.data]);
 
-  if (teamsQuery.isError) {
+  if (teamsQuery.isError && !teamsQuery.data) {
     return (
       <p className="text-sm text-red-400">
         Failed to load leagues: {teamsQuery.error?.message ?? "unknown error"}
@@ -351,8 +352,10 @@ export default function StandingsView() {
 
   const standings = standingsQuery.data;
 
+  // Only replace the table when there is nothing cached to show; a failed
+  // refetch keeps the last table up behind a stale banner (see TodayView).
   let body: ReactNode;
-  if (standingsQuery.isError) {
+  if (standingsQuery.isError && !standings) {
     body =
       seasonYear !== undefined ? (
         <p className="text-sm text-zinc-500">
@@ -481,6 +484,12 @@ export default function StandingsView() {
           />
         )}
       </div>
+      {standingsQuery.isError && standings && (
+        <StaleBanner
+          message="Connection lost — showing the last loaded table."
+          onRetry={() => void standingsQuery.refetch()}
+        />
+      )}
       {body}
     </div>
   );
