@@ -8,6 +8,14 @@
 > below are retained as historical design context and no longer reflect the
 > shipping code.
 
+> **Update (phased plan retired):** every `## Phase N` section below was
+> written against `docs/ROADMAP.md`, a phased build plan that **no longer
+> exists in this repo** — don't go looking for it. Inside those sections,
+> "per ROADMAP.md", "ROADMAP Phase N" and bare "ROADMAP.md" all refer to
+> that deleted file, *not* to the root [ROADMAP.md](../ROADMAP.md), which
+> is a forward-looking list with no phases. The phases shipped; the threads
+> still open from them live under **Loose ends** in that root ROADMAP.md.
+
 This file is the source of truth for every cross-module boundary. The
 foundation files (already written, **do not modify**) are:
 
@@ -26,8 +34,10 @@ foundation files (already written, **do not modify**) are:
   Anything read from the DB goes through `timeutil.ensure_utc` (SQLite
   returns naive datetimes). Localization only at the response boundary
   (`/today`'s day computation) or in the frontend.
-- **Fictional names only** in any sample config, mock data, or test
-  fixture — never real teams or leagues.
+- **Fictional names only** in test fixtures and recorded provider
+  payloads — never real teams, leagues, or players. Real names are fine in
+  the ESPN catalog and in whatever the user follows: that is live app
+  data, not sample data.
 - Internal game ids are `f"{provider}:{provider_game_key}"`.
 - Python 3.12, SQLAlchemy 2.0 style (`select()`, `Mapped`), Pydantic v2,
   full type hints, `logging.getLogger(__name__)` per module. No TODOs or
@@ -43,11 +53,23 @@ foundation files (already written, **do not modify**) are:
 ```python
 def register_provider(provider: SportsProvider) -> None
 def get_provider(provider_id: str) -> SportsProvider          # KeyError if unknown
+def provider_ids() -> list[str]                                # sorted ids, read-only view
 async def close_all() -> None                                  # close every registered provider
 ```
-Registers `espn` and `mock` at import time.
+Registers `espn` and `thesportsdb` at import time; both are wrapped in a
+circuit-breaker guard (`_GUARDED_PROVIDERS`) so a down or rate-limited
+source fails fast.
 
-### `app/providers/espn.py` (owner: providers agent)
+### `app/providers/espn/` (owner: providers agent)
+
+A package since 2026-07-12 (split from the original 3,174-line
+`espn.py`): `common` (constants, coercion, status/period normalization),
+`games`, `individual` (tennis / MMA), `golf`, `summary` (schedule
+chunking, box score, plays, win probability, odds), `standings`,
+`roster`, `news_location`, and `provider` (the class itself). Every
+module but `provider` is pure parsers over fetched JSON; `__init__`
+re-exports the provider and the parser entry points, so
+`from app.providers.espn import …` is unchanged.
 
 `class EspnProvider` implementing `SportsProvider`, `provider_id = "espn"`.
 `League.provider_key` is the ESPN sport/league URL fragment (e.g.
@@ -64,23 +86,17 @@ Period normalization: basketball → `"Q{n}"` / `"OT"`; soccer → period 1/2 �
 `"1st Half"/"2nd Half"`, halftime → `is_intermission=True`; baseball →
 `period` = inning, label `"Top {n}"/"Bot {n}"`, `clock=None`.
 
-### `app/providers/mock.py` (owner: providers agent)
+### `app/providers/thesportsdb.py` (owner: providers agent)
 
-`class MockProvider`, `provider_id = "mock"`. Deterministic fictional data
-so a fresh install demos every feature: per team — a final yesterday, one
-game today already in progress (started ~40 min ago, mid-game
-period/score), one tonight (~+4h), and a regular fixture grid every 2–3
-days for ±3 weeks (past ones final with plausible scores). The grid is a
-pure function of absolute days since a fixed epoch — never of "today" —
-and game ids encode league/day/pairing slots (`mock:{league}-d{N}-g{i}`),
-not team slugs, so fixtures and ids are stable across midnights, restarts,
-and registration order. Only the live/tonight anchor times live in process
-memory (restart re-anchors the live demo game; accepted). Standings with 8
-fictional teams per league (followed teams present with `team_id`,
-sport-appropriate columns), rosters of ~12 fictional players with 1
-`injured` and 1 `day_to_day` (with `status_detail`). Same inputs → same
-output (seed any RNG with a stable md5-derived hash, never builtin
-`hash()`).
+`class TheSportsDbProvider` implementing `SportsProvider`,
+`provider_id = "thesportsdb"` — the second live source, backing
+volleyball. `League.provider_key` is the TheSportsDB league id;
+`Team.provider_key` the TheSportsDB team id. Its full endpoint/parsing
+contract is in the *Phase 6: volleyball* section below.
+
+> There is no mock provider. `app/providers/mock.py` was deleted when
+> SportsDash went live-data only (see the banner at the top of this file);
+> the mock sections further down are historical design context.
 
 ### `app/services/repository.py` (owner: persistence agent)
 
@@ -226,26 +242,37 @@ and per-team errors so one bad source never kills a whole job. Schedule:
 ```python
 async def seed_from_config(path: str | None = None) -> None   # parse YAML, upsert leagues+teams via repository
 ```
-YAML shape (`backend/config/teams.yaml`, fictional sample data, provider
-`mock` by default so a fresh install works instantly):
+Seeds **only while the teams table is empty** — once onboarded the DB is
+the source of truth for follows, so a stale config can never clobber the
+user's picks. When a config does seed at least one team it also sets the
+`onboarded` meta flag (the user authored their own follows; the wizard
+would only get in the way). A missing, unreadable, or malformed file is
+logged and skipped, never fatal; individual bad league/team entries are
+logged and skipped too.
+
+The shipped `backend/config/teams.yaml` is **comments-only** — a template,
+not sample data — so a fresh install seeds nothing and lands on the setup
+wizard. The documented shape (every league names a live provider; there is
+no `mock`):
 ```yaml
 leagues:
-  - id: pinnacle-basketball
-    sport: basketball
-    name: Pinnacle Basketball League
-    provider: mock
-    provider_key: mock-basketball
+  - id: my-league                    # internal slug, unique
+    sport: basketball                # any domain.Sport value
+    name: My League
+    provider: espn                   # espn | thesportsdb
+    provider_key: basketball/nba     # ESPN sport/league URL fragment
 teams:
-  - id: ashport-comets
-    league_id: pinnacle-basketball
-    name: Ashport Comets
-    abbreviation: ASH
-    provider_key: ashport-comets
-    color: "#f59e0b"
-    rss_feeds: []
+  - id: my-team
+    league_id: my-league
+    name: My Team
+    abbreviation: MYT
+    provider_key: "18"               # numeric ESPN team id, quoted
+    color: "#22c55e"                 # optional
+    rss_feeds: []                    # optional news feed URLs
 ```
-Sample contains 3 leagues (basketball/baseball/soccer) and 4 followed teams
-(2 in the soccer league).
+Because a hand-authored config names real leagues and teams, the
+fictional-names rule does not apply to it — it is user data, like the
+wizard's picks. Test fixtures stay fictional.
 
 ### `app/main.py` (owner: scheduler agent)
 
@@ -269,8 +296,8 @@ Route table (all under `/api`, response models from `schemas.py`):
 
 | Route | Response | Notes |
 |---|---|---|
-| `GET /health` | `{"status": "ok"}` | |
-| `GET /meta` | `MetaOut` | version "1.0.0" |
+| `GET /health` | `{status, database, providers, provider_health}` | deep check; `status` is `"ok"`/`"degraded"`, `providers` is the count, `provider_health` the per-provider circuit state. Always 200 — a failed DB probe degrades `status` rather than 500-ing (see *Ops: backups + health deep-check* below) |
+| `GET /meta` | `MetaOut` | `version` = `meta.APP_VERSION` (the shipped app version, "1.3.0") |
 | `GET /teams` | `TeamsOut` | |
 | `GET /today` | `TodayOut` | local day via `local_day_bounds(local_today(tz), tz)`; sorted by start_time |
 | `GET /schedule?start=YYYY-MM-DD&end=YYYY-MM-DD&team_id=` | `list[GameOut]` | dates are local days, inclusive; defaults: start = today−7d, end = today+45d |
@@ -395,7 +422,7 @@ protocol, `app/migrations.py` additive-column migrations (append-only;
 `news_items.image_url` registered), repository serializes both new
 fields.
 
-### ESPN adapter (espn.py owner)
+### ESPN adapter (`espn/` package owner)
 
 - `get_schedule` soccer fix: for `Sport.SOCCER` leagues make TWO calls —
   bare (completed results) and `?fixture=true` (upcoming) — and merge by
@@ -451,7 +478,7 @@ Foundation already landed (do not redo): `Sport.HOCKEY`/`Sport.FOOTBALL`,
 `types.ts` Sport union. All payload facts below were verified against
 real ESPN traffic (see ROADMAP Phase 2).
 
-### ESPN adapter (espn.py + espn_catalog.py owner)
+### ESPN adapter (`espn/` package + espn_catalog.py owner)
 
 - Catalog: add `nhl` ("NHL", hockey, espn, "hockey/nhl") and `nfl`
   ("NFL", football, espn, "football/nfl").
@@ -463,8 +490,14 @@ real ESPN traffic (see ROADMAP Phase 2).
     `type.detail`/`altDetail` containing "SO" in preference to raw
     period). clock from displayClock while live. Intermission:
     state "in" + `END_PERIOD`-style status name (or detail "End of
-    {n}th") → is_intermission=True — defensive, live shape re-probe due
-    June 15 (SCF game 6).
+    {n}th") → is_intermission=True.
+    **Still provisional.** That intermission mapping was written
+    defensively from ESPN's documented status names and has never been
+    checked against a live NHL feed; it cannot be, because verifying it
+    needs a game actually sitting between periods. Next window: the
+    2026-27 NHL season, from October 2026. Tracked as *NHL intermission,
+    verified live* under **Loose ends** in
+    [ROADMAP.md](../ROADMAP.md).
   - Football: quarters like basketball ("Q1".."Q4", period≥5 → "OT");
     `STATUS_HALFTIME` → intermission.
 - Schedules: for hockey AND football leagues fetch `?seasontype=2` and
@@ -549,7 +582,7 @@ live (ROADMAP Phase 3 research).
   list[CatalogLeague]`. Because ESPN national-team ids are GLOBAL, the
   same `provider_key` works in every sibling context.
 
-**espn.py (adapter owner):**
+**ESPN adapter (`espn/` package owner):**
 - Implement `get_competition_schedule(league, start, end)`: ranged
   scoreboard `?dates=YYYYMMDD-YYYYMMDD&limit=400` (ET-bucketed dates),
   parse via the existing `_parse_scoreboard`, filter to [start,end].
@@ -666,7 +699,7 @@ persist series. All ESPN facts below verified live (ROADMAP Phase 4).
   (e.g. top ~120) so the picker is usable. Defensive parsing; cache as
   today.
 
-### espn.py (adapter owner)
+### ESPN adapter (`espn/` package owner)
 - `_normalize_period` gains TENNIS (period→"Set {n}", no clock, no
   intermission) and MMA (period→"R{n}", clock from displayClock while
   live) branches. Keep the scheduled/postponed→(0,"",None,False) guard.
@@ -750,7 +783,7 @@ already — currently only player/fighter/team; ADD golf→"golfer".)
   (provider_key=athlete id, name, short abbr, headshot if present).
   Cap ~120.
 
-### espn.py (adapter owner)
+### ESPN adapter (`espn/` package owner)
 - Implement `get_events(league, start, end)` for golf: scoreboard /
   tournament schedule → `Event` per tournament with a populated
   `leaderboard` (LeaderRow: position from `order`, position_label "T3"
@@ -832,7 +865,7 @@ exposes `register_provider`; build providers there.
 ### New provider `app/providers/thesportsdb.py` (provider owner)
 `class TheSportsDbProvider`, `provider_id = "thesportsdb"`, implementing
 the full SportsProvider protocol against `https://www.thesportsdb.com/api/v1/json/3/`.
-Pure parser functions over fetched JSON (like espn.py), lazy httpx
+Pure parser functions over fetched JSON (like the ESPN adapter), lazy httpx
 client, `close()`. `League.provider_key` is the TheSportsDB league id;
 `Team.provider_key` the TheSportsDB team id.
 - `get_schedule(league, team, start, end)`: `eventspastleague.php?id={key}`
@@ -1261,14 +1294,13 @@ from TeamORM so competition teams without a team row can be plotted);
 Followed teams live in the **DB**, not the YAML: `seed_from_config` seeds
 ONLY when the teams table is empty, and when it does seed from an
 explicit user config it also sets the onboarded flag. The shipped
-`backend/config/teams.yaml` is comments-only (a template); the fictional
-demo config moved to a `DEMO_CONFIG` constant in `seed.py`, installed via
-`POST /setup/demo`. First-run UX: frontend checks setup status and shows
-a full-screen wizard until onboarded.
+`backend/config/teams.yaml` is comments-only (a template), so a fresh
+install is never pre-seeded. First-run UX: frontend checks setup status
+and shows a full-screen wizard until onboarded.
 
 Real league/team names ARE allowed here: the catalog and whatever the
-user picks are live app data, not sample data. Test fixtures and the
-demo config stay fictional.
+user picks are live app data, not sample data. Test fixtures stay
+fictional.
 
 ### `app/providers/espn_catalog.py`
 
@@ -1303,7 +1335,6 @@ Onboarded flag: meta key `"onboarded"` = `"1"`.
 | `GET /setup/leagues` | `CatalogLeaguesOut{leagues: [{id,name,sport,provider}]}` | static, no network |
 | `GET /setup/teams/{league_id}` | `CatalogTeamsOut{league_id, teams: [CatalogTeamOut]}` | live ESPN fetch; 404 unknown league; 502 on upstream failure |
 | `POST /setup/follow` | `TeamsOut` | body `FollowRequest{selections: [{league_id, team_provider_keys}]}`; 400 on empty/unknown keys; `replace_followed` + set onboarded + commit + `kick_daily_refresh()` |
-| `POST /setup/demo` | `TeamsOut` | installs DEMO_CONFIG the same way |
 
 Internal ids from a follow: league id = catalog id; team id =
 `f"{league_id}-{slugify(team name)}"`. `scheduler/jobs.py` gains
@@ -1312,16 +1343,15 @@ must not import `app.main` — circular).
 
 ### Frontend onboarding
 
-`types.ts`/`api.ts`/`hooks.ts` mirror the five routes
+`types.ts`/`api.ts`/`hooks.ts` mirror the four routes
 (`useSetupStatus()` etc.; setup mutations via plain `api.*` calls +
 `queryClient.invalidateQueries()`). `App.tsx`: splash while status
 loads; full-screen `<OnboardingWizard mode="first-run" .../>` when not
 onboarded; gear button in `Layout` reopens it as `mode="manage"`.
-Wizard (in `src/components/onboarding/`): choose path (pick teams /
-demo) → league multi-select grouped by sport → per-league team grid
-(logo, name, search filter, multi-select) → review → POST → syncing
-screen (poll `useToday` until games or ~20s) → dashboard. Dark kiosk
-styling consistent with the rest.
+Wizard (in `src/components/onboarding/`): league multi-select grouped by
+sport → per-league team grid (logo, name, search filter, multi-select) →
+review → POST → syncing screen (poll `useToday` until games or ~20s) →
+dashboard. Dark kiosk styling consistent with the rest.
 
 ## Infra contracts (infra agent)
 
@@ -1337,12 +1367,26 @@ styling consistent with the rest.
   ./backend, env `SPORTSDASH_DATABASE_URL=postgresql+asyncpg://sportsdash:sportsdash@db:5432/sportsdash`,
   `SPORTSDASH_REDIS_URL=redis://redis:6379/0`,
   `SPORTSDASH_NTFY_URL=http://ntfy`, timezone from `.env`, depends_on db
-  healthy), `frontend` (build ./frontend, ports `3000:3000`,
-  `API_URL=http://api:8000`), `ntfy` (binwiederhier/ntfy, `serve`, port
-  `8090:80`, cache volume).
-- `.env.example` documenting `SPORTSDASH_TIMEZONE`, `SPORTSDASH_NTFY_TOPIC`, etc.
+  healthy, host port `127.0.0.1:8001:8000`), `frontend` (build ./frontend,
+  ports `3000:3000`, `API_URL=http://api:8000`), `ntfy`
+  (binwiederhier/ntfy, `serve`, port `8090:80`, cache volume), `backup`
+  (daily `pg_dump` loop into `./backups`, 14-day pruning, nothing
+  depends on it).
+- `SPORTSDASH_NTFY_TOPIC` is `${SPORTSDASH_NTFY_TOPIC:?…}` — **required,
+  no default**. ntfy runs without an auth file, so the topic name is the
+  only secret; compose fails closed (with a message telling you to
+  `openssl rand -hex 16`) rather than falling back to a guessable value.
+  `.env.example` therefore documents the variable but deliberately ships
+  no value for it.
+- Port bindings are *not* a security boundary and must not be documented
+  as one: `:3000` is LAN-published and proxies every `/api` path and
+  method, so anything reachable on the LAN reaches the whole (unauthed)
+  API. Binding `api` to loopback only avoids a second, unproxied entry
+  point and keeps `/docs`, `/redoc` and `/openapi.json` off the LAN.
+  README's *Trust model* note and the comments in `docker-compose.yml`
+  say the same thing; keep all three in step.
 - Root `.gitignore` (+ `.dockerignore`s), `README.md` (architecture, quick
-  start, switching a league from `mock` to `espn`, adding a provider).
+  start, following teams via the setup wizard, adding a provider).
 
 ## Phase 13 — standings crests + World Cup host-venue map
 
@@ -1357,11 +1401,12 @@ teams, so `team_id` is almost always null):
 `logo_url: str | None`, `abbreviation: str | None`, `color: str | None`
 (`#`-hex). ESPN fills them from each `entries[].team` object
 (`logos[0].href` / `abbreviation` / `color`) in `_parse_standing_entry`;
-`_team_logo`/`_team_color` helpers added to `espn.py`. Persisted by
-`repository._standing_row_to_dict` (so `StandingsORM.rows` JSON still
-mirrors `StandingRowOut`). Mock/TheSportsDB leave them null → the
-existing abbreviation-chip fallback. Frontend `StandingsView` renders
-`row.logo_url ?? meta?.logo_url` (followed-team `/teams` meta as fallback).
+`_team_logo`/`_team_color` helpers added to the ESPN adapter (now
+`espn/common.py`). Persisted by `repository._standing_row_to_dict` (so
+`StandingsORM.rows` JSON still mirrors `StandingRowOut`). Mock/TheSportsDB
+leave them null → the existing abbreviation-chip fallback. Frontend
+`StandingsView` renders `row.logo_url ?? meta?.logo_url` (followed-team
+`/teams` meta as fallback).
 
 ### `MapTeamOut` / `types.ts` `MapTeam`
 
@@ -1464,10 +1509,26 @@ removed.
   `GameSummaryOut.goals`/`types.ts`. espn `_parse_goals` reads soccer summary
   `keyEvents` (scoringPlay + type.type=="goal"; scorer from
   `participants[0].athlete`; own goals flagged). `GET /api/scorers/{league_id}`
-  (`ScorersOut`): walks the league's FINAL games, pulls each summary in
+  (`ScorersOut`): 404 on an unknown league. **Soccer only** — goals are parsed
+  from summaries for `Sport.SOCCER` alone, so any other sport short-circuits
+  to an empty board (`games_counted=0`) before the fan-out *and* before the
+  cache, rather than spending one upstream call per finished game on a
+  guaranteed-empty tally. For a soccer league it collects the stored FINAL
+  games, keeps only the **most recent `_MAX_GAMES` (120)** of
+  them (repository rows arrive oldest-first, so the tail is the current run of
+  the competition rather than its opening weeks), pulls those summaries in
   parallel (semaphore 8), tallies goals/player (own goals excluded), ranks,
-  caches in Redis (`scorers:{id}:{n}`, 30min TTL). LeadersView shows this
-  Golden Boot when present, else the roster-derived board.
+  and returns the top 30. The cap bounds the upstream fan-out: it is one
+  summary call per game and finished games are never pruned, so an uncapped
+  walk would grow every matchweek and again every season until the burst
+  rate-limited ESPN and opened the circuit breaker for the whole app.
+  `games_counted` therefore reports the games **actually tallied** (≤ 120),
+  not the league's total stored finals. Cached in Redis
+  (`scorers:{league_id}:{n}`, 30min TTL) where `n` is the FULL final count,
+  *not* the capped one, so a newly finished match still busts the cache once
+  the cap has bitten. A league whose provider isn't registered returns an
+  empty `ScorersOut` with `games_counted=0` rather than an error. LeadersView
+  shows this Golden Boot when present, else the roster-derived board.
 - `GET /api/nation/{league_id}/{name}` (`NationOut`): by-name mini-dashboard
   for a whole-competition team (group standing from stored standings +
   fixtures/results from synced games). `NationDetailPanel.tsx` modal.

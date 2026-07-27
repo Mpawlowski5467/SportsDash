@@ -43,9 +43,11 @@ data directory instead:
 ~/Library/Application Support/SportsDash/sportsdash.db
 ```
 
-A fresh launch starts with an empty DB, seeds leagues/teams from the
-bundled `config/teams.yaml`, and refreshes live data in the background —
-the same first-run flow as a fresh server install.
+A fresh launch starts with an empty DB and opens the in-app **setup
+wizard** — the same first-run flow as a fresh server install. The leagues
+and teams you pick land in that database and are refreshed in the
+background. (The bundled `config/teams.yaml` is a comments-only template,
+so nothing is pre-seeded.)
 
 ## Building it
 
@@ -71,10 +73,11 @@ Output:
 
 ```
 frontend/src-tauri/target/release/bundle/macos/SportsDash.app
-frontend/src-tauri/target/release/bundle/dmg/SportsDash_1.0.0_aarch64.dmg
+frontend/src-tauri/target/release/bundle/dmg/SportsDash_<version>_aarch64.dmg
 ```
 
-Drag the `.app` to `/Applications`, or share the `.dmg`.
+`<version>` is whatever [tauri.conf.json](../frontend/src-tauri/tauri.conf.json)
+declares. Drag the `.app` to `/Applications`, or share the `.dmg`.
 
 ### Prerequisites (one-time)
 

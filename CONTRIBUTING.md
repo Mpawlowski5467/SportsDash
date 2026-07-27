@@ -62,8 +62,9 @@ docker stop pg-test
 - **UTC internally.** Datetimes are stored and compared tz-aware UTC;
   anything read from the DB goes through `timeutil.ensure_utc`.
   Localization happens only at the response boundary or in the frontend.
-- **Fictional names only** in tests and sample config — never real teams,
-  leagues, or players in fixtures.
+- **Fictional names only** in tests and recorded provider payloads — never
+  real teams, leagues, or players in fixtures. Real names *are* fine in the
+  ESPN catalog and in whatever the user follows; that's live app data.
 - **Parse defensively.** Provider payloads are hostile: missing keys must
   degrade per-record, never crash a refresh. New provider tests use
   recorded JSON fixtures, not live calls (the weekly `live-smoke`

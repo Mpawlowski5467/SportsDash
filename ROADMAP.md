@@ -41,8 +41,11 @@ The desktop app exists; making it *easy to get and trust* is the next step.
 - **More sports & providers** — the `SportsProvider` adapter design makes new
   sources additive; candidates include more leagues and a second provider for
   redundancy. (See *Adding a provider* in the README.)
-- **Richer matchup previews** — surface betting odds and head-to-head history
-  in the Matchup tab, with light pre-game context.
+- ~~**Richer matchup previews**~~ — ✅ shipped (v1.0.0): the Matchup tab
+  leads with betting odds and win probability (moneyline, spread and
+  over/under via `GET /odds`), then recent form, last meetings, projected
+  lineups, injuries and venue weather — each section hides itself when a
+  league has nothing to show.
 - ~~**Historical archives**~~ — ✅ shipped (2026-07-12) for standings and
   results: season pickers on the Standings and Results views serve any
   ESPN season via `GET /standings/{league}?season=` (DB-archived after
@@ -51,6 +54,23 @@ The desktop app exists; making it *easy to get and trust* is the next step.
   Cross-season head-to-head records shipped in the Matchup view too
   (2026-07-13): W-D-L vs the opponent across the last 5 seasons, from the
   followed side's perspective, built on the same cached season fetches.
+
+## 🔧 Loose ends — coverage & correctness
+
+Known gaps inside features that already ship, rather than new directions.
+Each is a small, bounded piece of work.
+
+- **Golf & tennis events on the Calendar** — leaderboard events show up on
+  Today, but the Calendar grid still plots games only; multi-day tournaments
+  need span-style entries there.
+- **NHL intermission, verified live** — the between-periods mapping is a
+  defensive `END_PERIOD` heuristic that has never been checked against a live
+  NHL feed. Next chance to confirm it: the 2026-27 season, from October.
+- **UFC method of victory** — a finished bout shows who won and in which
+  round, but not how it ended (KO/TKO, submission, decision).
+- **Prometheus-style `/metrics`** — `/api/health` already reports the database
+  probe and every provider's circuit-breaker state; exposing the same numbers
+  as scrapeable metrics is a small step, if the homelab ever wants graphs.
 
 ## 💡 Ideas — maybe someday
 

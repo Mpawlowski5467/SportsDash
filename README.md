@@ -182,15 +182,23 @@ The server deployment: runs anywhere Docker does, reached from any browser on
 your network (a laptop, a phone, a wall display).
 
 ```sh
-cp .env.example .env       # set your timezone and ntfy topic
+cp .env.example .env       # set your timezone
+printf 'SPORTSDASH_NTFY_TOPIC=%s\n' "$(openssl rand -hex 16)" >> .env
 docker compose up -d --build
 ```
+
+The second line is not optional: the bundled ntfy server runs with no auth,
+so the topic name is the only thing keeping your alerts private. There is
+deliberately **no default** — `docker compose up` refuses to start until
+`SPORTSDASH_NTFY_TOPIC` is set, and it should be a random string, not a
+guessable one.
 
 Then open:
 
 - Dashboard — <http://localhost:3000>
-- API docs (Swagger) — <http://localhost:8001/docs> (loopback-only; the
-  dashboard proxies `/api` internally, so other devices never need this port)
+- API docs (Swagger) — <http://localhost:8001/docs> (port 8001 is bound to
+  loopback, so Swagger is reachable from the host only; the dashboard proxies
+  `/api` internally, so other devices never need this port)
 - ntfy — <http://localhost:8090>
 
 On first load the dashboard opens the **setup wizard**: choose the leagues
@@ -198,8 +206,22 @@ and teams you want, and SportsDash pulls their live data from ESPN /
 TheSportsDB and starts populating every view.
 
 For game notifications on your phone, install the ntfy mobile app, add your
-server (`http://<your-host>:8090`), and subscribe to your topic
-(`SPORTSDASH_NTFY_TOPIC`, default `sportsdash`).
+server (`http://<your-host>:8090`), and subscribe to the topic you generated
+above (`SPORTSDASH_NTFY_TOPIC`).
+
+> **Trust model — no auth, so mind the network.** SportsDash is single-user
+> and has no login. The dashboard on `:3000` is published to your LAN on
+> purpose (that's the wall display / phone entry point) and it proxies every
+> `/api` path and method straight through, so *any device that can reach
+> `:3000` can reach the whole API* — including the mutating endpoints (`POST
+> /api/setup/follow` rewrites your followed set, `PUT
+> /api/notifications/prefs`, `POST /api/news/refresh`). Binding the API's own
+> port to loopback is not a security boundary; it only avoids a second,
+> unproxied entry point and keeps FastAPI's `/docs`, `/redoc` and
+> `/openapi.json` off the LAN. The ntfy port `:8090` is LAN-exposed too, and
+> unauthenticated. On an untrusted or guest network, put the whole stack
+> behind an authenticating reverse proxy or a VPN — moving ports around will
+> not help.
 
 ### Option B — macOS desktop app
 
@@ -252,8 +274,12 @@ is playing (or about to). Detected transitions are pushed to
 Each event is recorded after a successful send, so restarts and re-polls never
 duplicate an alert. Whole-league follows default to game-start + final only
 (a spam guard), and per-scope mute / event toggles live under
-`/api/notifications/prefs`. Set `SPORTSDASH_NOTIFICATIONS_ENABLED=false` to
-silence everything without touching the rest of the stack.
+`/api/notifications/prefs` — muting the `global` scope there silences
+everything without touching the rest of the stack. The
+`SPORTSDASH_NOTIFICATIONS_ENABLED=false` env var does the same for a
+non-Docker run (it is how the desktop app ships); under Compose it has to go
+in the `api` service's `environment:` block, because the root `.env` is only
+interpolated into `docker-compose.yml` and never injected into the container.
 
 ## Subscribe to your calendar
 
@@ -267,9 +293,9 @@ supports subscriptions.
 - **One team:** append `?team_id=<team-id>`, e.g.
   `webcal://<your-host>:3000/api/calendar.ics?team_id=<team-id>`.
 
-(The feed goes through the frontend on port 3000, which proxies `/api` —
-the API itself is bound to loopback and isn't reachable from other
-devices.)
+(Point calendar apps at port 3000, not 8001: the frontend proxies `/api`
+through to the backend, while the backend's own port is bound to loopback and
+so is reachable from the Docker host only.)
 
 In the Calendar tab, **Subscribe** offers ready-made `webcal://` links (all
 games plus one per followed team) with copy-to-clipboard, alongside the
