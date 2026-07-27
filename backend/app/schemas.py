@@ -42,6 +42,19 @@ class GameSideOut(BaseModel):
     score: int | None = None  # None until the game has started
 
 
+class FightResultOut(BaseModel):
+    """How a finished MMA bout ended — a round count is not a result.
+
+    Absent (``null``) for every other sport, for an unfinished bout, and
+    whenever the provider doesn't say how the fight ended.
+    """
+
+    method: str  # ko | submission | decision | disqualification | no_contest | draw
+    detail: str | None = None  # provider flavour, e.g. "Unanimous", "Rear-Naked Choke"
+    round: int | None = None  # 1-based round the bout ended in
+    clock: str | None = None  # time into that round, e.g. "4:21"
+
+
 class GameOut(BaseModel):
     id: str
     league_id: str
@@ -51,6 +64,7 @@ class GameOut(BaseModel):
     start_time: datetime  # UTC
     venue: str | None = None
     series: str | None = None  # tournament/round or fight card (individual sports)
+    fight_result: FightResultOut | None = None  # MMA: method of victory (finished bouts)
     phase: str  # scheduled | in_progress | final | postponed | canceled
     period: int
     period_label: str

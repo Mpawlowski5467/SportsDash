@@ -1,5 +1,16 @@
 import type { Game } from "../types";
 import { formatTime } from "../lib/time";
+import {
+  fightMethodLabel,
+  fightResultOf,
+  fightRoundLabel,
+  fightResultSummary,
+} from "../lib/fight";
+
+// The fight helpers live in lib/fight.ts (pure, unit-tested there, like
+// map/travel.ts and calendar/eventSpans.ts); they are re-exported here
+// because this badge is where the rest of the app already imports them from.
+export { fightMethodLabel, fightResultOf, fightRoundLabel, fightResultSummary };
 
 /**
  * Phase-appropriate status indicator for a game.
@@ -7,7 +18,7 @@ import { formatTime } from "../lib/time";
  * - scheduled            -> local start time, plain zinc text
  * - in_progress + break  -> amber pill with the period label (fallback "HT")
  * - in_progress          -> red pill with pulsing live dot, period label, clock
- * - final                -> zinc pill "FINAL"
+ * - final                -> zinc pill "FINAL" (plus the method, for a fight)
  * - postponed/canceled   -> muted zinc pill "PPD"/"CANC"
  */
 export default function StatusBadge({ game }: { game: Game }) {
@@ -41,9 +52,17 @@ export default function StatusBadge({ game }: { game: Game }) {
   }
 
   if (game.phase === "final") {
+    // A finished fight's score is a round count, so the badge carries how it
+    // actually ended; every other sport keeps the plain "FINAL" — and so does
+    // a bout whose method has no wording at all (an unusable value upstream).
+    const fight = fightResultOf(game);
+    const method = fight !== null ? fightMethodLabel(fight.method).toUpperCase() : "";
     return (
-      <span className="sd-status inline-flex items-center rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-zinc-300">
-        FINAL
+      <span
+        className="sd-status inline-flex items-center rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-zinc-300"
+        title={fight !== null ? fightResultSummary(fight) : undefined}
+      >
+        {method !== "" ? `FINAL · ${method}` : "FINAL"}
       </span>
     );
   }

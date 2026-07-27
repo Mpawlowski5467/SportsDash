@@ -83,6 +83,7 @@ def make_game(
     away_name: str = "Rivermont Stags",
     venue: str | None = "Ashport Fieldhouse",
     state: domain.GameState | None = None,
+    fight_result: domain.FightResult | None = None,
 ) -> domain.Game:
     return domain.Game(
         id=game_id,
@@ -95,6 +96,7 @@ def make_game(
         home_abbreviation="ASH",
         away_abbreviation="RIV",
         venue=venue,
+        fight_result=fight_result,
         state=state,
     )
 
@@ -305,6 +307,131 @@ async def test_upsert_games_merges_team_ids(seeded: AsyncSession) -> None:
     assert row.away_team_id == TEAM_STAGS
 
 
+async def test_upsert_games_stores_and_never_wipes_a_fight_result(
+    seeded: AsyncSession,
+) -> None:
+    """The MMA method of victory persists, and a later refresh can't erase it.
+
+    Only the schedule refresh enriches bouts with a method (the live
+    scoreboard has no team scope), so most refreshes of a finished bout
+    carry ``fight_result=None`` — which, like an omitted crest or color,
+    leaves the stored value alone.  Provider strings are clipped to their
+    column widths, which only postgres enforces.
+    """
+    session = seeded
+    start = datetime(2026, 6, 28, 3, 0, tzinfo=timezone.utc)
+    bout = make_game(
+        "mock:bout-1",
+        start_time=start,
+        home_team_id=TEAM_COMETS,
+        fight_result=domain.FightResult(
+            method=domain.FightMethod.SUBMISSION,
+            detail="Rear-Naked Choke",
+            round=2,
+            clock="4:21",
+        ),
+    )
+    await repository.upsert_games(session, [bout])
+    await session.flush()
+    session.expire_all()
+
+    row = await repository.get_game(session, "mock:bout-1")
+    assert row is not None
+    assert row.fight_method == "submission"
+    assert row.fight_detail == "Rear-Naked Choke"
+    assert row.fight_round == 2
+    assert row.fight_clock == "4:21"
+
+    # A refresh that doesn't know the method leaves the stored one alone.
+    await repository.upsert_games(session, [make_game("mock:bout-1", start_time=start)])
+    await session.flush()
+    session.expire_all()
+    row = await repository.get_game(session, "mock:bout-1")
+    assert row is not None
+    assert row.fight_method == "submission"
+    assert row.fight_detail == "Rear-Naked Choke"
+
+    # A refresh that does know it wins, oversized flavour text and all.
+    await repository.upsert_games(
+        session,
+        [
+            make_game(
+                "mock:bout-1",
+                start_time=start,
+                fight_result=domain.FightResult(
+                    method=domain.FightMethod.KO,
+                    detail="An Implausibly Verbose Finish Description From Some Provider's Feed",
+                    round=1,
+                    clock="00:58.7654321098765",
+                ),
+            )
+        ],
+    )
+    await session.flush()
+    session.expire_all()
+    row = await repository.get_game(session, "mock:bout-1")
+    assert row is not None
+    assert row.fight_method == "ko"
+    assert row.fight_detail == "An Implausibly Verbose Finish Description From Some Provider's F"
+    assert row.fight_round == 1
+    assert row.fight_clock == "00:58.7654321098"
+
+
+async def test_upsert_games_merges_a_thinner_fight_result_per_field(
+    seeded: AsyncSession,
+) -> None:
+    """A thinner incoming result must not erase a richer stored one.
+
+    The round/time/flavour come from a separate core-API call that can
+    fail on its own, leaving the schedule refresh with only what the
+    scoreboard spelled out ("Final - Submission", no time).  Merging the
+    four columns as a block would let that one transient failure wipe a
+    stoppage time already on record, so each field merges on its own.
+    """
+    session = seeded
+    start = datetime(2026, 6, 28, 3, 0, tzinfo=timezone.utc)
+    await repository.upsert_games(
+        session,
+        [
+            make_game(
+                "mock:bout-2",
+                start_time=start,
+                home_team_id=TEAM_COMETS,
+                fight_result=domain.FightResult(
+                    method=domain.FightMethod.SUBMISSION,
+                    detail="Rear-Naked Choke",
+                    round=2,
+                    clock="4:21",
+                ),
+            )
+        ],
+    )
+    await session.flush()
+    session.expire_all()
+
+    # Next day's refresh: the core call failed, so only the scoreboard's
+    # own text made it through — the method and nothing else.
+    await repository.upsert_games(
+        session,
+        [
+            make_game(
+                "mock:bout-2",
+                start_time=start,
+                fight_result=domain.FightResult(method=domain.FightMethod.SUBMISSION),
+            )
+        ],
+    )
+    await session.flush()
+    session.expire_all()
+
+    row = await repository.get_game(session, "mock:bout-2")
+    assert row is not None
+    assert row.fight_method == "submission"
+    assert row.fight_detail == "Rear-Naked Choke"
+    assert row.fight_round == 2
+    assert row.fight_clock == "4:21"
+
+
 # ---------------------------------------------------------------------------
 # State application / round-trip
 # ---------------------------------------------------------------------------
@@ -403,6 +530,61 @@ async def test_games_between_bounds_and_team_filter(seeded: AsyncSession) -> Non
         session, base, base + timedelta(days=3), team_id=TEAM_STAGS
     )
     assert [r.id for r in rows] == ["mock:gb-1"]
+
+
+async def test_events_between_matches_overlap_not_just_start(seeded: AsyncSession) -> None:
+    """Events span days: anything OVERLAPPING the window belongs in it.
+
+    Unlike a game (a point in time), a tournament that began before the
+    window opened is still on the calendar while it runs — and a null
+    ``end_time`` is a single-day event, so it is included only when its
+    own start falls inside.
+    """
+    session = seeded
+    base = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+
+    def make_event(event_id: str, *, start: datetime, end: datetime | None = None) -> domain.Event:
+        return domain.Event(
+            id=event_id,
+            league_id=LEAGUE_ID,
+            name="Ashport Open",
+            start_time=start,
+            end_time=end,
+            phase=domain.GamePhase.SCHEDULED,
+        )
+
+    await repository.upsert_events(
+        session,
+        [
+            # Finished before the window opened.
+            make_event("ev:before", start=base - timedelta(days=9), end=base - timedelta(hours=1)),
+            # Ends exactly as the window opens — the start bound is inclusive.
+            make_event("ev:ends-at-open", start=base - timedelta(days=5), end=base),
+            # Began before the window, still running inside it.
+            make_event(
+                "ev:straddles", start=base - timedelta(days=4), end=base + timedelta(days=1)
+            ),
+            # Wholly inside.
+            make_event("ev:inside", start=base + timedelta(days=1), end=base + timedelta(days=4)),
+            # No end_time: a single day, inside.
+            make_event("ev:single-day", start=base + timedelta(days=2)),
+            # No end_time: a single day that has already passed.
+            make_event("ev:single-day-past", start=base - timedelta(days=1)),
+            # Starts exactly at the (exclusive) window end.
+            make_event("ev:at-close", start=base + timedelta(days=7), end=base + timedelta(days=9)),
+        ],
+    )
+    await session.flush()
+
+    rows = await repository.events_between(session, base, base + timedelta(days=7))
+
+    # Ordered by start_time, earliest first.
+    assert [r.id for r in rows] == [
+        "ev:ends-at-open",
+        "ev:straddles",
+        "ev:inside",
+        "ev:single-day",
+    ]
 
 
 async def test_upcoming_games_for_leagues(seeded: AsyncSession) -> None:

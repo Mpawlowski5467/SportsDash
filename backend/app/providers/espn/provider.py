@@ -20,8 +20,10 @@ from app.models.domain import (
     INDIVIDUAL_SPORTS,
     LEADERBOARD_SPORTS,
     Event,
+    FightResult,
     Game,
     GameOdds,
+    GamePhase,
     GameState,
     GameSummary,
     League,
@@ -36,6 +38,8 @@ from app.models.domain import (
 
 from app.providers.espn.common import (
     _CORE_BASE,
+    _FIGHT_RESULT_CONCURRENCY,
+    _FIGHT_RESULT_MAX_BOUTS,
     _SCOREBOARD_TZ,
     _SITE_BASE,
     _STANDINGS_BASE,
@@ -45,7 +49,13 @@ from app.providers.espn.common import (
 )
 from app.providers.espn.games import _parse_schedule, _parse_scoreboard
 from app.providers.espn.golf import _event_overlaps_window, _parse_golf_scoreboard
-from app.providers.espn.individual import _games_for_athlete, _parse_individual_scoreboard
+from app.providers.espn.individual import (
+    _games_for_athlete,
+    _merge_fight_results,
+    _mma_status_urls,
+    _parse_bout_status,
+    _parse_individual_scoreboard,
+)
 from app.providers.espn.news_location import _parse_news, _parse_team_location
 from app.providers.espn.roster import (
     _athlete_id,
@@ -146,9 +156,15 @@ class EspnProvider:
         (``?dates=YYYYMM``), so each calendar month in the window is
         fetched and the bouts the athlete appears in are kept.  Each chunk
         is fetched independently; a failed chunk logs and is skipped.
+
+        MMA additionally collects each bout's core-API status URL so the
+        followed fighter's FINISHED bouts can be enriched with their method
+        of victory (see :meth:`_attach_fight_results`).
         """
         url = f"{_SITE_BASE}/{league.provider_key}/scoreboard"
+        core_league_base = f"{_CORE_BASE}/{_core_event_path(league.provider_key)}"
         batches: list[list[Game]] = []
+        status_urls: dict[str, str] = {}
         errors: list[Exception] = []
         for params in self._individual_scoreboard_params(league.sport, start, end):
             try:
@@ -164,9 +180,91 @@ class EspnProvider:
                 errors.append(exc)
                 continue
             batches.append(_parse_individual_scoreboard(data, league, team))
+            if league.sport is Sport.MMA:
+                status_urls.update(_mma_status_urls(data, core_league_base=core_league_base))
         if not batches and errors:
             raise errors[0]
-        return _games_for_athlete(_merge_games(*batches), team)
+        games = _games_for_athlete(_merge_games(*batches), team)
+        if league.sport is Sport.MMA:
+            games = await self._attach_fight_results(
+                league, games, status_urls, window=(start, end)
+            )
+        return games
+
+    async def _attach_fight_results(
+        self,
+        league: League,
+        games: list[Game],
+        status_urls: dict[str, str],
+        *,
+        window: tuple[date, date],
+    ) -> list[Game]:
+        """Fill in the method of victory for a followed fighter's finished bouts.
+
+        ESPN's scoreboard rarely spells out HOW a bout ended, so each
+        finished bout needs one core-API status call; the fan-out is
+        bounded by ``_FIGHT_RESULT_MAX_BOUTS`` /
+        ``_FIGHT_RESULT_CONCURRENCY`` and restricted to bouts that are
+        FINAL, involve the followed fighter, and fall inside the requested
+        window (the caller drops the rest, so they aren't worth a call).
+        The live scoreboard path is deliberately NOT enriched: it has no
+        team scope, so it could only fan out over whole cards.
+
+        Best-effort exactly like the roster stat-line backfill: a per-bout
+        failure — a transient outage, or a 200 that isn't JSON — leaves
+        that bout with whatever the scoreboard already knew rather than
+        failing the whole schedule or tripping the provider breaker.
+        """
+        start, end = window
+        targets = [
+            game
+            for game in games
+            if game.state is not None
+            and game.state.phase is GamePhase.FINAL
+            and (game.home_team_id is not None or game.away_team_id is not None)
+            and start <= game.start_time.date() <= end
+            and game.id in status_urls
+        ]
+        if not targets:
+            return games
+        targets.sort(key=lambda game: game.start_time, reverse=True)
+        targets = targets[:_FIGHT_RESULT_MAX_BOUTS]
+        semaphore = asyncio.Semaphore(_FIGHT_RESULT_CONCURRENCY)
+
+        async def fetch(game: Game) -> FightResult | None:
+            async with semaphore:
+                try:
+                    data = await self._get_json(status_urls[game.id])
+                # ValueError covers ``json.JSONDecodeError``: the core API
+                # answers an outage with an HTML error page under a 200, and
+                # a best-effort garnish must degrade on that exactly as it
+                # does on a connection blip.
+                except (httpx.HTTPError, TransientProviderError, ValueError) as exc:
+                    logger.warning(
+                        "ESPN bout-status call failed for %s (league %s): %s",
+                        game.id,
+                        league.id,
+                        exc,
+                    )
+                    return None
+            return _parse_bout_status(data)
+
+        fetched = await asyncio.gather(*(fetch(game) for game in targets))
+        by_id = {
+            game.id: result
+            for game, result in zip(targets, fetched, strict=False)
+            if result is not None
+        }
+        if not by_id:
+            return games
+        return [
+            (
+                replace(game, fight_result=_merge_fight_results(game.fight_result, by_id[game.id]))
+                if game.id in by_id
+                else game
+            )
+            for game in games
+        ]
 
     @staticmethod
     def _individual_scoreboard_params(sport: Sport, start: date, end: date) -> list[dict[str, str]]:
@@ -231,6 +329,10 @@ class EspnProvider:
             # Tour-wide: tennis ships the live draw, UFC the current month's
             # cards.  live_tick matches the returned games to followed rows
             # by id, so scanning the whole scoreboard is fine (no team scope).
+            # No fight-result enrichment here for exactly that reason: with
+            # no team to scope it to, it could only fan out over every bout
+            # on every card.  The schedule refresh owns that (see
+            # _attach_fight_results).
             now = timeutil.utcnow().astimezone(_SCOREBOARD_TZ)
             dates = now.strftime("%Y%m") if league.sport is Sport.MMA else now.strftime("%Y%m%d")
             data = await self._get_json(url, params={"dates": dates, "limit": "400"})
@@ -513,10 +615,11 @@ class EspnProvider:
             async with semaphore:
                 try:
                     data = await self._get_json(url)
-                except (httpx.HTTPError, TransientProviderError):
+                except (httpx.HTTPError, TransientProviderError, ValueError):
                     # Stat lines are best-effort garnish: a per-athlete blip
-                    # (incl. a transient outage) just leaves the line None and
-                    # must not trip the provider breaker for the whole app.
+                    # (a transient outage, or a 200 whose body isn't JSON —
+                    # ``json.JSONDecodeError`` is a ValueError) just leaves the
+                    # line None and must not trip the breaker for the whole app.
                     return None, None
             return (
                 _stat_line_from_overview(data, league.sport),

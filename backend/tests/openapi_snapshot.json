@@ -334,6 +334,53 @@
         "title": "EventOut",
         "type": "object"
       },
+      "FightResultOut": {
+        "description": "How a finished MMA bout ended \u2014 a round count is not a result.\n\nAbsent (``null``) for every other sport, for an unfinished bout, and\nwhenever the provider doesn't say how the fight ended.",
+        "properties": {
+          "clock": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clock"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "round": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Round"
+          }
+        },
+        "required": [
+          "method"
+        ],
+        "title": "FightResultOut",
+        "type": "object"
+      },
       "FollowRequest": {
         "properties": {
           "selections": {
@@ -564,6 +611,16 @@
               }
             ],
             "title": "Clock"
+          },
+          "fight_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FightResultOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "followed_team_ids": {
             "items": {

@@ -113,6 +113,12 @@ class GameORM(Base):
     # Tournament/round or fight-card context for individual sports
     # (e.g. "Wimbledon · QF", "UFC 320"); None for team sports.
     series: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # MMA method of victory for a finished bout (domain.FightResult);
+    # NULL for every other sport.
+    fight_method: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    fight_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fight_round: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fight_clock: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     phase: Mapped[str] = mapped_column(String(16), default="scheduled", index=True)
     home_score: Mapped[int] = mapped_column(Integer, default=0)

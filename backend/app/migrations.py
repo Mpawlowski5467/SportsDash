@@ -62,6 +62,11 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # the profile page attributes its text to the upstream source.
     ("teams", "venue_description", "TEXT"),
     ("teams", "description_source", "VARCHAR(16)"),
+    # MMA method of victory (how a finished bout ended).
+    ("games", "fight_method", "VARCHAR(24)"),
+    ("games", "fight_detail", "VARCHAR(64)"),
+    ("games", "fight_round", "INTEGER"),
+    ("games", "fight_clock", "VARCHAR(16)"),
 )
 
 

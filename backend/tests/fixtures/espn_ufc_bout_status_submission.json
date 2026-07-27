@@ -1,0 +1,23 @@
+{
+  "$ref": "http://sports.core.api.espn.com/v2/sports/mma/leagues/summit/events/990058854/competitions/9910012/status?lang=en&region=us",
+  "clock": 167.0,
+  "displayClock": "2:47",
+  "period": 1,
+  "type": {
+    "id": "3",
+    "name": "STATUS_FINAL",
+    "state": "post",
+    "completed": true,
+    "description": "Final",
+    "detail": "Final",
+    "shortDetail": "Final"
+  },
+  "result": {
+    "id": "2",
+    "name": "Submission",
+    "displayName": "Submission - Rear-Naked Choke",
+    "shortDisplayName": "SUB",
+    "description": "Submission",
+    "abbreviation": "SUB"
+  }
+}

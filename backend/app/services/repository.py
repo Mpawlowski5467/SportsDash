@@ -340,6 +340,16 @@ async def upsert_games(session: AsyncSession, games: Sequence[domain.Game]) -> i
                 start_time=ensure_utc(game.start_time),
                 venue=_clip(game.venue, 256),
                 series=_clip(game.series, 128),
+                fight_method=(
+                    game.fight_result.method.value if game.fight_result is not None else None
+                ),
+                fight_detail=(
+                    _clip(game.fight_result.detail, 64) if game.fight_result is not None else None
+                ),
+                fight_round=game.fight_result.round if game.fight_result is not None else None,
+                fight_clock=(
+                    _clip(game.fight_result.clock, 16) if game.fight_result is not None else None
+                ),
             )
             if game.state is not None:
                 _apply_state_columns(row, game.state)
@@ -366,6 +376,22 @@ async def upsert_games(session: AsyncSession, games: Sequence[domain.Game]) -> i
             row.home_color = _clip(game.home_color, 16)
         if game.away_color:
             row.away_color = _clip(game.away_color, 16)
+
+        # A method of victory only ever arrives with the final result, and a
+        # later refresh may not carry it — never let an incoming None wipe a
+        # stored one.  The merge is PER FIELD, not per block: only the method
+        # is guaranteed to be there, and the round/time/flavour come from a
+        # separate (core-API) call that can fail on its own, so a thinner
+        # incoming result must not erase a richer stored one.  Same overlay
+        # rule the provider applies in ``_merge_fight_results``.
+        if game.fight_result is not None:
+            row.fight_method = game.fight_result.method.value
+            if game.fight_result.detail is not None:
+                row.fight_detail = _clip(game.fight_result.detail, 64)
+            if game.fight_result.round is not None:
+                row.fight_round = game.fight_result.round
+            if game.fight_result.clock is not None:
+                row.fight_clock = _clip(game.fight_result.clock, 16)
 
         # Merge team ids: never overwrite a stored id with None.
         if game.home_team_id is not None:

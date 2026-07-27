@@ -3,7 +3,11 @@ import { useMemo, useState } from "react";
 import type { Game, GameOdds, GameSide, League, Sport } from "../types";
 import { useTeams } from "../hooks";
 import GameDetailModal from "./GameDetailModal";
-import StatusBadge from "./StatusBadge";
+import StatusBadge, {
+  fightResultOf,
+  fightResultSummary,
+  fightRoundLabel,
+} from "./StatusBadge";
 import TeamLogo from "./TeamLogo";
 
 /**
@@ -70,6 +74,18 @@ function favoriteChip(
     };
   }
   return null;
+}
+
+/**
+ * When a finished fight ended, for the footer chip: the badge already names
+ * the method, so this adds only the round and stoppage time. Null for every
+ * sport but MMA, and whenever the provider didn't report the round.
+ */
+function fightRoundChip(game: Game): { label: string; title: string } | null {
+  const fight = fightResultOf(game);
+  if (fight === null) return null;
+  const label = fightRoundLabel(fight);
+  return label === null ? null : { label, title: fightResultSummary(fight) };
 }
 
 /** Color of the first followed team that has an entry in the color map. */
@@ -199,6 +215,8 @@ export default function GameCard({
   // Win-prob / line chip only makes sense before / during a game.
   const chip =
     odds != null && game.phase !== "final" ? favoriteChip(game, odds) : null;
+  // ...and once it's over, a finished fight puts the round/time in its place.
+  const fightChip = fightRoundChip(game);
 
   return (
     <>
@@ -240,6 +258,14 @@ export default function GameCard({
                 title={chip.title}
               >
                 {chip.label}
+              </span>
+            )}
+            {fightChip !== null && (
+              <span
+                className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-800/60 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-400"
+                title={fightChip.title}
+              >
+                {fightChip.label}
               </span>
             )}
           </span>

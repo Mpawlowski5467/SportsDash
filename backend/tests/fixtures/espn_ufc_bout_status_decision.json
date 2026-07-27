@@ -1,0 +1,23 @@
+{
+  "$ref": "http://sports.core.api.espn.com/v2/sports/mma/leagues/summit/events/990058854/competitions/9910002/status?lang=en&region=us",
+  "clock": 300.0,
+  "displayClock": "5:00",
+  "period": 3,
+  "type": {
+    "id": "3",
+    "name": "STATUS_FINAL",
+    "state": "post",
+    "completed": true,
+    "description": "Final",
+    "detail": "Final",
+    "shortDetail": "Final"
+  },
+  "result": {
+    "id": "5",
+    "name": "Decision",
+    "displayName": "Decision - Unanimous",
+    "shortDisplayName": "U-DEC",
+    "description": "Decision",
+    "abbreviation": "DEC"
+  }
+}
