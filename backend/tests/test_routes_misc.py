@@ -8,7 +8,7 @@ fictional names only.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import AsyncIterator
 
 import pytest
@@ -21,12 +21,17 @@ from sqlalchemy.ext.asyncio import (
 
 from app.db import get_session
 from tests.db_engine import create_test_schema, make_test_engine
-from app.models.orm import EventORM, LeagueORM, StandingsORM, TeamORM
+from app.models.domain import GameSummary, Goal
+from app.models.orm import EventORM, GameORM, LeagueORM, StandingsORM, TeamORM
+from app.providers import registry
 from app.routes import router as api_router
+from app.routes import scorers as scorers_route
 from app.timeutil import utcnow
 
 LEAGUE_ID = "violet-circuit"
 GOLF_LEAGUE_ID = "gilded-links"
+# /scorers only walks soccer leagues (goals are parsed for no other sport).
+SOCCER_LEAGUE_ID = "azure-coast-cup"
 EVENT_ID = "mock:gl-open"
 
 
@@ -60,6 +65,15 @@ async def seeded(db: async_sessionmaker[AsyncSession]) -> None:
                 name="Gilded Links Tour",
                 provider="mock",
                 provider_key="mock-golf",
+            )
+        )
+        session.add(
+            LeagueORM(
+                id=SOCCER_LEAGUE_ID,
+                sport="soccer",
+                name="Azure Coast Cup",
+                provider="mock",
+                provider_key="mock-soccer",
             )
         )
         # Parents flushed before children — Postgres enforces the FKs.
@@ -157,12 +171,106 @@ async def test_scorers_unknown_league_404(client: AsyncClient) -> None:
 async def test_scorers_unregistered_provider_degrades_to_empty(
     client: AsyncClient,
 ) -> None:
-    # The seeded league's provider ("mock") is not in the registry: the
-    # route must degrade to an empty board, not 500.
-    response = await client.get(f"/api/scorers/{LEAGUE_ID}")
+    # The seeded soccer league's provider ("mock") is not in the registry:
+    # the route must degrade to an empty board, not 500.
+    response = await client.get(f"/api/scorers/{SOCCER_LEAGUE_ID}")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["league_id"] == LEAGUE_ID
+    assert payload["league_id"] == SOCCER_LEAGUE_ID
+    assert payload["rows"] == []
+
+
+class _RecordingSummaryProvider:
+    """Provider that records every summary the route asks it for."""
+
+    provider_id = "mock"
+
+    def __init__(self) -> None:
+        self.requested: list[str] = []
+
+    async def get_game_summary(self, league: object, provider_game_key: str) -> GameSummary:
+        self.requested.append(provider_game_key)
+        return GameSummary(
+            game_id=provider_game_key,
+            goals=(Goal(player="Wren Halloway", team="Glimmer Foxes"),),
+        )
+
+
+def _seed_finals(
+    session: AsyncSession, league_id: str, prefix: str, count: int, now: datetime
+) -> None:
+    """Add ``count`` FINAL games to ``league_id``, oldest first."""
+    for index in range(count):
+        session.add(
+            GameORM(
+                id=f"mock:{prefix}-{index:04d}",
+                league_id=league_id,
+                home_name="Glimmer Foxes",
+                away_name="Bramblewick Falcons",
+                start_time=now - timedelta(days=count - index),
+                phase="final",
+            )
+        )
+
+
+async def test_scorers_caps_the_summary_fan_out_to_the_recent_games(
+    db: async_sessionmaker[AsyncSession],
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The walk costs one upstream summary per FINAL game, so it must be bounded.
+
+    Finished games are never pruned, so an uncapped fan-out grows every
+    matchweek (and across seasons) until a burst rate-limits the provider.
+    The cap keeps the most recent games and reports what it actually walked.
+    """
+    total = scorers_route._MAX_GAMES + 5
+    now = utcnow()
+    async with db() as session:
+        _seed_finals(session, SOCCER_LEAGUE_ID, "ac", total, now)
+        await session.commit()
+
+    provider = _RecordingSummaryProvider()
+    monkeypatch.setitem(registry._providers, "mock", provider)
+
+    response = await client.get(f"/api/scorers/{SOCCER_LEAGUE_ID}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    # Bounded — and the games kept are the most recent ones, not the openers.
+    assert len(provider.requested) == scorers_route._MAX_GAMES
+    assert set(provider.requested) == {f"ac-{index:04d}" for index in range(5, total)}
+    # The count the client sees matches what was actually tallied.
+    assert payload["games_counted"] == scorers_route._MAX_GAMES
+    assert payload["rows"][0]["player"] == "Wren Halloway"
+    assert payload["rows"][0]["goals"] == scorers_route._MAX_GAMES
+
+
+async def test_scorers_skips_the_fan_out_entirely_for_non_soccer_leagues(
+    db: async_sessionmaker[AsyncSession],
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only soccer summaries carry goals, so no other sport may fan out.
+
+    A basketball league's finished games would each cost one upstream
+    summary call to tally a guaranteed-empty board; the route must answer
+    from the league row alone.
+    """
+    now = utcnow()
+    async with db() as session:
+        _seed_finals(session, LEAGUE_ID, "vc", 6, now)
+        await session.commit()
+
+    provider = _RecordingSummaryProvider()
+    monkeypatch.setitem(registry._providers, "mock", provider)
+
+    response = await client.get(f"/api/scorers/{LEAGUE_ID}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert provider.requested == []
+    assert payload["games_counted"] == 0
     assert payload["rows"] == []
 
 

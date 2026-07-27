@@ -1074,6 +1074,52 @@ async def test_save_standings_drops_team_ids_no_longer_followed(
 
 
 # ---------------------------------------------------------------------------
+# Replacing the followed set
+# ---------------------------------------------------------------------------
+
+
+async def test_replace_followed_wipes_every_leagues_fk_child(seeded: AsyncSession) -> None:
+    """Re-following must clear the archive, the last leagues-FK child.
+
+    ``standings_archive`` is written by every standings refresh, so it is
+    populated minutes after the first setup; leaving it behind made the
+    unqualified ``DELETE FROM leagues`` violate its FK on postgres (a 500
+    from the wizard, permanently) and orphan stale tables on sqlite.  The
+    test engine enables ``PRAGMA foreign_keys=ON``, so the omission fails
+    here rather than only in production.
+    """
+    await repository.save_standings_archive(
+        seeded,
+        domain.Standings(
+            league_id=LEAGUE_ID,
+            season="2025-26",
+            rows=(domain.StandingRow(rank=1, team_name="Ashport Comets", wins=21, losses=9),),
+            fetched_at=utcnow(),
+        ),
+    )
+    await seeded.flush()
+    assert await repository.get_standings_archive(seeded, LEAGUE_ID, "2026") is not None
+
+    await repository.replace_followed(
+        seeded,
+        [
+            domain.League(
+                id="harborlight-hockey",
+                sport=domain.Sport.HOCKEY,
+                name="Harborlight Hockey League",
+                provider="espn",
+                provider_key="hockey/harborlight",
+            )
+        ],
+        [],
+    )
+    await seeded.flush()
+
+    assert await repository.get_standings_archive(seeded, LEAGUE_ID, "2026") is None
+    assert await repository.get_league(seeded, LEAGUE_ID) is None
+
+
+# ---------------------------------------------------------------------------
 # Team "About" facts (club history + stadium prose)
 # ---------------------------------------------------------------------------
 

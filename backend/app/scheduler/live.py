@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 
 from app.config import get_settings
@@ -15,7 +16,7 @@ from app.db import session_scope
 from app import background
 from app.models import domain
 from app.models.domain import EventType, GameEvent, GamePhase, GameState
-from app.models.orm import EventORM, GameORM
+from app.models.orm import EventORM, GameORM, NotificationPrefORM
 from app.services import (
     notify,
     notify_prefs,
@@ -95,6 +96,61 @@ def _row_team_ids(row: GameORM) -> list[str]:
     return [tid for tid in (row.home_team_id, row.away_team_id) if tid is not None]
 
 
+# ---------------------------------------------------------------------------
+# Session-independent snapshots
+#
+# Both ticks isolate a failing game/event by rolling the session back, and
+# ``rollback()`` expires every object in the identity map — the session
+# factory's ``expire_on_commit=False`` (app/db.py) exempts commits only.  A
+# later attribute read on one of those rows would then lazy-load from a sync
+# context and raise MissingGreenlet *outside* the per-item handler, aborting
+# the whole tick (and its trailing standings kick) instead of the one item it
+# meant to skip.  So the loops below walk plain data read up front, the same
+# way ``_load_leagues_and_teams`` detaches its rows.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _PollTarget:
+    """Everything the live loop needs from one stored game row."""
+
+    id: str
+    league_id: str
+    home_name: str
+    away_name: str
+    start_time: datetime
+    team_ids: tuple[str, ...]
+    state: GameState  # the stored snapshot the fresh state is diffed against
+
+
+def _poll_target(row: GameORM) -> _PollTarget:
+    return _PollTarget(
+        id=row.id,
+        league_id=row.league_id,
+        home_name=row.home_name,
+        away_name=row.away_name,
+        start_time=ensure_utc(row.start_time),
+        team_ids=tuple(_row_team_ids(row)),
+        state=repository.state_from_row(row),
+    )
+
+
+@dataclass(frozen=True)
+class _Pref:
+    """A stored preference row, detached (structurally a ``_PrefLike``)."""
+
+    muted: bool
+    events: dict[str, bool]
+
+
+def _prefs_snapshot(rows: dict[str, NotificationPrefORM]) -> dict[str, _Pref]:
+    """Detach the per-tick preference map so ``decide`` never lazy-loads."""
+    return {
+        scope: _Pref(muted=bool(row.muted), events=dict(row.events or {}))
+        for scope, row in rows.items()
+    }
+
+
 async def _resend_missed_finals(session, prefs, now) -> None:
     """Re-send FINAL notifications dropped when their first send failed.
 
@@ -148,7 +204,7 @@ async def live_tick() -> None:
             # Notification preferences are loaded once per tick and consulted
             # before every send (most-specific scope wins; see notify_prefs).
             # Loaded first because the resend step also needs them.
-            prefs = await repository.prefs_by_scope(session)
+            prefs = _prefs_snapshot(await repository.prefs_by_scope(session))
 
             # Resend any FINAL whose first send failed — committed as state but
             # never marked notified, then dropped out of the gate below, so
@@ -187,12 +243,19 @@ async def live_tick() -> None:
                     await _notify_once(session, event)
             await session.commit()
 
-            # 3. Group rows by league; one scoreboard call per league.
-            league_rows = await repository.list_leagues(session)
-            leagues_by_id = {row.id: row for row in league_rows}
-            rows_by_league: defaultdict[str, list[GameORM]] = defaultdict(list)
+            # 3. Group rows by league; one scoreboard call per league.  Both
+            # the leagues and the games are snapshotted here, before any
+            # provider work, so the per-game recovery below can't poison the
+            # rest of the walk (see "Session-independent snapshots").
+            leagues_by_id: dict[str, domain.League] = {}
+            for league_row in await repository.list_leagues(session):
+                try:
+                    leagues_by_id[league_row.id] = _league_from_row(league_row)
+                except Exception:
+                    logger.exception("live_tick: invalid league row %r — skipping", league_row.id)
+            targets_by_league: defaultdict[str, list[_PollTarget]] = defaultdict(list)
             for row in rows:
-                rows_by_league[row.league_id].append(row)
+                targets_by_league[row.league_id].append(_poll_target(row))
 
             # Leagues whose game(s) transitioned to FINAL this tick — one
             # standings refresh is kicked per league at the end (coalesced),
@@ -200,15 +263,10 @@ async def live_tick() -> None:
             # league once per finished game.
             finalized_leagues: dict[str, domain.League] = {}
 
-            for league_id, games_rows in rows_by_league.items():
-                league_row = leagues_by_id.get(league_id)
-                if league_row is None:
+            for league_id, targets in targets_by_league.items():
+                league = leagues_by_id.get(league_id)
+                if league is None:
                     logger.error("live_tick: games reference unknown league %r", league_id)
-                    continue
-                try:
-                    league = _league_from_row(league_row)
-                except Exception:
-                    logger.exception("live_tick: invalid league row %r — skipping", league_id)
                     continue
                 provider = _provider_for(league)
                 if provider is None:
@@ -225,23 +283,22 @@ async def live_tick() -> None:
                     game.id: game.state for game in live_games if game.state is not None
                 }
 
-                for row in games_rows:
-                    new_state = states_by_id.get(row.id)
+                for target in targets:
+                    prev = target.state
+                    new_state = states_by_id.get(target.id)
                     # Fall back to a direct fetch when the scoreboard didn't
                     # cover the game: it just ended and dropped off, or it's
                     # overdue to start but listed under a different scoreboard
                     # day than the one we queried.
-                    overdue = (
-                        row.phase == GamePhase.SCHEDULED.value and ensure_utc(row.start_time) <= now
-                    )
-                    if new_state is None and (row.phase == GamePhase.IN_PROGRESS.value or overdue):
+                    overdue = prev.phase is GamePhase.SCHEDULED and target.start_time <= now
+                    if new_state is None and (prev.phase is GamePhase.IN_PROGRESS or overdue):
                         try:
                             new_state = await provider.get_game_state(
-                                league, _provider_game_key(row.id)
+                                league, _provider_game_key(target.id)
                             )
                         except Exception:
                             logger.exception(
-                                "live_tick: get_game_state failed for %r — skipping", row.id
+                                "live_tick: get_game_state failed for %r — skipping", target.id
                             )
                             continue
                     if new_state is None:
@@ -250,18 +307,17 @@ async def live_tick() -> None:
                     # 4. Diff against the stored snapshot, persist, notify,
                     # and commit this game before moving to the next one.
                     try:
-                        prev = repository.state_from_row(row)
                         events = diff_states(
                             prev,
                             new_state,
-                            home_name=row.home_name,
-                            away_name=row.away_name,
+                            home_name=target.home_name,
+                            away_name=target.away_name,
                         )
                         await repository.apply_game_state(session, new_state)
-                        team_ids = _row_team_ids(row)
+                        team_ids = list(target.team_ids)
                         for event in events:
                             if not notify_prefs.decide(
-                                prefs, event.type.value, team_ids, row.league_id
+                                prefs, event.type.value, team_ids, target.league_id
                             ):
                                 continue
                             await _notify_once(session, event)
@@ -274,7 +330,7 @@ async def live_tick() -> None:
                         if prev.phase is not GamePhase.FINAL and new_state.phase is GamePhase.FINAL:
                             finalized_leagues.setdefault(league.id, league)
                     except Exception:
-                        logger.exception("live_tick: failed processing %r — skipping", row.id)
+                        logger.exception("live_tick: failed processing %r — skipping", target.id)
                         await session.rollback()
                         continue
 
@@ -400,16 +456,22 @@ async def events_tick() -> None:
     try:
         now = utcnow()
         async with session_scope() as session:
-            prefs = await repository.prefs_by_scope(session)
+            prefs = _prefs_snapshot(await repository.prefs_by_scope(session))
 
             # Resend any tournament FINAL whose first send failed — committed
             # as state, never marked notified, then dropped from active_events.
             await _resend_missed_event_finals(session, prefs, now)
 
-            # 1. Cheap gate: in-progress (or about-to-start) events only.
-            rows = await repository.active_events(session, now, _EVENTS_LOOKAHEAD)
-            rows = [row for row in rows if row.phase == GamePhase.IN_PROGRESS.value]
-            if not rows:
+            # 1. Cheap gate: in-progress (or about-to-start) events only.  Only
+            # the ids are carried into the loop — the per-event recovery below
+            # rolls the session back, expiring the rows themselves (see
+            # "Session-independent snapshots").
+            active = [
+                (row.id, row.league_id)
+                for row in await repository.active_events(session, now, _EVENTS_LOOKAHEAD)
+                if row.phase == GamePhase.IN_PROGRESS.value
+            ]
+            if not active:
                 return
 
             leagues, teams = await _load_leagues_and_teams()
@@ -421,13 +483,13 @@ async def events_tick() -> None:
             # rows, so a fresh FINAL state is by definition a transition.
             finalized_leagues: dict[str, domain.League] = {}
 
-            for row in rows:
-                league = leagues.get(row.league_id)
+            for event_id, event_league_id in active:
+                league = leagues.get(event_league_id)
                 if league is None:
                     logger.error(
                         "events_tick: event %r references unknown league %r — skipping",
-                        row.id,
-                        row.league_id,
+                        event_id,
+                        event_league_id,
                     )
                     continue
                 provider = _provider_for(league)
@@ -435,10 +497,10 @@ async def events_tick() -> None:
                     continue
 
                 try:
-                    fresh = await provider.get_event_state(league, _event_provider_key(row.id))
+                    fresh = await provider.get_event_state(league, _event_provider_key(event_id))
                 except Exception:
                     logger.exception(
-                        "events_tick: get_event_state failed for %r — skipping", row.id
+                        "events_tick: get_event_state failed for %r — skipping", event_id
                     )
                     continue
                 if fresh is None:
@@ -456,7 +518,7 @@ async def events_tick() -> None:
                                 r.player_id for r in tagged.leaderboard if r.player_id is not None
                             ]
                             if notify_prefs.decide(
-                                prefs, event.type.value, followed_ids, row.league_id
+                                prefs, event.type.value, followed_ids, event_league_id
                             ):
                                 await _notify_once(session, event)
                     await session.commit()
@@ -466,7 +528,7 @@ async def events_tick() -> None:
                     if tagged.phase is GamePhase.FINAL:
                         finalized_leagues.setdefault(league.id, league)
                 except Exception:
-                    logger.exception("events_tick: failed processing %r — skipping", row.id)
+                    logger.exception("events_tick: failed processing %r — skipping", event_id)
                     await session.rollback()
                     continue
 

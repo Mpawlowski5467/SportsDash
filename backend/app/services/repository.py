@@ -900,9 +900,12 @@ async def save_standings_archive(
 ) -> StandingsArchiveORM | None:
     """Upsert one season's table into the archive; None if the key is unknowable.
 
-    Archive rows deliberately drop the followed-team ``team_id`` tags —
-    they reference the CURRENT follow set, which is meaningless for a
-    past season (and would dangle after a re-follow).
+    Archive rows deliberately drop the followed-team ``team_id`` tags:
+    they mark rows belonging to the CURRENT follow set, which says nothing
+    about a past season's table and would render it with today's
+    highlighting.  The stored season stands on its own, by name.  (Nothing
+    survives a re-follow to go stale either — :func:`replace_followed`
+    clears the archive with the rest of the derived data.)
     """
     key = season_key or season_key_from_label(standings.season)
     if key is None:
@@ -1048,7 +1051,7 @@ async def replace_followed(
     teams: list[domain.Team],
     competitions: list[tuple[str, str, str]] | None = None,
 ) -> None:
-    """Replace the followed set wholesale (setup wizard / demo install).
+    """Replace the followed set wholesale (the setup wizard's save).
 
     All cached sports data is disposable — it derives entirely from
     provider fetches keyed off the followed set — so it is wiped along
@@ -1069,6 +1072,7 @@ async def replace_followed(
         GameORM,
         EventORM,
         StandingsORM,
+        StandingsArchiveORM,
         TeamORM,
         LeagueORM,
     ):

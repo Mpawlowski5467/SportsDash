@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import (
 
 from app.models import domain
 from tests.db_engine import create_test_schema, make_test_engine
-from app.models.orm import EventORM, TeamCompetitionORM, TeamORM
+from app.models.orm import EventORM, NotificationPrefORM, TeamCompetitionORM, TeamORM
 from app.providers import registry
 from app import background
 from app.scheduler import common as scheduler_common
@@ -908,6 +908,119 @@ async def test_live_tick_standings_failure_does_not_raise(
     async with db() as session:
         row = await repository.get_game(session, game_id)
         assert row is not None and row.phase == domain.GamePhase.FINAL.value
+
+
+# ---------------------------------------------------------------------------
+# Per-item isolation when a DB write fails mid-tick
+# ---------------------------------------------------------------------------
+#
+# Both ticks recover from a failed game/event by rolling the session back.
+# ``rollback()`` expires every object in the identity map (unlike commit,
+# which ``expire_on_commit=False`` exempts), so reading the NEXT row's
+# columns straight off its ORM object raised MissingGreenlet — from outside
+# the per-item handler, aborting the whole tick and skipping the trailing
+# standings kick.  The loops walk detached snapshots now; these tests fail
+# with a MissingGreenlet-swallowed "tick failed" if that regresses.
+
+
+async def test_live_tick_db_error_on_one_game_still_finishes_the_tick(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    fake_provider: FakeProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mid-loop DB failure costs one game, not the rest of the tick."""
+    doomed = f"{PROVIDER_ID}:nsu-doomed"
+    survivor = f"{PROVIDER_ID}:nsu-survivor"
+    async with db() as session:
+        await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
+        await repository.upsert_team(session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global"))
+        # A stored preference row: ``decide`` reads it for the game AFTER the
+        # rollback too, so the expired-prefs half of the bug is covered.
+        session.add(NotificationPrefORM(scope=f"team:{TEAM_ID}", muted=False, events={}))
+        await session.commit()
+    await _seed_in_progress_game(db, doomed, PRIMARY_LEAGUE, team_id=TEAM_ID)
+    await _seed_in_progress_game(db, survivor, PRIMARY_LEAGUE, team_id=TEAM_ID)
+
+    # Both games are FINAL on the scoreboard; only the first one's write fails
+    # — a locked sqlite or a dropped asyncpg connection, from the loop's view.
+    fake_provider.live_games[PRIMARY_LEAGUE] = [
+        _live_game(doomed, PRIMARY_LEAGUE, phase=domain.GamePhase.FINAL, home_team_id=TEAM_ID),
+        _live_game(survivor, PRIMARY_LEAGUE, phase=domain.GamePhase.FINAL, home_team_id=TEAM_ID),
+    ]
+    real_apply = repository.apply_game_state
+
+    async def flaky_apply(session: AsyncSession, state: domain.GameState) -> None:
+        if state.game_id == doomed:
+            raise RuntimeError("simulated DB failure")
+        await real_apply(session, state)
+
+    monkeypatch.setattr(repository, "apply_game_state", flaky_apply)
+
+    await jobs.live_tick()
+    await _drain_kicked_tasks()
+
+    async with db() as session:
+        failed = await repository.get_game(session, doomed)
+        processed = await repository.get_game(session, survivor)
+    # The failed game kept its stored state; the next one was still walked.
+    assert failed is not None and failed.phase == domain.GamePhase.IN_PROGRESS.value
+    assert processed is not None and processed.phase == domain.GamePhase.FINAL.value
+    # ...and the tick reached its trailing standings kick.
+    assert fake_provider.standings_calls == [PRIMARY_LEAGUE]
+
+
+async def test_events_tick_db_error_on_one_event_still_finishes_the_tick(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    fake_provider: FakeProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """events_tick counterpart: one bad board doesn't abort the poll."""
+    doomed = f"{PROVIDER_ID}:doomed-open"
+    survivor = f"{PROVIDER_ID}:survivor-open"
+    async with db() as session:
+        await repository.upsert_league(session, _golf_league(GOLF_LEAGUE))
+        await repository.upsert_team(
+            session, _golf_team(GOLFER_TEAM_ID, GOLF_LEAGUE, espn_id=GOLFER_ESPN_ID)
+        )
+        # A stored preference row: ``decide`` reads it for the event AFTER the
+        # rollback too, so the expired-prefs half of the bug is covered.
+        session.add(NotificationPrefORM(scope=f"team:{GOLFER_TEAM_ID}", muted=False, events={}))
+        await repository.upsert_events(
+            session,
+            [
+                _event(event_id, GOLF_LEAGUE, phase=domain.GamePhase.IN_PROGRESS)
+                for event_id in (doomed, survivor)
+            ],
+        )
+        await session.commit()
+
+    for event_id in (doomed, survivor):
+        fake_provider.event_states[event_id.split(":", 1)[1]] = _event(
+            event_id,
+            GOLF_LEAGUE,
+            phase=domain.GamePhase.FINAL,
+            round_label="Final Round",
+            leaderboard=_board((1, "1", "Rowan Ashgrove", "-16", GOLFER_ESPN_ID)),
+        )
+    real_upsert = repository.upsert_events
+
+    async def flaky_upsert(session: AsyncSession, events: list[domain.Event]) -> None:
+        if any(event.id == doomed for event in events):
+            raise RuntimeError("simulated DB failure")
+        await real_upsert(session, events)
+
+    monkeypatch.setattr(repository, "upsert_events", flaky_upsert)
+
+    await jobs.events_tick()
+    await _drain_kicked_tasks()
+
+    failed = await _get_event(db, doomed)
+    processed = await _get_event(db, survivor)
+    assert failed is not None and failed.phase == domain.GamePhase.IN_PROGRESS.value
+    assert processed is not None and processed.phase == domain.GamePhase.FINAL.value
+    assert fake_provider.standings_calls == [GOLF_LEAGUE]
 
 
 # ---------------------------------------------------------------------------
