@@ -1,9 +1,13 @@
 name: Live provider smoke
 
-# Weekly, non-blocking canary: one real ESPN call + one real
-# TheSportsDB call, asserting they still parse (upstream schema drift is
-# the main failure mode the hermetic suite cannot catch). Strictly
-# separate from ci.yml — this never gates a merge.
+# Weekly canary: one real ESPN call + one real TheSportsDB call, asserting
+# they still parse (upstream schema drift is the main failure mode the
+# hermetic suite cannot catch). Strictly separate from ci.yml — the trigger
+# list below is schedule/dispatch only, so this can never gate a merge.
+#
+# It *can* fail the run, and that is the point: a failed scheduled run is
+# what mails the maintainer. Transient upstream blips are absorbed by the
+# retry in the probe step rather than by swallowing the exit code.
 
 on:
   schedule:
@@ -13,7 +17,6 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    continue-on-error: true
     defaults:
       run:
         working-directory: backend
@@ -23,6 +26,19 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements*.txt
-      - run: pip install -r requirements.txt
-      - run: python -m tests.live_smoke
+          cache-dependency-path: backend/requirements*
+      # The lock, like every other install path — otherwise a breaking
+      # release of an unpinned dependency reports through the same channel
+      # as genuine provider drift, which is the one thing this job exists
+      # to isolate.
+      - run: pip install -r requirements.lock
+      - name: Probe live providers
+        # One failure is far more often a rate limit or a network blip than
+        # real schema drift, so retry once after a pause. Failing both
+        # attempts is the signal worth acting on; failing only the first
+        # leaves a warning annotation behind and keeps the run green.
+        run: |
+          if python -m tests.live_smoke; then exit 0; fi
+          echo "::warning::live smoke failed — retrying in 60s in case upstream is just flaky"
+          sleep 60
+          python -m tests.live_smoke

@@ -16,6 +16,7 @@ Run directly for a local smoke test::
     python desktop_server.py            # serves on 127.0.0.1:8765
     SPORTSDASH_PORT=9000 python desktop_server.py
 """
+
 from __future__ import annotations
 
 import os
@@ -54,18 +55,17 @@ def _configure_environment() -> None:
 
     db_path = data_dir / "sportsdash.db"
     # Four slashes => absolute path for SQLAlchemy's sqlite URL form.
-    os.environ.setdefault(
-        "SPORTSDASH_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}"
-    )
-    os.environ.setdefault(
-        "SPORTSDASH_TEAMS_CONFIG_PATH", str(resources / "config" / "teams.yaml")
-    )
-    # The Tauri webview loads from these origins (v2 custom-protocol hosts);
-    # 127.0.0.1:1420 covers `tauri dev`. fetch() sends no credentials, so a
-    # fixed allow-list is all the CORS we need.
+    os.environ.setdefault("SPORTSDASH_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    os.environ.setdefault("SPORTSDASH_TEAMS_CONFIG_PATH", str(resources / "config" / "teams.yaml"))
+    # The Tauri webview loads from these origins (v2 custom-protocol hosts).
+    # http://localhost:5173 is the Vite dev server `tauri dev` points at
+    # (tauri.conf.json `devUrl`); it only matters if VITE_API_BASE is set to
+    # the sidecar URL, since the dev default is a same-origin Vite proxy.
+    # fetch() sends no credentials, so a fixed allow-list is all the CORS we
+    # need.
     os.environ.setdefault(
         "SPORTSDASH_CORS_ORIGINS",
-        '["tauri://localhost","http://tauri.localhost","http://localhost:1420"]',
+        '["tauri://localhost","http://tauri.localhost","http://localhost:5173"]',
     )
     # Desktop app is single-user on the loopback; the self-hosted ntfy/redis
     # bits stay off unless the user opts in via real env vars.

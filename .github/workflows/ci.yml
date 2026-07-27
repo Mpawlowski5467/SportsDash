@@ -22,12 +22,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          # Glob without the extension so requirements.lock — the file
+          # actually installed below — is part of the cache key.
           cache: pip
-          cache-dependency-path: backend/requirements*.txt
+          cache-dependency-path: backend/requirements*
       - run: pip install -r requirements.lock -r requirements-dev.txt
-      - run: ruff check app tests
-      - run: ruff format --check app tests
-      # The suite is hermetic (no network) and runs in ~5s.
+      # desktop_server.py is the PyInstaller entrypoint for the shipped
+      # macOS app; it lives outside app/ but is production code.
+      - run: ruff check app tests desktop_server.py
+      - run: ruff format --check app tests desktop_server.py
+      # The suite is hermetic (no network) and runs in ~5s. Coverage needs
+      # the greenlet tracer from pyproject.toml to see through SQLAlchemy's
+      # async bridge.
       - run: pytest -q --cov=app --cov-report=term-missing
 
   # Same suite against real Postgres/asyncpg — the driver returns tz-AWARE
@@ -59,7 +65,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements*.txt
+          cache-dependency-path: backend/requirements*
       - run: pip install -r requirements.lock -r requirements-dev.txt
       - run: pytest -q
 
@@ -73,6 +79,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
-      - run: bun run lint
+      # exhaustive-deps stays advisory (the codebase hand-tunes several dep
+      # arrays on purpose), but a stale eslint-disable must fail: catching
+      # those is the reason eslint.config.js exists, and at plain "warn" the
+      # step exits 0 and reports nothing.
+      - run: bun run lint --report-unused-disable-directives-severity=error
       - run: bun run test
       - run: bun run build

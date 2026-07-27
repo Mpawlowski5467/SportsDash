@@ -3,8 +3,9 @@
 For a live-data-only app, upstream schema drift is the failure mode the
 recorded-fixture tests cannot catch. This script makes one real ESPN
 call and one real TheSportsDB call and asserts they still parse into
-non-empty domain objects. Run weekly (non-blocking) by
-.github/workflows/live-smoke.yml:
+non-empty domain objects. Run weekly by
+.github/workflows/live-smoke.yml, which fails the scheduled run on a
+second consecutive failure but never gates a merge:
 
     cd backend && python -m tests.live_smoke
 """

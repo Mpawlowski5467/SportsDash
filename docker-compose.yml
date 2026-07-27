@@ -24,8 +24,13 @@ services:
       - ntfy-cache:/var/cache/ntfy
     ports:
       # Deliberately LAN-exposed: phones subscribe to the notification
-      # topic directly. The topic name is the only secret — set a random
-      # SPORTSDASH_NTFY_TOPIC in .env rather than the default.
+      # topic directly.  This ntfy runs with no auth file, so *anyone* who
+      # can reach :8090 may both read the topic and publish to it — a
+      # guessable topic means a stranger on the LAN reads your alerts and
+      # can push arbitrary notifications to your phone.  The topic name is
+      # the only secret, so it must actually be secret: generate one with
+      # `openssl rand -hex 16` and put it in .env.  There is deliberately
+      # no default (see SPORTSDASH_NTFY_TOPIC below).
       - "8090:80"
     restart: unless-stopped
 
@@ -38,15 +43,26 @@ services:
       SPORTSDASH_DATABASE_URL: postgresql+asyncpg://sportsdash:sportsdash@db:5432/sportsdash
       SPORTSDASH_REDIS_URL: redis://redis:6379/0
       SPORTSDASH_NTFY_URL: http://ntfy
-      SPORTSDASH_NTFY_TOPIC: ${SPORTSDASH_NTFY_TOPIC:-sportsdash}
+      SPORTSDASH_NTFY_TOPIC: ${SPORTSDASH_NTFY_TOPIC:?set SPORTSDASH_NTFY_TOPIC in .env to a random string (e.g. `openssl rand -hex 16`) — the ntfy server allows anonymous read/write, so the topic name is the only thing keeping your alerts private}
       SPORTSDASH_TIMEZONE: ${SPORTSDASH_TIMEZONE:-America/New_York}
     volumes:
       # Edit backend/config/teams.yaml on the host, then restart the api
       # service — no image rebuild needed.
       - ./backend/config:/app/config:ro
     ports:
-      # Loopback-only: the API has no auth, so it must not be reachable
-      # from the LAN — other devices go through the frontend's /api proxy.
+      # Bound to loopback, but do NOT read that as a security boundary: the
+      # frontend on :3000 is LAN-published and proxies every /api path and
+      # method straight through, so any device on the LAN already reaches
+      # the whole API — including the mutating endpoints (POST
+      # /api/setup/follow rewrites the followed set, PUT
+      # /api/notifications/prefs, POST /api/news/refresh).  That is the
+      # intended trust model: SportsDash is a single-user app with no auth,
+      # meant for a network you control.  On an untrusted or guest network,
+      # put the whole stack behind an authenticating reverse proxy or a VPN
+      # — moving this port around will not help.  What the loopback bind
+      # does buy is narrow: no second, unproxied entry point, and FastAPI's
+      # /docs, /redoc and /openapi.json stay off the LAN (the proxy only
+      # forwards paths under /api).
       # Host port 8001 (not 8000) so a resurrected container never shadows
       # a locally-run `uvicorn` during development.
       - "127.0.0.1:8001:8000"
@@ -92,17 +108,29 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        # pipefail is load-bearing: a pipeline's status is its LAST
+        # command's, so without it `if pg_dump | gzip` tests gzip — which
+        # happily compresses a truncated (or empty) dump and exits 0, so
+        # every pg_dump failure would be logged as a successful backup.
+        # `set -e` does not help here; it is exempt inside an `if`
+        # condition.  busybox ash (this image's /bin/sh) supports pipefail.
+        set -o pipefail
         echo "backup loop started; dumps in /backups, pruning >14 days"
         while true; do
           ts="$$(date +%Y%m%d-%H%M%S)"
           out="/backups/sportsdash-$$ts.sql.gz"
-          if pg_dump | gzip > "$$out"; then
+          # The second test catches the quiet case pipefail cannot: gzip of
+          # an empty stream is a *structurally valid* 20-byte archive that
+          # even `gzip -t` calls good, so check the decompressed size.
+          if pg_dump | gzip > "$$out" && [ "$$(gzip -dc "$$out" | wc -c)" -gt 0 ]; then
             echo "wrote $$out"
+            # Prune only after a good dump: pruning unconditionally would
+            # age out the last known-good backup during a run of failures.
+            find /backups -name 'sportsdash-*.sql.gz' -type f -mtime +14 -delete 2>/dev/null || true
           else
-            echo "pg_dump failed; will retry next cycle" >&2
+            echo "pg_dump failed; keeping older backups, will retry next cycle" >&2
             rm -f "$$out"
           fi
-          find /backups -name 'sportsdash-*.sql.gz' -type f -mtime +14 -delete 2>/dev/null || true
           sleep 86400
         done
     restart: unless-stopped
