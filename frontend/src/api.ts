@@ -25,6 +25,7 @@ import type {
   Roster,
   Scorers,
   SetupStatus,
+  SportEvent,
   Standings,
   StatLeaders,
   TeamsResponse,
@@ -114,6 +115,13 @@ export const api = {
           end: p.end,
         })
       : get<Game[]>("/schedule", { start: p.start, end: p.end }),
+
+  // Leaderboard competitions (golf tournaments — golf is the only sport
+  // modeled as an Event) OVERLAPPING the local-day range: unlike /schedule
+  // these span days, so a tournament that started before `start` is returned
+  // while it is still running.
+  events: (p: { start: string; end: string }) =>
+    get<SportEvent[]>("/events", { start: p.start, end: p.end }),
 
   gameDetail: (id: string) =>
     get<GameDetail>(`/games/${encodeURIComponent(id)}`),

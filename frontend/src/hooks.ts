@@ -31,6 +31,7 @@ import type {
   Nation,
   Scorers,
   SetupStatus,
+  SportEvent,
   Standings,
   StatLeaders,
   TeamsResponse,
@@ -122,6 +123,25 @@ export function useSchedule(
   return useQuery({
     queryKey: ["schedule", start, end, teamId ?? null],
     queryFn: () => api.schedule({ start, end, teamId }),
+  });
+}
+
+/**
+ * Leaderboard competitions (golf tournaments — golf is the only sport modeled
+ * as an Event) over a local-day range: the calendar's multi-day spans.
+ * Deliberately a sibling of `useSchedule` rather than an extension of it:
+ * `/events` already takes the same inclusive local-day window, and a
+ * tournament OVERLAPS a range where a game merely falls inside one, so the
+ * two queries can't share a shape. The calendar passes the same padded range
+ * to both.
+ */
+export function useEvents(
+  start: string,
+  end: string,
+): UseQueryResult<SportEvent[]> {
+  return useQuery({
+    queryKey: ["events", start, end],
+    queryFn: () => api.events({ start, end }),
   });
 }
 
