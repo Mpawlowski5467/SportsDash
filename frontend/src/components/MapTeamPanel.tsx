@@ -87,8 +87,13 @@ export default function MapTeamPanel({
 
   return (
     <Portal>
+    {/* Closed, the panel is `inert` as well as aria-hidden: it stays mounted
+        (so it animates out) and is portaled to <body>, so without it the
+        Close and "View team page" buttons would keep an invisible tab stop
+        at the end of the page — on every view. */}
     <aside
       aria-hidden={!open}
+      inert={!open}
       className={
         // top-12 clears the sticky 48px app header so the panel's own header
         // (crest + name + close) isn't hidden behind the nav.

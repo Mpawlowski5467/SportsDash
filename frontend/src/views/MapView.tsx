@@ -34,6 +34,7 @@ import {
   writeBasemap,
   type BasemapId,
 } from "./map/basemap";
+import { diffKeptMarker, type MarkerSignature } from "./map/reconcile";
 import { CameraOrbit } from "./map/orbit";
 import { FanCrowd } from "./map/fans";
 import { warmTilesAlong, warmTilesAround } from "./map/tilewarm";
@@ -44,6 +45,7 @@ import MapVenueGamesPanel, {
   type MapVenueGroup,
 } from "../components/MapVenueGamesPanel";
 import Select, { type SelectOption } from "../components/Select";
+import StaleBanner from "../components/StaleBanner";
 import { usePrefersReducedMotion } from "../lib/usePrefersReducedMotion";
 import { useMapFocus } from "../components/MapFocusContext";
 import { useCloseTeamDetail, useOpenTeam } from "../components/TeamDetailPanel";
@@ -99,6 +101,13 @@ const DEFAULT_DAYS = 3;
 // Stadiums mode looks this far ahead for each followed team's next away game
 // (so the travel arcs/planes have something to draw even off-window).
 const STADIUMS_TRAVEL_DAYS = 21;
+/**
+ * How often the travel facts re-read the clock. `inTransit` is a purely
+ * time-based predicate (a 48h window), so it has to be able to flip while the
+ * payload behind it is unchanged. A minute is far finer than a 48h window
+ * needs, and coarse enough that the tick costs one Map rebuild a minute.
+ */
+const IN_TRANSIT_TICK_MS = 60_000;
 
 /** Preset upcoming-game windows for the day-window dropdown (replaces the
  *  old slider). Ids are the day counts as strings (Select takes string ids). */
@@ -109,11 +118,11 @@ const DAY_WINDOW_OPTIONS: SelectOption[] = [
   { id: "30", label: "Next 30 days" },
 ];
 
-/** A normalized marker the reconciler can add/remove regardless of its source. */
-interface MapMarker {
+/** A normalized marker the reconciler can add/remove regardless of its source.
+ *  `lat`/`lon`/`sig`/`elementSig` come from MarkerSignature — see reconcile.ts
+ *  for what each signature covers and how a kept marker is refreshed. */
+interface MapMarker extends MarkerSignature {
   id: string;
-  lat: number;
-  lon: number;
   makeElement: () => HTMLDivElement;
   makeTooltip: () => HTMLDivElement;
   onSelect: () => void;
@@ -123,6 +132,18 @@ interface MapMarker {
   /** Cluster badges drive their own camera (expand-to-zoom) on click, so the
    *  reconciler must NOT also fly to street level the way it does for a pin. */
   isCluster?: boolean;
+}
+
+/**
+ * A marker that is currently on the map: the MapLibre marker, the stable host
+ * element its badge lives inside (swapping the badge in place keeps the marker
+ * — and MapLibre's transform on it — alive), and the spec its once-bound hover
+ * and click handlers read through.
+ */
+interface LiveMarker {
+  marker: maplibregl.Marker;
+  host: HTMLDivElement;
+  spec: MapMarker;
 }
 
 /** Per-point properties indexed by supercluster (one per individual pin). */
@@ -337,6 +358,11 @@ function clusterForViewport(
         id: `cluster:${clusterId}`,
         lat,
         lon,
+        // A cluster id already encodes its point count and zoom, but the
+        // centroid, the tooltip's noun and the expansion zoom the click reads
+        // do not — sign them so a kept badge still refreshes.
+        sig: `${count}|${hasFollowed ? 1 : 0}|${lon},${lat}|${zoom}|${mode}`,
+        elementSig: `${count}|${hasFollowed ? 1 : 0}`,
         followed: hasFollowed,
         isCluster: true,
         makeElement: () => createClusterElement(count, hasFollowed),
@@ -367,6 +393,39 @@ function clusterForViewport(
     }
   }
   return out;
+}
+
+/** The current coarse wall-clock bucket the travel facts are keyed on. */
+function transitBucket(): number {
+  return Math.floor(Date.now() / IN_TRANSIT_TICK_MS);
+}
+
+/**
+ * That bucket as state, advanced by a timer rather than read during render.
+ *
+ * A render-derived bucket can only move when something else re-renders the
+ * view, so on an idle map — nobody panning, no poll changing the payload — it
+ * never advances and the `inTransit` window it gates stays frozen at whatever
+ * it was on mount. The interval is what makes the 48h boundary actually land.
+ * `setState` with an unchanged bucket is a React no-op, so the steady state
+ * costs one comparison a minute.
+ *
+ * `enabled` gates the timer on Stadiums mode: games mode draws no plane badges
+ * and reads no travel facts, so it should pay nothing.
+ */
+function useTransitClock(enabled: boolean): number {
+  const [tick, setTick] = useState(transitBucket);
+  useEffect(() => {
+    if (!enabled) return;
+    // Re-read on enable: the clock ran on while the timer was off.
+    setTick(transitBucket());
+    const id = window.setInterval(
+      () => setTick(transitBucket()),
+      IN_TRANSIT_TICK_MS,
+    );
+    return () => window.clearInterval(id);
+  }, [enabled]);
+  return tick;
 }
 
 export default function MapView() {
@@ -501,11 +560,37 @@ export default function MapView() {
   const travelArcs = useMemo(() => buildTravelArcs(teams, nextByTeam), [travelSig]);
 
   // Travel facts per team with an away next-game (distance / flight time / tz /
-  // in-transit), shown in the team panel.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // in-transit), shown in the team panel and as the pin's plane badge. Unlike
+  // the arcs above this also keys on a clock bucket, because `inTransit` is a
+  // purely time-based predicate: on travelSig alone it would stay pinned at
+  // whatever it was when the view mounted. The bucket is timer-backed (see
+  // useTransitClock) precisely so it advances on a map nobody is touching.
+  const transitTick = useTransitClock(mode === "stadiums");
   const travelByTeam = useMemo(
     () => buildTravelInfo(teams, nextByTeam, Date.now()),
-    [travelSig],
+    // travelSig is the content hash of teams + nextByTeam (both read fresh);
+    // transitTick is the clock. The directive must sit on the line ABOVE the
+    // dependency array — that is the node exhaustive-deps reports on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [travelSig, transitTick],
+  );
+
+  // Which teams the plane badge is drawn on, as a content signature rather than
+  // the Map above. `travelByTeam` gets a fresh identity every clock tick, and
+  // the markers memo must NOT: it feeds clusterPoints, and a new array there
+  // rebuilds the whole supercluster index. Ticking a clock is not allowed to
+  // cost a periodic full re-index, so the markers only ever see the flags, and
+  // only when one actually flips.
+  const inTransitSig = useMemo(() => {
+    const ids: string[] = [];
+    for (const [teamId, info] of travelByTeam) {
+      if (info.inTransit) ids.push(teamId);
+    }
+    return ids.sort().join("|");
+  }, [travelByTeam]);
+  const inTransitIds = useMemo(
+    () => new Set(inTransitSig === "" ? [] : inTransitSig.split("|")),
+    [inTransitSig],
   );
 
   // Teams with a game HAPPENING (live or today) — clicking one's pin celebrates
@@ -528,6 +613,20 @@ export default function MapView() {
   useEffect(() => {
     if (selected === null) orbitRef.current?.stop();
   }, [selected]);
+  // The panels render the CURRENT payload for the selected pin, not the
+  // snapshot captured when it was clicked — a poll that scores a game or drops
+  // a finished one has to reach an already-open panel too. A selection that
+  // has left the payload entirely (its last game went final, or a filter hid
+  // it) keeps its captured content rather than emptying the panel mid-read.
+  const livePinned = useMemo<Selection | null>(() => {
+    if (selected === null) return null;
+    if (selected.kind === "venue") {
+      const group = venueGroups.find((g) => g.key === selected.venue.key);
+      return group === undefined ? selected : { kind: "venue", venue: group };
+    }
+    const team = visibleTeams.find((t) => t.team_id === selected.team.team_id);
+    return team === undefined ? selected : { kind: "team", team };
+  }, [selected, venueGroups, visibleTeams]);
 
   // --- Normalized marker list for the active mode ---------------------------
   const markers = useMemo<MapMarker[]>(() => {
@@ -540,6 +639,11 @@ export default function MapView() {
           id: `venue:${group.key}`,
           lat: group.lat,
           lon: group.lon,
+          // The whole group: the badge count and hover label read it, and so
+          // does the venue panel this pin's click opens (scores, phase, the
+          // fixtures still in the window).
+          sig: `${pulse ? 1 : 0}|${JSON.stringify(group)}`,
+          elementSig: `${pulse ? 1 : 0}|${group.source}|${group.games.length}`,
           followed: group.source === "followed",
           makeElement: () => createVenueMarkerElement(group, pulse),
           makeTooltip: () => createVenueTooltipElement(group),
@@ -549,18 +653,25 @@ export default function MapView() {
     }
     return visibleTeams.map((team) => {
       const pulse = isToday(team.next_match_time);
-      const inTransit = travelByTeam.get(team.team_id)?.inTransit ?? false;
+      const inTransit = inTransitIds.has(team.team_id);
       return {
         id: `team:${team.team_id}`,
         lat: team.lat,
         lon: team.lon,
+        // The whole team plus the two derived flags (neither is a field on it):
+        // the tooltip shows the next match and the team panel shows venue
+        // facts / weather / travel, all of which move between polls.
+        sig: `${pulse ? 1 : 0}${inTransit ? 1 : 0}|${JSON.stringify(team)}`,
+        elementSig:
+          `${pulse ? 1 : 0}${inTransit ? 1 : 0}|${team.source}|` +
+          `${team.color ?? ""}|${team.logo_url ?? ""}|${team.name}`,
         followed: team.source === "followed",
         makeElement: () => createMarkerElement(team, pulse, inTransit),
         makeTooltip: () => createTooltipElement(team),
         onSelect: () => onSelectRef.current({ kind: "team", team }),
       };
     });
-  }, [mode, venueGroups, visibleTeams, travelByTeam]);
+  }, [mode, venueGroups, visibleTeams, inTransitIds]);
 
   // Schedule over the competition window, grouped by venue, so a clicked
   // host-stadium pin in "Stadiums" mode lists every match played there.
@@ -588,7 +699,7 @@ export default function MapView() {
   const closeTeamDetail = useCloseTeamDetail();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const markersRef = useRef<Map<string, maplibregl.Marker>>(new window.Map());
+  const markersRef = useRef<Map<string, LiveMarker>>(new window.Map());
   const planesRef = useRef<maplibregl.Marker[]>([]);
   // The one-shot "follow the plane to the away game" cinematic. Its arrival
   // fan crowd lives in `crowd` so cancelCinematic tears down the whole show.
@@ -1230,36 +1341,57 @@ export default function MapView() {
       const live = markersRef.current;
       const next = new Set(current.map((marker) => marker.id));
 
-      for (const [id, marker] of live) {
+      for (const [id, entry] of live) {
         if (!next.has(id)) {
-          marker.remove();
+          entry.marker.remove();
           live.delete(id);
         }
       }
 
       for (const spec of current) {
-        if (live.has(spec.id)) continue;
-        const marker = new maplibregl.Marker({ element: spec.makeElement() })
+        const existing = live.get(spec.id);
+        if (existing !== undefined) {
+          // Same id, possibly new content: refresh the KEPT marker instead of
+          // dropping the poll's payload on the floor. Recreating it is what we
+          // must avoid — that is what keeps clustering and the pulse/orbit
+          // animations smooth — so only the badge inside the stable host is
+          // swapped, and only when what it draws actually changed.
+          const update = diffKeptMarker(existing.spec, spec);
+          if (update.rebuildElement) {
+            existing.host.replaceChildren(spec.makeElement());
+          }
+          if (update.move) existing.marker.setLngLat([spec.lon, spec.lat]);
+          // The handlers below read through the entry, so this is also what
+          // makes the hover label and the side panel show current data.
+          if (update.rebindSpec) existing.spec = spec;
+          continue;
+        }
+        // The host stays put for the marker's whole life (MapLibre owns its
+        // transform); the badge element is its single replaceable child.
+        const host = document.createElement("div");
+        host.appendChild(spec.makeElement());
+        const marker = new maplibregl.Marker({ element: host })
           .setLngLat([spec.lon, spec.lat])
           .addTo(map);
-        const el = marker.getElement();
-        el.addEventListener("mouseenter", () => {
+        const entry: LiveMarker = { marker, host, spec };
+        host.addEventListener("mouseenter", () => {
           hoverPopupRef.current
-            ?.setLngLat([spec.lon, spec.lat])
-            .setDOMContent(spec.makeTooltip())
+            ?.setLngLat([entry.spec.lon, entry.spec.lat])
+            .setDOMContent(entry.spec.makeTooltip())
             .addTo(map);
         });
-        el.addEventListener("mouseleave", () => {
+        host.addEventListener("mouseleave", () => {
           hoverPopupRef.current?.remove();
         });
-        el.addEventListener("click", () => {
+        host.addEventListener("click", () => {
+          const active = entry.spec;
           hoverPopupRef.current?.remove();
-          spec.onSelect();
+          active.onSelect();
           // A cluster badge drives its own camera (expand-to-zoom) in onSelect;
           // only an individual pin flies in to street level.
-          if (!spec.isCluster) {
+          if (!active.isCluster) {
             map.flyTo({
-              center: [spec.lon, spec.lat],
+              center: [active.lon, active.lat],
               zoom: SINGLE_TEAM_ZOOM,
               pitch: DEFAULT_PITCH,
               essential: true,
@@ -1271,12 +1403,16 @@ export default function MapView() {
             );
             // If this team's game is happening (live or today), celebrate:
             // fans stream into its stadium as the camera dives in.
-            if (spec.id.startsWith("team:")) {
-              maybeCelebrateRef.current(spec.id.slice(5), spec.lon, spec.lat);
+            if (active.id.startsWith("team:")) {
+              maybeCelebrateRef.current(
+                active.id.slice(5),
+                active.lon,
+                active.lat,
+              );
             }
           }
         });
-        live.set(spec.id, marker);
+        live.set(spec.id, entry);
       }
     }
 
@@ -1305,7 +1441,7 @@ export default function MapView() {
       orbitRef.current = null;
       cancelCinematic();
       stopCelebrate(); // and any click-to-celebrate fan burst
-      for (const marker of markersRef.current.values()) marker.remove();
+      for (const entry of markersRef.current.values()) entry.marker.remove();
       markersRef.current.clear();
       hoverPopupRef.current?.remove();
       hoverPopupRef.current = null;
@@ -1569,7 +1705,13 @@ export default function MapView() {
     applyBasemapRef.current?.();
   }, [basemap]);
 
-  if (mapQuery.isError) {
+  // Full-page error ONLY when there is nothing to show. TanStack Query keeps
+  // the last payload across a failed refetch, so taking the view over here
+  // would unmount the container out from under a perfectly good map — and
+  // since the create effect keys on `hasContent` (which a failed poll doesn't
+  // change), nothing would ever rebuild it. A blip therefore degrades to a
+  // banner over the live map, exactly like TodayView's stale scores.
+  if (mapQuery.isError && !mapQuery.data) {
     return (
       <MapFrame>
         <p className="px-6 text-center text-sm text-red-400">
@@ -1603,9 +1745,18 @@ export default function MapView() {
   }
 
   const noGamesInWindow = mode === "games" && games.length === 0;
+  // A failed poll on top of cached data: the map keeps running, the banner
+  // says the pins may be behind.
+  const stale = mapQuery.isError;
 
   return (
     <div className="flex flex-col gap-2">
+      {stale && (
+        <StaleBanner
+          message="Connection lost — showing the last loaded map."
+          onRetry={() => void mapQuery.refetch()}
+        />
+      )}
       <div className="relative">
         <div
           ref={containerRef}
@@ -1751,18 +1902,18 @@ export default function MapView() {
       </div>
 
       <MapTeamPanel
-        team={selected?.kind === "team" ? selected.team : null}
+        team={livePinned?.kind === "team" ? livePinned.team : null}
         leagueNames={leagueNames}
         matchesByVenue={matchesByVenue}
         travel={
-          selected?.kind === "team"
-            ? travelByTeam.get(selected.team.team_id) ?? null
+          livePinned?.kind === "team"
+            ? travelByTeam.get(livePinned.team.team_id) ?? null
             : null
         }
         onClose={() => setSelected(null)}
       />
       <MapVenueGamesPanel
-        venue={selected?.kind === "venue" ? selected.venue : null}
+        venue={livePinned?.kind === "venue" ? livePinned.venue : null}
         leagueNames={leagueNames}
         onClose={() => setSelected(null)}
         onGameClick={onVenueGameClick}
