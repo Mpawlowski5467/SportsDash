@@ -107,6 +107,12 @@ async def _resolve_competition_stadium(
     back.  Returns ``None`` when nothing usable resolves; the caller still
     caches that as a definitive miss so it isn't re-attempted hot.  Never
     raises — every step is guarded.
+
+    A team TheSportsDB knows only by region ("Kyiv, Ukraine") resolves to no
+    venue name at all — the enrichment refuses to pass a coarse area off as a
+    venue (see :func:`app.services.stadiums._compose_venue`) — so it lands
+    here as a miss and stays off the map rather than pinning at the region's
+    centroid.
     """
     enrichment: domain.TeamLocation | None = None
     try:
@@ -195,13 +201,31 @@ async def _refresh_competition_stadiums() -> None:
                 try:
                     async with session_scope() as session:
                         cached = await repository.get_stadium(session, key)
-                    if cached is not None and cached.lat is not None:
+                    # A cached row whose "venue" is only its location text was
+                    # pinned at the CENTRE of a region rather than at a ground
+                    # (a marker tens of km out, drawn as confidently as a
+                    # correct one).  It has to be re-resolved despite both
+                    # skips below — a real venue then replaces it, or a miss
+                    # drops it off the map, which is the honest answer.
+                    area_only = cached is not None and stadiums.is_area_only_venue(
+                        cached.venue, cached.location
+                    )
+                    if area_only:
+                        logger.info(
+                            "refresh_competition_stadiums: %s (%s) was pinned at the "
+                            "centroid of %r — re-resolving",
+                            team.name,
+                            key,
+                            cached.location,
+                        )
+                    if cached is not None and cached.lat is not None and not area_only:
                         # Already located — a resolved coordinate is permanent.
                         continue
                     if (
                         cached is not None
                         and cached.resolved
                         and cached.fetched_at is not None
+                        and not area_only
                         and utcnow() - ensure_utc(cached.fetched_at) < _STADIUM_MISS_RETRY
                     ):
                         # Missed recently (often a transient TheSportsDB 429,

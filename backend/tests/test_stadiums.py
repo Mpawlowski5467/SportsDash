@@ -289,3 +289,115 @@ async def test_lookup_team_info_does_not_cache_transient_failure(
 
     info = await stadiums.lookup_team_info("Chelsea", sport="soccer")
     assert info is not None and info.founded == 1905
+
+
+# ---------------------------------------------------------------------------
+# A coarse location must never be passed off as a venue
+# ---------------------------------------------------------------------------
+
+
+async def test_lookup_stadium_never_passes_a_region_off_as_a_venue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hit with no stadium name yields NO venue — not its bare location.
+
+    ``strLocation`` is free text and is regularly a county/region rather
+    than an address.  Composing it into the venue name used to make the
+    pipeline geocode it, and a region geocodes to its CENTROID — a point
+    tens of km from the real ground, cached and plotted as confidently as
+    a genuine venue fix.  The area is kept as ``location`` (a true fact);
+    it just never becomes a venue.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "searchteams.php" in request.url.path
+        return httpx.Response(
+            200,
+            json={
+                "teams": [
+                    {
+                        "strTeam": "Cinder Foxes",
+                        "strSport": "Soccer",
+                        # No strStadium: upstream knows only the county.
+                        "strLocation": "Elmshire, Wessex",
+                        "intStadiumCapacity": "11000",
+                    }
+                ]
+            },
+        )
+
+    install_tsdb_handler(monkeypatch, handler)
+
+    location = await stadiums.lookup_stadium("Cinder Foxes", sport="soccer")
+    assert location is not None
+    assert location.venue is None
+    assert location.location == "Elmshire, Wessex"
+    # Nothing to geocode, so nothing gets pinned from it.
+    assert location.lat is None and location.lon is None
+    # The facts that DID resolve survive.
+    assert location.capacity == 11000
+
+
+async def test_lookup_stadium_takes_the_venue_records_name_when_the_hit_has_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stadium-less hit still resolves when the venue record names one.
+
+    The "resolve the stadium name harder" leg: dropping the bare-location
+    fallback must not cost a club whose venue record knows the ground even
+    though the search hit doesn't.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "searchteams.php" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "teams": [
+                        {
+                            "strTeam": "Cinder Foxes",
+                            "strSport": "Soccer",
+                            "strLocation": "Elmshire, Wessex",
+                            "idVenue": "4242",
+                        }
+                    ]
+                },
+            )
+        assert "lookupvenue.php" in request.url.path
+        return httpx.Response(200, json={"venues": [{"strVenue": "Cinder Arena"}]})
+
+    install_tsdb_handler(monkeypatch, handler)
+
+    location = await stadiums.lookup_stadium("Cinder Foxes", sport="soccer")
+    assert location is not None
+    assert location.venue == "Cinder Arena, Elmshire, Wessex"
+
+
+def test_compose_venue_joins_stadium_and_location() -> None:
+    assert stadiums._compose_venue("Cinder Arena", "Elmshire, Wessex") == (
+        "Cinder Arena, Elmshire, Wessex"
+    )
+
+
+def test_compose_venue_uses_the_stadium_alone_when_the_location_adds_nothing() -> None:
+    assert stadiums._compose_venue("Cinder Arena", None) == "Cinder Arena"
+    assert stadiums._compose_venue("Cinder Arena", "cinder arena") == "Cinder Arena"
+
+
+def test_compose_venue_refuses_a_location_with_no_stadium() -> None:
+    assert stadiums._compose_venue(None, "Elmshire, Wessex") is None
+    assert stadiums._compose_venue("", "Elmshire, Wessex") is None
+    assert stadiums._compose_venue(None, None) is None
+
+
+def test_is_area_only_venue_spots_a_venue_that_is_just_its_location() -> None:
+    """The fingerprint of a row cached from a coarse area, for the repair pass."""
+    assert stadiums.is_area_only_venue("Elmshire, Wessex", "Elmshire, Wessex") is True
+    # Whitespace/case drift still matches — it is the same string.
+    assert stadiums.is_area_only_venue(" elmshire, Wessex ", "Elmshire, Wessex") is True
+    # A real venue name carries more than the area, so it never matches.
+    assert (
+        stadiums.is_area_only_venue("Cinder Arena, Elmshire, Wessex", "Elmshire, Wessex") is False
+    )
+    assert stadiums.is_area_only_venue("Cinder Arena", None) is False
+    assert stadiums.is_area_only_venue(None, "Elmshire, Wessex") is False

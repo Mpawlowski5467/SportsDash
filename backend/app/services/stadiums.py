@@ -203,6 +203,12 @@ async def _build_location(team: dict) -> TeamLocation | None:
     ``idVenue``) adds the photo, the year opened and coordinates.  Returns
     ``None`` only when the team has no stadium name *and* no location text
     at all.
+
+    ``venue`` is left ``None`` when neither the search hit nor the venue
+    record names a stadium: the location text alone is an administrative
+    area, not a venue (see :func:`_compose_venue`).  The facts that DID
+    resolve — the area text, capacity, photo, and any coordinates the venue
+    record carried — are still returned.
     """
     stadium = _clean(team.get("strStadium"))
     location = _clean(team.get("strLocation"))
@@ -260,12 +266,47 @@ def _compose_venue(stadium: str | None, location: str | None) -> str | None:
     """Build one geocodable venue string from the stadium + location text.
 
     "Stamford Bridge" + "Fulham, London" -> "Stamford Bridge, Fulham,
-    London".  When only one is known (or they are the same string) it is
-    used alone, mirroring the provider's ``_parse_team_location``.
+    London".  When the location adds nothing (absent, or the same string)
+    the stadium name is used alone, mirroring the provider's
+    ``_parse_team_location``.
+
+    A record with NO stadium name yields ``None``, never the bare location.
+    ``strLocation`` is free text and is often a county/region/city rather
+    than an address ("Dorset, England", "Kyiv, Ukraine"); geocoding one of
+    those returns the AREA'S CENTROID, which the pipeline then caches and
+    plots as though it were a precise venue fix — a marker tens of km from
+    the real ground that the map flies to just as confidently as a correct
+    one.  The area text is still returned as
+    :attr:`~app.models.domain.TeamLocation.location` (a true fact, shown in
+    the panel as "Location"); it just never gets promoted to a venue, so
+    the caller falls through to a venue name it can trust — the team's
+    most-common stored home-game venue — or leaves the team unplotted,
+    which is the honest answer.
     """
-    if stadium and location and stadium.casefold() != location.casefold():
+    if not stadium:
+        return None
+    if location and stadium.casefold() != location.casefold():
         return f"{stadium}, {location}"
-    return stadium or location
+    return stadium
+
+
+def is_area_only_venue(venue: str | None, location: str | None) -> bool:
+    """Whether a STORED venue name is really just its location text.
+
+    The fingerprint of the pre-fix :func:`_compose_venue` fallback: with no
+    stadium name it returned ``strLocation`` verbatim, so the cached row's
+    venue and location are one and the same string and its coordinates are
+    an area centroid dressed up as a venue fix.  The refresh jobs use this
+    to spot such rows and re-resolve them, since they would otherwise be
+    treated as permanently located and never revisited.
+
+    Deliberately conservative: a row whose stadium name genuinely equals
+    its location text also matches, and simply re-resolves to the very same
+    venue on the next pass — one wasted lookup, no wrong pin.
+    """
+    if not venue or not location:
+        return False
+    return venue.strip().casefold() == location.strip().casefold()
 
 
 # ---------------------------------------------------------------------------
