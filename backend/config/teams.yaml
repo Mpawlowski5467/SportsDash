@@ -16,10 +16,21 @@
 #
 #   leagues:
 #     - id: my-league                          # internal slug, unique
-#       sport: basketball                      # basketball | baseball | soccer
+#       sport: basketball                      # one of the nine below
 #       name: My League
 #       provider: espn                         # espn | thesportsdb
 #       provider_key: <sport>/<league-code>    # e.g. an ESPN URL path fragment
+#
+# The nine values `sport` accepts (app/models/domain.py::Sport is the
+# source of truth — anything else fails to load):
+#
+#   basketball | baseball | soccer | hockey | football (American) |
+#   tennis | mma | golf | volleyball
+#
+# In tennis, MMA and golf a "team" is a single athlete, so the entries
+# under `teams:` are players/fighters/golfers and provider_key is the
+# ESPN athlete id.  Golf goes further: a tournament is one leaderboard
+# event with a whole field, not a two-sided game.
 #
 #   teams:
 #     - id: my-team                            # internal slug, unique

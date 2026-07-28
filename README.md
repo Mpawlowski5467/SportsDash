@@ -60,8 +60,10 @@ tennis, MMA, golf, and volleyball.**
   Standings and Results views.
 - **News** — aggregated headlines per team (ESPN + Google News + RSS) with an
   in-app reader.
-- **Map** — every followed team's (and active competition's) home venue on a
-  MapLibre map with 3D buildings; click a pin for stadium facts and fixtures.
+- **Map** — your followed teams' (and every active competition's) home venues
+  on a MapLibre map with 3D buildings; click a pin for stadium facts and
+  fixtures. A team whose ground can't be pinned accurately is left off rather
+  than placed approximately.
 - **Team & nation profiles** — click a team anywhere to open a unified page:
   next match, recent form, fixtures, results, roster, news, and stadium.
 - **Notifications** — pushed to your own [ntfy](https://ntfy.sh) topic:
@@ -78,12 +80,12 @@ slide-over panels you reach by clicking a team or game anywhere in the UI.
 | Tab | What you see / do |
 |---|---|
 | **Today** | The landing page: every game for your follows on the local calendar day, with live score, period, and clock. It auto-refreshes — fast while a game is in progress, slow otherwise. Click a card for a **box score** (line scores + top performers). In-progress golf leaderboards show up here too. |
-| **Calendar** | A month / week grid of all your fixtures, color-coded per team, with golf tournaments spanning the days they run over (click one for its leaderboard). **Subscribe** hands you ready-made `webcal://` feeds (all games, or one per team) and a one-off `.ics` export. |
+| **Calendar** | A month / week grid of all your fixtures, color-coded per team, with golf tournaments spanning the days they run over (click one for its leaderboard — they show under *All teams*, since a tournament belongs to no team). **Subscribe** hands you ready-made `webcal://` feeds (all games, or one per team) and a one-off `.ics` export. |
 | **Matchup** | A pre-game **preview browser**: upcoming games with head-to-head context — recent form, last meetings, and where each side sits — so you can scan what's coming before it starts. |
 | **League** | Pick one of your leagues and drill in through three sub-tabs: **Standings** (sport-appropriate columns, conference/division grouping), **Leaders** (stat leaders, or the soccer Golden Boot), and **Bracket** (cup knockouts and best-of-N playoff series, grouped by round). |
 | **Results** | Recent **finals** per followed team, newest first, with streak and last-10 chips. |
 | **News** | Aggregated headlines per team (ESPN + Google News + RSS) with an in-app reader. |
-| **Map** | Every followed team's — and every active competition's — home venue on a MapLibre world map with 3D buildings. Click a pin for stadium facts, current weather, and upcoming fixtures there. |
+| **Map** | Your followed teams' — and every active competition's — home venues on a MapLibre world map with 3D buildings. Click a pin for stadium facts, current weather, and upcoming fixtures there. A pin only appears once the ground is known well enough to place it precisely; a team whose stadium no data source names stays off the map instead of being dropped on the middle of its county. |
 
 **Slide-over panels (click to open):**
 
@@ -294,9 +296,10 @@ supports subscriptions.
   `webcal://<your-host>:3000/api/calendar.ics`.
 - **One team:** append `?team_id=<team-id>`, e.g.
   `webcal://<your-host>:3000/api/calendar.ics?team_id=<team-id>` — that
-  team's games only (a tournament belongs to no team, so a followed golfer
-  has no per-team feed of their own and isn't offered one in **Subscribe**;
-  their tournaments ride in the all-games feed above).
+  team's games only. A tournament belongs to no team, so a followed golfer
+  has no per-team feed of their own and isn't offered one in **Subscribe** —
+  nor in the Calendar's team filter, for the same reason. Their tournaments
+  ride in the all-games feed above, and on the grid under *All teams*.
 
 (Point calendar apps at port 3000, not 8001: the frontend proxies `/api`
 through to the backend, while the backend's own port is bound to loopback and

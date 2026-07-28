@@ -120,8 +120,14 @@ async def upsert_games(session, games: Sequence[domain.Game]) -> int
     # (games that ended while the app was down heal on daily refresh);
     # postponed/canceled rows may be reinstated by an incoming
     # scheduled/in_progress state. A game's fight_* columns (MMA method
-    # of victory) merge like the crest/color ones: an incoming None
-    # never wipes a stored result. All provider strings are clipped to
+    # of victory) merge PER FIELD, and an incoming None never wipes a
+    # stored result: fight_method is overwritten outright, while
+    # fight_detail/fight_round/fight_clock are written only when the
+    # incoming value is not None (they come from a separate call that
+    # can fail on its own, so a thinner incoming result must not erase a
+    # richer stored one). This is NOT the crest/color rule — those merge
+    # on truthiness from a single source. See the fight_result section
+    # below. All provider strings are clipped to
     # their column widths on write. Returns number of rows touched.
 async def prune_stale_games(session, now_utc: datetime) -> int
     # delete ghost rows: 'scheduled' with start older than now-3d,
@@ -218,6 +224,17 @@ async def refresh_news() -> None            # delegates to services.news.refresh
 async def live_tick() -> None
 async def daily_refresh() -> None           # schedules + standings + rosters (+ news)
 ```
+**Where these actually live.** `jobs.py` kept the names above — it imports
+them to register them, so `jobs.refresh_schedules` still resolves — but only
+`setup_scheduler` is defined there. The package split into
+`scheduler/refresh.py` (`refresh_schedules`, `refresh_standings`,
+`refresh_rosters`, `refresh_news`, `refresh_locations`, `daily_refresh` and
+their `_resolve_*` helpers), `scheduler/live.py` (`live_tick`,
+`events_tick`), `scheduler/common.py` (shared constants and the golfer-id
+tagging) and `scheduler/stadium_cache.py` (competition stadium resolution).
+Sections written before the split — Phase 10, Phase 11, Phase 27 — still say
+`jobs.<name>`; read that as the name, not the file.
+
 Jobs use `session_scope()`, resolve providers via
 `registry.get_provider(league.provider)`, and must catch/log per-league
 and per-team errors so one bad source never kills a whole job. Schedule:
@@ -301,7 +318,7 @@ Route table (all under `/api`, response models from `schemas.py`):
 | Route | Response | Notes |
 |---|---|---|
 | `GET /health` | `{status, database, providers, provider_health}` | deep check; `status` is `"ok"`/`"degraded"`, `providers` is the count, `provider_health` the per-provider circuit state. Always 200 — a failed DB probe degrades `status` rather than 500-ing (see *Ops: backups + health deep-check* below) |
-| `GET /meta` | `MetaOut` | `version` = `meta.APP_VERSION` (the shipped app version, "1.3.0") |
+| `GET /meta` | `MetaOut` | `version` = `meta.APP_VERSION`, the shipped app version. Deliberately **not** repeated here as a literal: the string already ships in five files (only two of which fail the build when they disagree — see the release checklist in [CONTRIBUTING.md](../CONTRIBUTING.md#release-checklist)), and a copy in prose is the one nothing would catch |
 | `GET /teams` | `TeamsOut` | |
 | `GET /today` | `TodayOut` | local day via `local_day_bounds(local_today(tz), tz)`; sorted by start_time |
 | `GET /schedule?start=YYYY-MM-DD&end=YYYY-MM-DD&team_id=` | `list[GameOut]` | dates are local days, inclusive; defaults: start = today−7d, end = today+45d |
@@ -1208,6 +1225,36 @@ ON-DEMAND: when `GET /api/map` finds followed teams without coords, kick
 silently missing — never block the response longer than a short budget;
 return what's resolved and let the rest fill in.
 
+**Narrowed 2026-07-27 — step (2) returns a venue name ONLY when the
+upstream record names a stadium.** (`_resolve_team_location` now lives in
+`app/scheduler/refresh.py`.) TheSportsDB's `strLocation` is free text and is
+usually an administrative area — "Dorset, England", "Kyiv, Ukraine" — so
+`stadiums._compose_venue` returns `None` rather than pass it off as a venue.
+The area is still returned as `TeamLocation.location` (a true fact, shown in
+the panel as *Location*); it is never promoted to `TeamLocation.venue`,
+because geocoding an area yields its **centroid**, which step (3) would then
+cache on the team row and `/api/map` would plot as a precise home-ground fix
+— a marker tens of km from the real ground, drawn and flown to exactly as
+confidently as a correct one, and never revisited (`refresh_locations` only
+processes teams *without* coordinates). Refusing there un-shadows step (4),
+the stored-game venue, which is a name worth geocoding; a team with neither
+is left **unplotted** rather than pinned somewhere plausible. Rows cached
+under the old rule are recognised by `stadiums.is_area_only_venue(venue,
+location)` — the pre-fix fallback's fingerprint is `venue == location` — and
+re-resolved by `refresh_locations` (teams) and
+`refresh_competition_stadiums` (competition/stadium cache), both of which
+skip their "already located / missed recently" shortcuts for such a row.
+The Redis venue index self-heals: `build_index` only indexes teams that have
+both a venue name and coordinates, so a repaired row stops feeding the
+county centroid into game-venue resolution.
+`services/venue_coords.py` and `services/geocode.py` are unchanged — the
+defect was the composition, not the geocoder.
+See *Loose ends* in [ROADMAP.md](../ROADMAP.md) for the two consequences
+that are still open: the repair has not been run against a live database,
+and a whole-competition team has no stored-fixture fallback to land on
+(`repository.most_common_home_venue()` is keyed by `team_id`, which those
+teams do not have), so it drops off the map instead of re-resolving.
+
 ### League logos in the picker (catalog owner)
 Populate `CatalogLeague.logo_url` for catalog leagues from ESPN (league
 logo — verify the endpoint, e.g. the league's `logos[].href` from a
@@ -1944,13 +1991,24 @@ first, and the docs follow the set, not the other way round.
   tournaments the golfer has already played and none of the ones they are
   about to. That is the wrong half for a *subscription*, and it fails in
   a way the user can't see. Instead the **frontend never offers the
-  row**: `CalendarView`'s `LEADERBOARD_SPORTS` (mirroring the backend
-  set) filters leaderboard-sport follows out of the Subscribe menu, which
-  then notes that tournaments ride in the all-teams feed. Tennis/MMA
-  athletes are athlete-as-team too but their matches ARE games, so their
-  per-team feeds work and they are deliberately NOT filtered. The backend
-  is unchanged — one rule, "a per-team feed is that team's games", with
-  no sport special-casing in the route.
+  row**: `src/views/calendar/gameSideFollows.ts::appearsOnGameSide`
+  (whose `LEADERBOARD_SPORTS` mirrors the backend set) filters
+  leaderboard-sport follows out of **both** controls in the Calendar
+  header — the Subscribe menu, which then notes that tournaments ride in
+  the all-teams feed, and the team filter, which notes that All teams is
+  the view that shows them. One predicate, because the two shipped
+  disagreeing (2026-07-27): the filter went on offering golfers, and
+  picking one produced a permanently empty grid — a golfer matches
+  neither side of a game, and spans are hidden whenever the filter is not
+  `"all"`. A team whose league has not loaded yet is kept by both rather
+  than flickering out mid-choice. Pinned by
+  `src/views/calendar/gameSideFollows.test.ts`. **Note the move:**
+  `LEADERBOARD_SPORTS` now lives in `views/calendar/gameSideFollows.ts`,
+  not in `views/CalendarView.tsx` where earlier text placed it.
+  Tennis/MMA athletes are athlete-as-team too but their matches ARE
+  games, so their per-team feeds work and they are deliberately NOT
+  filtered. The backend is unchanged — one rule, "a per-team feed is that
+  team's games", with no sport special-casing in the route.
 - Frontend: `api.events({start, end}) -> Promise<SportEvent[]>` →
   `GET /events?start=&end=`, and `useEvents(start, end)`, queryKey
   `["events", start, end]`, default cache policy. `api.event(id)` was
@@ -1973,7 +2031,15 @@ first, and the docs follow the set, not the other way round.
   a translucent fill would be unreadable under the light/newsprint
   `[data-theme]`s), a ⛳ glyph in the title, and opens the existing
   `EventLeaderboardModal` on click. Hidden while the team filter is set,
-  matching the per-team feed. The refresh button spins on
+  matching the per-team feed — which is why the filter offers only
+  game-side follows: a golfer selection would hide the very spans it was
+  picked for. A filter value that leaves the options (unfollowed
+  elsewhere, or recognized as a leaderboard follow once its league
+  arrives) resets to `"all"`, so the Select's display and the grid cannot
+  disagree — `Select` falls back to showing "All teams" for a value it
+  does not list, which would otherwise read as unfiltered over a grid
+  still filtered to a team that is no longer offered. The refresh button
+  spins on
   `scheduleQuery.isFetching || eventsQuery.isFetching` — events are
   primary content, unlike the secondary weather batch. Changing the
   visible range **clears `selectedEventId`**: the new window re-queries
@@ -1983,3 +2049,92 @@ first, and the docs follow the set, not the other way round.
 - This closes the Phase 5 *Frontend (views owner)* nice-to-have
   "CalendarView: optionally show event spans" and adds the
   `api.events`/`useEvents` pair that section prescribed but never landed.
+
+## Audit fixes — FK enforcement, honest map pins, named markers (2026-07-27)
+
+Four corrections from the `fix/audit-2026-07` sweep. Two are recorded in
+place because they narrow an earlier contract rather than add to it — the
+venue-composition rule is under *Phase 11 → Stadium enrichment*, and the
+Calendar team-filter rule is under *Leaderboard events on the calendar*
+above. The other two are here.
+
+### SQLite now enforces foreign keys, and startup sweeps the orphans
+
+**This changes runtime behaviour for the deployment most users are on.**
+SQLite parses `REFERENCES` but ignores it unless asked, per connection — so
+until now the desktop / homelab build was the one deployment where a delete
+that orphaned children succeeded silently, while Postgres (Compose) rejected
+it. That asymmetry is how `replace_followed` came to leave `standings_archive`
+rows behind with no league.
+
+- `app/db.py::_enable_sqlite_foreign_keys` is registered as a `connect`
+  listener on the sync engine, and **only when the dialect is sqlite**. It
+  runs `PRAGMA foreign_keys=ON` on every connection. It is the same PRAGMA
+  `tests/db_engine.py` has always set, so what the suite proves is now what
+  ships — previously the suite was *stricter* than production, which is the
+  wrong way round for a constraint bug to hide.
+- `app/migrations.py::prune_orphaned_rows(conn)` is the data-level
+  counterpart, run by `init_db` inside the same `engine.begin()` block, in
+  order: `create_all` → `run_additive_migrations` → `prune_orphaned_rows`.
+  Last, and before the app opens any session, because enforcement turns
+  pre-existing junk from invisible into fatal: under the PRAGMA, any
+  statement touching such a row fails on a constraint the row never
+  satisfied.
+- What it sweeps: for every mapped table present in the database, every
+  single-column foreign key whose parent table also exists (composite FKs
+  are skipped; the schema has none). A row is an orphan when its FK column
+  is **non-NULL** and no parent row matches — a nullable FK left NULL is
+  not an orphan and is never touched.
+- What it refuses to sweep: a table that some *other* table's foreign key
+  points at — `teams` is the only case. Deleting one could violate the very
+  constraint this repairs, and no code path can orphan a team anyway
+  (`replace_followed` deletes leagues and teams together), so those rows are
+  **counted and logged at WARNING, then left in place**.
+- Deletions are logged at WARNING with the row count and both table names.
+  Idempotent, and a guaranteed no-op on Postgres, which never allowed the
+  rows — it still runs there so both dialects exercise the same SQL.
+- **Upgrade note.** A database created by 1.3.0 or earlier can hold these
+  rows. The first launch after this change sweeps them — once, at startup,
+  with a WARNING line naming what went. The known case is
+  `standings_archive` (a re-follow dropped the league); those rows were
+  already unreachable junk, so nothing a user can see is lost. Repeated in
+  user-facing terms in [docs/desktop.md](desktop.md).
+
+### Map markers carry their own accessible name
+
+MapLibre adopts every marker element as a `role="button"` and stamps its own
+default name on any that arrives unlabeled, so the whole map read as twenty
+identical buttons called "Map marker".
+
+- `src/views/map/labels.ts` (pure string builders, unit-tested in
+  `labels.test.ts`, same pattern as `views/map/travel.ts` — the repo has no
+  component-test harness): `teamMarkerLabel(team, highlightToday, inTransit)`
+  names the club and its ground plus the state its badge encodes ("playing
+  today", "traveling to an away game"); `venueMarkerLabel(group,
+  highlightToday)` names the venue and what its number counts ("N upcoming
+  games"); `clusterMarkerLabel(count, hasFollowed, mode)` names a **count and
+  an action**, not a place — `"12 venues, zoom in"`, with `", including teams
+  you follow"` when the badge wears its amber ring, and the count abbreviated
+  exactly as the badge prints it.
+- A pin's name states its identity plus what its own badge shows; the fuller
+  story (next match, scores, the fixture list) stays in the hover label and
+  the side panel. An accessible name is announced on every reach, so it has
+  to stay short. That is why an individual pin gets no "a team you follow"
+  suffix while a cluster does: the cluster's ring is the only place that
+  information exists.
+- The name is written to the marker host **before** `addTo` (MapLibre only
+  defaults a marker that arrives unlabeled) and is signed into the marker's
+  `sig` (`views/map/reconcile.ts`), so a **kept** marker re-labels when its
+  content moves instead of freezing at first paint — the same defect class
+  this branch fixed for the hover label and the badge count. `rebindSpec`
+  now sets `aria-label` alongside rebinding the spec.
+- Decorative plane and fan markers are `aria-hidden="true"`
+  (`views/map/markers.ts`): they are unclickable, but MapLibre would still
+  file each one as a nameless button, so a crowd becomes a crowd of buttons.
+- **Still missing, pre-existing:** MapLibre gives markers `role="button"` but
+  never a `tabindex`, so pins are announced and still not keyboard-reachable.
+  Naming them was the scoped defect; a blanket `tabindex="0"` would put 700+
+  tab stops in front of a "follow all" user. Tracked in
+  [ROADMAP.md](../ROADMAP.md) *Loose ends*.
+- Sections *Phase 11 → Frontend* and *Phase 14* describe the marker
+  rendering and the hover label this sits alongside.
