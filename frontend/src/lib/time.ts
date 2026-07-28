@@ -55,6 +55,37 @@ export function localDateKey(iso: string): string {
 }
 
 /**
+ * Calendar-day key "YYYY-MM-DD" in an EXPLICIT IANA zone.
+ *
+ * For things whose day is a property of the thing rather than of the
+ * viewer. A golf tournament runs Thursday to Sunday wherever you watch it
+ * from, and the backend has already committed to those days in the `.ics`
+ * feed using SPORTSDASH_TIMEZONE — so deriving them again from the
+ * browser's zone makes the grid disagree with the calendar the user
+ * subscribed to. Moments in time (kickoff, a final whistle) are the
+ * opposite case and keep using {@link localDateKey}.
+ *
+ * `en-CA` because it formats as YYYY-MM-DD natively. An unusable zone
+ * falls back to the browser's rather than throwing — a wrong-by-a-day
+ * label beats a blank calendar.
+ */
+export function dateKeyInZone(iso: string, timeZone: string | undefined): string {
+  if (timeZone === undefined || timeZone === "") {
+    return localDateKey(iso);
+  }
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(iso));
+  } catch {
+    return localDateKey(iso);
+  }
+}
+
+/**
  * Compact relative timestamp for feeds: "just now", "5m ago", "3h ago",
  * "2d ago"; anything older than 7 days falls back to formatShortDate.
  */

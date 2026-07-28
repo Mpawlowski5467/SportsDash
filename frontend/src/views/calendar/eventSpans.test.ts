@@ -113,6 +113,48 @@ describe("eventSpan", () => {
   });
 });
 
+describe("eventSpan in the server's timezone", () => {
+  // The suite runs with TZ=America/New_York (see package.json), so a
+  // Chicago-configured server is genuinely a different calendar day here —
+  // which is the whole bug: the .ics feed dates a tournament in the SERVER's
+  // zone, and the grid used to date it in the viewer's.
+  it("dates a span in the given zone, not the viewer's", () => {
+    // 04:00Z on the 23rd is Jul 23 in New York but still Jul 22 in Chicago.
+    const event = makeEvent({
+      start_time: "2026-07-23T04:00:00Z",
+      end_time: "2026-07-27T02:00:00Z",
+    });
+
+    expect(eventSpan(event, "America/Chicago").start).toBe("2026-07-22");
+    expect(eventSpan(event, "America/New_York").start).toBe("2026-07-23");
+  });
+
+  it("matches the .ics feed for a real tournament", () => {
+    // The 3M Open, exactly as ESPN served it: Thu 23 - Sun 26 July 2026.
+    // The backend's feed emits DTSTART 20260723 / DTEND 20260727 for this,
+    // and the grid must agree rather than drawing it a day early.
+    const span = eventSpan(
+      makeEvent({
+        start_time: "2026-07-23T04:00:00Z",
+        end_time: "2026-07-26T23:00:00Z",
+      }),
+      "America/New_York",
+    );
+
+    expect(span.start).toBe("2026-07-23");
+    expect(span.end).toBe("2026-07-27"); // exclusive, per DTEND
+  });
+
+  it("falls back to the viewer's zone when the server's is unknown", () => {
+    // /api/meta not loaded yet, or an unusable zone string: render something
+    // rather than nothing.
+    const event = makeEvent({ start_time: "2026-07-16T14:00:00Z" });
+
+    expect(eventSpan(event, undefined).start).toBe("2026-07-16");
+    expect(eventSpan(event, "Not/AZone").start).toBe("2026-07-16");
+  });
+});
+
 describe("eventIdFromSpanId", () => {
   it("reverses a span id", () => {
     expect(eventIdFromSpanId(eventSpan(makeEvent({})).id)).toBe("mock:gl-open");

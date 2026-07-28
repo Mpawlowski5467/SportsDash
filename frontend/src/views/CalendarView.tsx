@@ -6,7 +6,13 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import type { DatesSetArg, EventClickArg, EventInput } from "@fullcalendar/core";
 import { api } from "../api";
-import { useEvents, useSchedule, useScheduleWeather, useTeams } from "../hooks";
+import {
+  useEvents,
+  useMeta,
+  useSchedule,
+  useScheduleWeather,
+  useTeams,
+} from "../hooks";
 import type { Game, League, Sport, SportEvent, Team } from "../types";
 import { leagueFallbackColor } from "../components/GameCard";
 import EventLeaderboardModal from "../components/EventLeaderboardModal";
@@ -14,6 +20,7 @@ import GameDetailModal from "../components/GameDetailModal";
 import { wmoEmoji } from "../components/WeatherInline";
 import Select, { type SelectOption } from "../components/Select";
 import { eventIdFromSpanId, eventSpan } from "./calendar/eventSpans";
+import { appearsOnGameSide } from "./calendar/gameSideFollows";
 import "../calendar.css";
 
 /**
@@ -26,16 +33,6 @@ const OUTDOOR_SPORTS: ReadonlySet<Sport> = new Set<Sport>([
   "football",
   "tennis",
 ]);
-
-/**
- * Sports modeled as leaderboard `Event`s rather than two-sided `Game`s —
- * mirrors the backend's `LEADERBOARD_SPORTS`. A follow in one of these is an
- * athlete-as-team row (a golfer) that never appears on either side of a game,
- * so a `?team_id=` .ics feed for one can only ever come back empty.
- * Tennis/MMA athletes are athlete-as-team too but their matches ARE games, so
- * their feeds work and they are deliberately NOT listed here.
- */
-const LEADERBOARD_SPORTS: ReadonlySet<Sport> = new Set<Sport>(["golf"]);
 
 /**
  * `webcal://` subscription URL for the live calendar feed. `webcal://`
@@ -221,6 +218,11 @@ export default function CalendarView() {
   const teamsQuery = useTeams();
   const scheduleQuery = useSchedule(range.start, range.end);
   const eventsQuery = useEvents(range.start, range.end);
+  // A tournament's days are fixed by the server (and already written into
+  // the .ics feed) in ITS timezone, so the spans are dated against that
+  // rather than the viewer's — otherwise a browser in another zone draws
+  // the bar a day off from the calendar the user subscribed to.
+  const serverTimeZone = useMeta().data?.timezone;
 
   // Resolve a clicked event back to its full Game so the modal header can
   // render instantly (fallbackGame) while the detail request is in flight.
@@ -253,19 +255,6 @@ export default function CalendarView() {
   );
   const weatherQuery = useScheduleWeather(weatherIds);
 
-  const teamOptions: SelectOption[] = useMemo(() => {
-    const teams = teamsQuery.data?.teams ?? [];
-    return [
-      { id: "all", label: "All teams" },
-      ...teams.map((team) => ({
-        id: team.id,
-        label: team.name,
-        logoUrl: team.logo_url,
-        color: team.color,
-      })),
-    ];
-  }, [teamsQuery.data]);
-
   const teamColors = useMemo(() => {
     const map: Record<string, string> = {};
     for (const team of teamsQuery.data?.teams ?? []) {
@@ -282,23 +271,39 @@ export default function CalendarView() {
     return map;
   }, [teamsQuery.data]);
 
-  // A per-team `.ics` feed is that team's GAMES. A leaderboard-sport follow
-  // (a golfer — an athlete-as-team row) never appears on either side of a
-  // game: its tournaments are Events, which belong to no team and so are
-  // omitted from every `?team_id=` feed. Offering that row would hand the
-  // user a subscription that stays empty forever, so it is dropped here and
-  // the menu's note points those follows at the all-teams feed, which does
-  // carry tournaments. A league we haven't loaded yet is kept — better a row
-  // that works than one silently missing while /teams is in flight.
-  const subscribableTeams = useMemo(() => {
-    const teams = teamsQuery.data?.teams ?? [];
-    return teams.filter((team) => {
-      const sport = leaguesById[team.league_id]?.sport;
-      return sport === undefined || !LEADERBOARD_SPORTS.has(sport);
-    });
-  }, [teamsQuery.data, leaguesById]);
+  // The follows the two controls below can actually serve — both are about
+  // GAMES, and a leaderboard-sport follow (a golfer) has none: its
+  // tournaments are Events, which belong to no team. A per-team `.ics` feed
+  // for one comes back empty forever, and picking one in the team filter
+  // matches neither side of any game while hiding the spans as well. Either
+  // way the row is a dead end, so it is dropped once from here rather than
+  // twice by rules that can drift apart (they already had — the filter went
+  // on offering golfers after the menu stopped). Each control notes the
+  // absence instead of leaving it unexplained. See
+  // `calendar/gameSideFollows.ts`, including why a league we haven't loaded
+  // yet is kept.
+  const gameSideTeams = useMemo(
+    () =>
+      (teamsQuery.data?.teams ?? []).filter((team) =>
+        appearsOnGameSide(team, leaguesById),
+      ),
+    [teamsQuery.data, leaguesById],
+  );
   const omitsLeaderboardFollows =
-    subscribableTeams.length < (teamsQuery.data?.teams ?? []).length;
+    gameSideTeams.length < (teamsQuery.data?.teams ?? []).length;
+
+  const teamOptions: SelectOption[] = useMemo(
+    () => [
+      { id: "all", label: "All teams" },
+      ...gameSideTeams.map((team) => ({
+        id: team.id,
+        label: team.name,
+        logoUrl: team.logo_url,
+        color: team.color,
+      })),
+    ],
+    [gameSideTeams],
+  );
 
   const gameEvents = useMemo<EventInput[]>(
     () =>
@@ -344,11 +349,12 @@ export default function CalendarView() {
   // chips), a sport glyph in the title, and the sport's league hue instead
   // of a team color. Hidden while filtering to one team — an event has no
   // team side, so no team's calendar owns it (the rule the per-team .ics
-  // feed follows too).
+  // feed follows too). Which is why the filter offers only game-side
+  // follows: a golfer would hide the very spans they were picked for.
   const tournamentSpans = useMemo<EventInput[]>(() => {
     if (teamFilter !== "all") return [];
     return (eventsQuery.data ?? []).map((event) => {
-      const span = eventSpan(event);
+      const span = eventSpan(event, serverTimeZone);
       const color = leagueFallbackColor(span.sport);
       return {
         id: span.id,
@@ -361,7 +367,7 @@ export default function CalendarView() {
         textColor: isLightColor(color) ? "#18181b" : "#fafafa",
       };
     });
-  }, [eventsQuery.data, teamFilter]);
+  }, [eventsQuery.data, teamFilter, serverTimeZone]);
 
   const calendarEvents = useMemo(
     () => [...gameEvents, ...tournamentSpans],
@@ -418,6 +424,21 @@ export default function CalendarView() {
     setSelectedEventId(null);
   }, [range.start, range.end]);
 
+  // A filtered-to team can leave the options after it was picked: unfollowed
+  // in another tab, or recognized as a leaderboard follow only once its
+  // league arrives. The Select falls back to displaying "All teams" when its
+  // value matches nothing, so leaving the id set would show an unfiltered
+  // control over a grid still filtered to a team that isn't listed — the
+  // permanently-empty grid this control just stopped offering. Fall back to
+  // "all" so the two agree. Mount is a no-op ("all" is the initial value).
+  useEffect(() => {
+    setTeamFilter((prev) =>
+      prev === "all" || teamOptions.some((option) => option.id === prev)
+        ? prev
+        : "all",
+    );
+  }, [teamOptions]);
+
   // Also undefined for the render between a range change and its refetch,
   // which simply keeps the modal closed.
   const selectedEvent =
@@ -426,12 +447,20 @@ export default function CalendarView() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Select
-          options={teamOptions}
-          value={teamFilter}
-          onChange={setTeamFilter}
-          ariaLabel="Filter by team"
-        />
+        <div className="flex min-w-0 items-center gap-2">
+          <Select
+            options={teamOptions}
+            value={teamFilter}
+            onChange={setTeamFilter}
+            ariaLabel="Filter by team"
+          />
+          {omitsLeaderboardFollows && (
+            <p className="min-w-0 max-w-xs text-[11px] leading-snug text-zinc-500">
+              A tournament belongs to no team, so those follows aren&apos;t
+              listed — All teams is the view that shows them.
+            </p>
+          )}
+        </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
@@ -457,7 +486,7 @@ export default function CalendarView() {
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
           <SubscribeMenu
-            teams={subscribableTeams}
+            teams={gameSideTeams}
             omitsLeaderboardFollows={omitsLeaderboardFollows}
           />
           <a

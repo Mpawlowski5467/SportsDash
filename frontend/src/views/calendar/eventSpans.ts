@@ -13,7 +13,7 @@
  */
 
 import {
-  localDateKey,
+  dateKeyInZone,
   localKeyFromDate,
   parseLocalDateKey,
 } from "../../lib/time";
@@ -57,11 +57,20 @@ function nextDayKey(key: string): string {
   return localKeyFromDate(day);
 }
 
-/** All-day span covering the days a leaderboard event runs over. */
-export function eventSpan(event: SportEvent): EventSpan {
-  const start = localDateKey(event.start_time);
+/**
+ * All-day span covering the days a leaderboard event runs over.
+ *
+ * `timeZone` should be the backend's configured zone (`MetaOut.timezone`),
+ * NOT the browser's. A tournament's days belong to the tournament, and the
+ * `.ics` feed already names them in that zone — deriving them from the
+ * viewer's zone instead puts the grid a day off from the subscribed
+ * calendar for anyone whose machine disagrees with the server. Omitted
+ * falls back to browser-local.
+ */
+export function eventSpan(event: SportEvent, timeZone?: string): EventSpan {
+  const start = dateKeyInZone(event.start_time, timeZone);
   const last =
-    event.end_time !== null ? localDateKey(event.end_time) : start;
+    event.end_time !== null ? dateKeyInZone(event.end_time, timeZone) : start;
   const glyph = SPORT_GLYPH[event.sport];
   return {
     id: SPAN_ID_PREFIX + event.id,

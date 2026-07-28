@@ -23,6 +23,7 @@ import type {
   GameOdds,
   MapResponse,
   Matchup,
+  Meta,
   NewsItem,
   NewsRefreshResult,
   NewsScope,
@@ -72,6 +73,23 @@ export function useTeams(): UseQueryResult<TeamsResponse> {
   return useQuery({
     queryKey: ["teams"],
     queryFn: () => api.teams(),
+    staleTime: Infinity,
+  });
+}
+
+/**
+ * App metadata, including the backend's configured timezone.
+ *
+ * Effectively static — it only changes when the server restarts with a new
+ * SPORTSDASH_TIMEZONE or version — so it is fetched once and never
+ * refetched. Anything whose calendar DAY is fixed by the server (a golf
+ * tournament's span, which the `.ics` feed already dates in this zone)
+ * should render against this rather than the browser's zone.
+ */
+export function useMeta(): UseQueryResult<Meta> {
+  return useQuery({
+    queryKey: ["meta"],
+    queryFn: () => api.meta(),
     staleTime: Infinity,
   });
 }

@@ -16,6 +16,7 @@ import type {
   GameOdds,
   MapResponse,
   Matchup,
+  Meta,
   NewsItem,
   NewsScope,
   NotificationPrefsResponse,
@@ -103,6 +104,9 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
 
 export const api = {
   teams: () => get<TeamsResponse>("/teams"),
+
+  /** App version, poll cadence, and the backend's configured timezone. */
+  meta: () => get<Meta>("/meta"),
 
   today: () => get<TodayResponse>("/today"),
 
