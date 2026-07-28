@@ -41,8 +41,9 @@ tennis, MMA, golf, and volleyball.**
 - **Today** — every game for the teams and leagues you follow, with live
   scores, period/clock, and auto-refresh that polls faster while a game is in
   progress. Click any card for a box score (line scores + top performers).
-- **Calendar** — month/week calendar of all games, colored per team, plus an
-  `.ics` / `webcal://` feed you can subscribe to from any calendar app.
+- **Calendar** — month/week calendar of all games, colored per team, with
+  multi-day golf tournaments drawn as span bars, plus an `.ics` /
+  `webcal://` feed you can subscribe to from any calendar app.
 - **Standings** — per-league tables with sport-appropriate columns and
   conference/division grouping; team crests inline.
 - **Leaders** — league-wide stat leaders (points, home runs, goals…), with
@@ -59,8 +60,10 @@ tennis, MMA, golf, and volleyball.**
   Standings and Results views.
 - **News** — aggregated headlines per team (ESPN + Google News + RSS) with an
   in-app reader.
-- **Map** — every followed team's (and active competition's) home venue on a
-  MapLibre map with 3D buildings; click a pin for stadium facts and fixtures.
+- **Map** — your followed teams' (and every active competition's) home venues
+  on a MapLibre map with 3D buildings; click a pin for stadium facts and
+  fixtures. A team whose ground can't be pinned accurately is left off rather
+  than placed approximately.
 - **Team & nation profiles** — click a team anywhere to open a unified page:
   next match, recent form, fixtures, results, roster, news, and stadium.
 - **Notifications** — pushed to your own [ntfy](https://ntfy.sh) topic:
@@ -76,13 +79,13 @@ slide-over panels you reach by clicking a team or game anywhere in the UI.
 
 | Tab | What you see / do |
 |---|---|
-| **Today** | The landing page: every game for your follows on the local calendar day, with live score, period, and clock. It auto-refreshes — fast while a game is in progress, slow otherwise. Click a card for a **box score** (line scores + top performers). In-progress golf/tennis leaderboards show up here too. |
-| **Calendar** | A month / week grid of all your fixtures, color-coded per team. **Subscribe** hands you ready-made `webcal://` feeds (all games, or one per team) and a one-off `.ics` export. |
+| **Today** | The landing page: every game for your follows on the local calendar day, with live score, period, and clock. It auto-refreshes — fast while a game is in progress, slow otherwise. Click a card for a **box score** (line scores + top performers). In-progress golf leaderboards show up here too. |
+| **Calendar** | A month / week grid of all your fixtures, color-coded per team, with golf tournaments spanning the days they run over (click one for its leaderboard — they show under *All teams*, since a tournament belongs to no team). **Subscribe** hands you ready-made `webcal://` feeds (all games, or one per team) and a one-off `.ics` export. |
 | **Matchup** | A pre-game **preview browser**: upcoming games with head-to-head context — recent form, last meetings, and where each side sits — so you can scan what's coming before it starts. |
 | **League** | Pick one of your leagues and drill in through three sub-tabs: **Standings** (sport-appropriate columns, conference/division grouping), **Leaders** (stat leaders, or the soccer Golden Boot), and **Bracket** (cup knockouts and best-of-N playoff series, grouped by round). |
 | **Results** | Recent **finals** per followed team, newest first, with streak and last-10 chips. |
 | **News** | Aggregated headlines per team (ESPN + Google News + RSS) with an in-app reader. |
-| **Map** | Every followed team's — and every active competition's — home venue on a MapLibre world map with 3D buildings. Click a pin for stadium facts, current weather, and upcoming fixtures there. |
+| **Map** | Your followed teams' — and every active competition's — home venues on a MapLibre world map with 3D buildings. Click a pin for stadium facts, current weather, and upcoming fixtures there. A pin only appears once the ground is known well enough to place it precisely; a team whose stadium no data source names stays off the map instead of being dropped on the middle of its county. |
 
 **Slide-over panels (click to open):**
 
@@ -182,15 +185,23 @@ The server deployment: runs anywhere Docker does, reached from any browser on
 your network (a laptop, a phone, a wall display).
 
 ```sh
-cp .env.example .env       # set your timezone and ntfy topic
+cp .env.example .env       # set your timezone
+printf 'SPORTSDASH_NTFY_TOPIC=%s\n' "$(openssl rand -hex 16)" >> .env
 docker compose up -d --build
 ```
+
+The second line is not optional: the bundled ntfy server runs with no auth,
+so the topic name is the only thing keeping your alerts private. There is
+deliberately **no default** — `docker compose up` refuses to start until
+`SPORTSDASH_NTFY_TOPIC` is set, and it should be a random string, not a
+guessable one.
 
 Then open:
 
 - Dashboard — <http://localhost:3000>
-- API docs (Swagger) — <http://localhost:8001/docs> (loopback-only; the
-  dashboard proxies `/api` internally, so other devices never need this port)
+- API docs (Swagger) — <http://localhost:8001/docs> (port 8001 is bound to
+  loopback, so Swagger is reachable from the host only; the dashboard proxies
+  `/api` internally, so other devices never need this port)
 - ntfy — <http://localhost:8090>
 
 On first load the dashboard opens the **setup wizard**: choose the leagues
@@ -198,8 +209,22 @@ and teams you want, and SportsDash pulls their live data from ESPN /
 TheSportsDB and starts populating every view.
 
 For game notifications on your phone, install the ntfy mobile app, add your
-server (`http://<your-host>:8090`), and subscribe to your topic
-(`SPORTSDASH_NTFY_TOPIC`, default `sportsdash`).
+server (`http://<your-host>:8090`), and subscribe to the topic you generated
+above (`SPORTSDASH_NTFY_TOPIC`).
+
+> **Trust model — no auth, so mind the network.** SportsDash is single-user
+> and has no login. The dashboard on `:3000` is published to your LAN on
+> purpose (that's the wall display / phone entry point) and it proxies every
+> `/api` path and method straight through, so *any device that can reach
+> `:3000` can reach the whole API* — including the mutating endpoints (`POST
+> /api/setup/follow` rewrites your followed set, `PUT
+> /api/notifications/prefs`, `POST /api/news/refresh`). Binding the API's own
+> port to loopback is not a security boundary; it only avoids a second,
+> unproxied entry point and keeps FastAPI's `/docs`, `/redoc` and
+> `/openapi.json` off the LAN. The ntfy port `:8090` is LAN-exposed too, and
+> unauthenticated. On an untrusted or guest network, put the whole stack
+> behind an authenticating reverse proxy or a VPN — moving ports around will
+> not help.
 
 ### Option B — macOS desktop app
 
@@ -252,8 +277,12 @@ is playing (or about to). Detected transitions are pushed to
 Each event is recorded after a successful send, so restarts and re-polls never
 duplicate an alert. Whole-league follows default to game-start + final only
 (a spam guard), and per-scope mute / event toggles live under
-`/api/notifications/prefs`. Set `SPORTSDASH_NOTIFICATIONS_ENABLED=false` to
-silence everything without touching the rest of the stack.
+`/api/notifications/prefs` — muting the `global` scope there silences
+everything without touching the rest of the stack. The
+`SPORTSDASH_NOTIFICATIONS_ENABLED=false` env var does the same for a
+non-Docker run (it is how the desktop app ships); under Compose it has to go
+in the `api` service's `environment:` block, because the root `.env` is only
+interpolated into `docker-compose.yml` and never injected into the container.
 
 ## Subscribe to your calendar
 
@@ -262,14 +291,19 @@ can live inside Apple Calendar, Google Calendar, or any calendar app that
 supports subscriptions.
 
 - **All games:** `http://<your-host>:3000/api/calendar.ics` (covers −30 …
-  +60 days). For a *live, auto-updating* subscription use the `webcal://`
-  scheme — `webcal://<your-host>:3000/api/calendar.ics`.
+  +60 days, and carries golf tournaments as all-day entries). For a
+  *live, auto-updating* subscription use the `webcal://` scheme —
+  `webcal://<your-host>:3000/api/calendar.ics`.
 - **One team:** append `?team_id=<team-id>`, e.g.
-  `webcal://<your-host>:3000/api/calendar.ics?team_id=<team-id>`.
+  `webcal://<your-host>:3000/api/calendar.ics?team_id=<team-id>` — that
+  team's games only. A tournament belongs to no team, so a followed golfer
+  has no per-team feed of their own and isn't offered one in **Subscribe** —
+  nor in the Calendar's team filter, for the same reason. Their tournaments
+  ride in the all-games feed above, and on the grid under *All teams*.
 
-(The feed goes through the frontend on port 3000, which proxies `/api` —
-the API itself is bound to loopback and isn't reachable from other
-devices.)
+(Point calendar apps at port 3000, not 8001: the frontend proxies `/api`
+through to the backend, while the backend's own port is bound to loopback and
+so is reachable from the Docker host only.)
 
 In the Calendar tab, **Subscribe** offers ready-made `webcal://` links (all
 games plus one per followed team) with copy-to-clipboard, alongside the

@@ -5,6 +5,7 @@ import { useGameOdds } from "../hooks";
 import { formatDateTime } from "../lib/time";
 import TeamLogo from "./TeamLogo";
 import Portal from "./Portal";
+import { useTopmostEsc } from "./modalChrome";
 import GameDetailModal from "./GameDetailModal";
 
 /** 3-letter fallback when a side carries no abbreviation (mirrors GameCard). */
@@ -100,14 +101,10 @@ export default function MapVenueGamesPanel({
   // The game whose box score is open (drill-down), if any.
   const [openGameId, setOpenGameId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  // ESC closes while open — via the shared stack, so the box-score modal
+  // opened on top of this panel takes ESC priority (a hand-rolled document
+  // listener would close both layers on one keypress).
+  useTopmostEsc(onClose, open);
 
   const games = shown?.games ?? [];
 
@@ -129,8 +126,13 @@ export default function MapVenueGamesPanel({
   return (
     <>
       <Portal>
+        {/* Closed, the panel is `inert` as well as aria-hidden: it stays
+            mounted (so it animates out) and is portaled to <body>, so without
+            it every retained game row and the Close button would keep an
+            invisible tab stop at the end of the page — on every view. */}
         <aside
           aria-hidden={!open}
+          inert={!open}
           className={
             "fixed bottom-0 right-0 top-12 z-40 flex w-[20rem] max-w-[88vw] flex-col " +
             "border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform " +

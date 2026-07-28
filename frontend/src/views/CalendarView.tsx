@@ -6,12 +6,21 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import type { DatesSetArg, EventClickArg, EventInput } from "@fullcalendar/core";
 import { api } from "../api";
-import { useSchedule, useScheduleWeather, useTeams } from "../hooks";
-import type { Game, League, Sport, Team } from "../types";
+import {
+  useEvents,
+  useMeta,
+  useSchedule,
+  useScheduleWeather,
+  useTeams,
+} from "../hooks";
+import type { Game, League, Sport, SportEvent, Team } from "../types";
 import { leagueFallbackColor } from "../components/GameCard";
+import EventLeaderboardModal from "../components/EventLeaderboardModal";
 import GameDetailModal from "../components/GameDetailModal";
 import { wmoEmoji } from "../components/WeatherInline";
 import Select, { type SelectOption } from "../components/Select";
+import { eventIdFromSpanId, eventSpan } from "./calendar/eventSpans";
+import { appearsOnGameSide } from "./calendar/gameSideFollows";
 import "../calendar.css";
 
 /**
@@ -43,8 +52,19 @@ function webcalUrl(teamId?: string): string {
  * plus one per followed team. Each row opens the feed in the OS calendar
  * app on click and offers a copy-to-clipboard button. Closes on outside
  * click or Escape.
+ *
+ * `teams` arrives already filtered to follows a per-team feed can actually
+ * serve; `omitsLeaderboardFollows` says whether anything was dropped, so the
+ * menu can point those follows at the all-teams feed instead of silently
+ * missing a row.
  */
-function SubscribeMenu({ teams }: { teams: Team[] }) {
+function SubscribeMenu({
+  teams,
+  omitsLeaderboardFollows,
+}: {
+  teams: Team[];
+  omitsLeaderboardFollows: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -115,6 +135,9 @@ function SubscribeMenu({ teams }: { teams: Team[] }) {
           <p className="px-3 py-1.5 text-[11px] leading-snug text-zinc-500">
             Subscribe in Apple or Google Calendar to keep games updating
             automatically.
+            {omitsLeaderboardFollows
+              ? " Tournaments belong to no team — the all-teams feed is the one that carries them."
+              : ""}
           </p>
           {rows.map((row) => {
             const url = webcalUrl(row.teamId);
@@ -168,7 +191,8 @@ function eventColor(game: Game, teamColors: Record<string, string>): string {
  * differ, an unpadded window can drop games on the visible range's edge
  * days — so always ask for one extra day on each side. FullCalendar
  * only renders events that fall inside the visible cells, so the
- * padding is invisible.
+ * padding is invisible. The same range feeds /api/events, which reads
+ * start/end identically.
  */
 function initialRange(): { start: string; end: string } {
   const now = new Date();
@@ -180,7 +204,8 @@ function initialRange(): { start: string; end: string } {
 
 /**
  * Month/week calendar of all followed-team games over the visible range,
- * colored per team, with an iCalendar export.
+ * colored per team, with leaderboard competitions (golf tournaments) drawn
+ * as multi-day all-day bars, and an iCalendar export.
  */
 export default function CalendarView() {
   const [range, setRange] = useState(initialRange);
@@ -188,8 +213,16 @@ export default function CalendarView() {
   // Which game's box-score modal is open (its id), or null. Clicking a
   // calendar event opens the same GameDetailModal the cards use.
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
+  // Likewise for a clicked tournament span and its leaderboard.
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const teamsQuery = useTeams();
   const scheduleQuery = useSchedule(range.start, range.end);
+  const eventsQuery = useEvents(range.start, range.end);
+  // A tournament's days are fixed by the server (and already written into
+  // the .ics feed) in ITS timezone, so the spans are dated against that
+  // rather than the viewer's — otherwise a browser in another zone draws
+  // the bar a day off from the calendar the user subscribed to.
+  const serverTimeZone = useMeta().data?.timezone;
 
   // Resolve a clicked event back to its full Game so the modal header can
   // render instantly (fallbackGame) while the detail request is in flight.
@@ -198,6 +231,14 @@ export default function CalendarView() {
     for (const game of scheduleQuery.data ?? []) map[game.id] = game;
     return map;
   }, [scheduleQuery.data]);
+
+  // The leaderboard modal renders straight from the already-loaded event
+  // (as Today's does), so a clicked span needs no extra fetch.
+  const eventsById = useMemo(() => {
+    const map: Record<string, SportEvent> = {};
+    for (const event of eventsQuery.data ?? []) map[event.id] = event;
+    return map;
+  }, [eventsQuery.data]);
 
   // Game-day forecasts for the outdoor scheduled games in view, fetched as a
   // single batch and shown as a glyph on the event. Pre-filtered to outdoor
@@ -213,19 +254,6 @@ export default function CalendarView() {
     [scheduleQuery.data],
   );
   const weatherQuery = useScheduleWeather(weatherIds);
-
-  const teamOptions: SelectOption[] = useMemo(() => {
-    const teams = teamsQuery.data?.teams ?? [];
-    return [
-      { id: "all", label: "All teams" },
-      ...teams.map((team) => ({
-        id: team.id,
-        label: team.name,
-        logoUrl: team.logo_url,
-        color: team.color,
-      })),
-    ];
-  }, [teamsQuery.data]);
 
   const teamColors = useMemo(() => {
     const map: Record<string, string> = {};
@@ -243,7 +271,41 @@ export default function CalendarView() {
     return map;
   }, [teamsQuery.data]);
 
-  const events = useMemo<EventInput[]>(
+  // The follows the two controls below can actually serve — both are about
+  // GAMES, and a leaderboard-sport follow (a golfer) has none: its
+  // tournaments are Events, which belong to no team. A per-team `.ics` feed
+  // for one comes back empty forever, and picking one in the team filter
+  // matches neither side of any game while hiding the spans as well. Either
+  // way the row is a dead end, so it is dropped once from here rather than
+  // twice by rules that can drift apart (they already had — the filter went
+  // on offering golfers after the menu stopped). Each control notes the
+  // absence instead of leaving it unexplained. See
+  // `calendar/gameSideFollows.ts`, including why a league we haven't loaded
+  // yet is kept.
+  const gameSideTeams = useMemo(
+    () =>
+      (teamsQuery.data?.teams ?? []).filter((team) =>
+        appearsOnGameSide(team, leaguesById),
+      ),
+    [teamsQuery.data, leaguesById],
+  );
+  const omitsLeaderboardFollows =
+    gameSideTeams.length < (teamsQuery.data?.teams ?? []).length;
+
+  const teamOptions: SelectOption[] = useMemo(
+    () => [
+      { id: "all", label: "All teams" },
+      ...gameSideTeams.map((team) => ({
+        id: team.id,
+        label: team.name,
+        logoUrl: team.logo_url,
+        color: team.color,
+      })),
+    ],
+    [gameSideTeams],
+  );
+
+  const gameEvents = useMemo<EventInput[]>(
     () =>
       (scheduleQuery.data ?? [])
         .filter(
@@ -282,22 +344,59 @@ export default function CalendarView() {
     [scheduleQuery.data, teamColors, leaguesById, teamFilter, weatherQuery.data],
   );
 
-  // Manual refresh: re-pull the stored games (and their forecast glyphs) on
-  // demand, rather than waiting for the 30s staleness / a tab revisit. The
-  // backend's own schedule sync still runs on its daily cron; this just
-  // re-reads whatever it currently has. The button tracks the GAMES fetch
-  // only — the weather batch is a slower, secondary enhancement, so the
-  // button shouldn't stay spinning waiting on forecast glyphs.
-  const refreshing = scheduleQuery.isFetching;
+  // Tournaments as all-day bars across their days. They read as their own
+  // kind rather than as games: a continuous multi-day span (games are timed
+  // chips), a sport glyph in the title, and the sport's league hue instead
+  // of a team color. Hidden while filtering to one team — an event has no
+  // team side, so no team's calendar owns it (the rule the per-team .ics
+  // feed follows too). Which is why the filter offers only game-side
+  // follows: a golfer would hide the very spans they were picked for.
+  const tournamentSpans = useMemo<EventInput[]>(() => {
+    if (teamFilter !== "all") return [];
+    return (eventsQuery.data ?? []).map((event) => {
+      const span = eventSpan(event, serverTimeZone);
+      const color = leagueFallbackColor(span.sport);
+      return {
+        id: span.id,
+        title: span.title,
+        start: span.start,
+        end: span.end, // exclusive, like iCalendar's DTEND
+        allDay: true,
+        backgroundColor: color,
+        borderColor: color,
+        textColor: isLightColor(color) ? "#18181b" : "#fafafa",
+      };
+    });
+  }, [eventsQuery.data, teamFilter, serverTimeZone]);
+
+  const calendarEvents = useMemo(
+    () => [...gameEvents, ...tournamentSpans],
+    [gameEvents, tournamentSpans],
+  );
+
+  // Manual refresh: re-pull the stored games and tournaments (and the games'
+  // forecast glyphs) on demand, rather than waiting for the 30s staleness / a
+  // tab revisit. The backend's own schedule sync still runs on its daily
+  // cron; this just re-reads whatever it currently has. The button tracks the
+  // two content fetches — the weather batch is a slower, secondary
+  // enhancement, so it shouldn't keep the button spinning.
+  const refreshing = scheduleQuery.isFetching || eventsQuery.isFetching;
   const handleRefresh = () => {
     scheduleQuery.refetch();
+    eventsQuery.refetch();
     weatherQuery.refetch();
   };
 
   const handleEventClick = (arg: EventClickArg) => {
-    // Events carry the game id; FullCalendar would otherwise treat the
-    // event as a link and navigate. Open the box-score modal instead.
+    // Calendar entries carry the game id — or a prefixed event id for a
+    // tournament span. FullCalendar would otherwise treat the entry as a
+    // link and navigate; open the matching modal instead.
     arg.jsEvent.preventDefault();
+    const eventId = eventIdFromSpanId(arg.event.id);
+    if (eventId !== null) {
+      setSelectedEventId(eventId);
+      return;
+    }
     setSelectedGameId(arg.event.id);
   };
 
@@ -315,15 +414,53 @@ export default function CalendarView() {
     );
   };
 
+  // Moving the visible range re-queries /api/events for the new window, so a
+  // tournament picked in the old one is no longer on the grid: drop the
+  // selection with the range that produced it. Without this the id lingers,
+  // and while the modal does stay hidden (the lookup below misses), it pops
+  // back open by itself the moment the user navigates to a window that
+  // happens to contain that tournament again. Mount is a no-op (already null).
+  useEffect(() => {
+    setSelectedEventId(null);
+  }, [range.start, range.end]);
+
+  // A filtered-to team can leave the options after it was picked: unfollowed
+  // in another tab, or recognized as a leaderboard follow only once its
+  // league arrives. The Select falls back to displaying "All teams" when its
+  // value matches nothing, so leaving the id set would show an unfiltered
+  // control over a grid still filtered to a team that isn't listed — the
+  // permanently-empty grid this control just stopped offering. Fall back to
+  // "all" so the two agree. Mount is a no-op ("all" is the initial value).
+  useEffect(() => {
+    setTeamFilter((prev) =>
+      prev === "all" || teamOptions.some((option) => option.id === prev)
+        ? prev
+        : "all",
+    );
+  }, [teamOptions]);
+
+  // Also undefined for the render between a range change and its refetch,
+  // which simply keeps the modal closed.
+  const selectedEvent =
+    selectedEventId !== null ? eventsById[selectedEventId] : undefined;
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Select
-          options={teamOptions}
-          value={teamFilter}
-          onChange={setTeamFilter}
-          ariaLabel="Filter by team"
-        />
+        <div className="flex min-w-0 items-center gap-2">
+          <Select
+            options={teamOptions}
+            value={teamFilter}
+            onChange={setTeamFilter}
+            ariaLabel="Filter by team"
+          />
+          {omitsLeaderboardFollows && (
+            <p className="min-w-0 max-w-xs text-[11px] leading-snug text-zinc-500">
+              A tournament belongs to no team, so those follows aren&apos;t
+              listed — All teams is the view that shows them.
+            </p>
+          )}
+        </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
@@ -348,7 +485,10 @@ export default function CalendarView() {
             </svg>
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
-          <SubscribeMenu teams={teamsQuery.data?.teams ?? []} />
+          <SubscribeMenu
+            teams={gameSideTeams}
+            omitsLeaderboardFollows={omitsLeaderboardFollows}
+          />
           <a
             href={api.calendarIcsUrl}
             download
@@ -368,7 +508,7 @@ export default function CalendarView() {
           right: "dayGridMonth,timeGridWeek",
         }}
         height="auto"
-        events={events}
+        events={calendarEvents}
         eventClick={handleEventClick}
         datesSet={handleDatesSet}
         eventTimeFormat={{
@@ -383,6 +523,14 @@ export default function CalendarView() {
           gameId={selectedGameId}
           fallbackGame={gamesById[selectedGameId]}
           onClose={() => setSelectedGameId(null)}
+        />
+      )}
+
+      {selectedEvent !== undefined && (
+        <EventLeaderboardModal
+          event={selectedEvent}
+          followedColor={teamColors}
+          onClose={() => setSelectedEventId(null)}
         />
       )}
     </div>

@@ -16,6 +16,7 @@ import type {
   GameOdds,
   MapResponse,
   Matchup,
+  Meta,
   NewsItem,
   NewsScope,
   NotificationPrefsResponse,
@@ -25,6 +26,7 @@ import type {
   Roster,
   Scorers,
   SetupStatus,
+  SportEvent,
   Standings,
   StatLeaders,
   TeamsResponse,
@@ -103,6 +105,9 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
 export const api = {
   teams: () => get<TeamsResponse>("/teams"),
 
+  /** App version, poll cadence, and the backend's configured timezone. */
+  meta: () => get<Meta>("/meta"),
+
   today: () => get<TodayResponse>("/today"),
 
   map: (days?: number) => get<MapResponse>("/map", { days }),
@@ -114,6 +119,13 @@ export const api = {
           end: p.end,
         })
       : get<Game[]>("/schedule", { start: p.start, end: p.end }),
+
+  // Leaderboard competitions (golf tournaments — golf is the only sport
+  // modeled as an Event) OVERLAPPING the local-day range: unlike /schedule
+  // these span days, so a tournament that started before `start` is returned
+  // while it is still running.
+  events: (p: { start: string; end: string }) =>
+    get<SportEvent[]>("/events", { start: p.start, end: p.end }),
 
   gameDetail: (id: string) =>
     get<GameDetail>(`/games/${encodeURIComponent(id)}`),

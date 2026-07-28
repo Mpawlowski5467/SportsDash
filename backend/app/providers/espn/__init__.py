@@ -21,11 +21,13 @@ is pure parsers except ``provider``):
 - ``news_location`` — news articles, home venue / location
 - ``provider``      — the EspnProvider class (fetch + delegate)
 
-This ``__init__`` re-exports the public provider plus the parser
-entry points the test suite exercises, so ``from app.providers.espn
-import X`` keeps working exactly as it did for the single file.
+This ``__init__`` re-exports the public provider plus the parser entry
+points (and the one fan-out bound) the test suite exercises, so ``from
+app.providers.espn import X`` keeps working exactly as it did for the
+single file — and no test has to reach into a submodule.
 """
 
+from app.providers.espn.common import _FIGHT_RESULT_MAX_BOUTS
 from app.providers.espn.games import _parse_event, _parse_schedule, _parse_scoreboard
 from app.providers.espn.golf import (
     _event_overlaps_window,
@@ -36,7 +38,13 @@ from app.providers.espn.golf import (
     _parse_golf_event,
     _parse_golf_scoreboard,
 )
-from app.providers.espn.individual import _parse_individual_scoreboard
+from app.providers.espn.individual import (
+    _classify_fight_method,
+    _merge_fight_results,
+    _mma_status_urls,
+    _parse_bout_status,
+    _parse_individual_scoreboard,
+)
 from app.providers.espn.news_location import _parse_news, _parse_team_location
 from app.providers.espn.provider import EspnProvider
 from app.providers.espn.roster import (
@@ -64,8 +72,10 @@ from app.providers.espn.summary import (
 
 __all__ = [
     "EspnProvider",
+    "_FIGHT_RESULT_MAX_BOUTS",
     "_career_line_from_overview",
     "_chunk_date_range",
+    "_classify_fight_method",
     "_core_event_path",
     "_event_overlaps_window",
     "_format_stat_line",
@@ -73,8 +83,11 @@ __all__ = [
     "_golf_round_label",
     "_golf_score",
     "_leaderboard",
+    "_merge_fight_results",
     "_merge_games",
+    "_mma_status_urls",
     "_parse_athlete",
+    "_parse_bout_status",
     "_parse_event",
     "_parse_game_summary",
     "_parse_goals",

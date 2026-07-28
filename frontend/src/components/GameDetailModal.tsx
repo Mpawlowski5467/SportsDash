@@ -6,6 +6,7 @@ import { useId } from "react";
 import { useGameDetail } from "../hooks";
 import { formatDateTime } from "../lib/time";
 import type {
+  FightResult,
   Game,
   GameLineup,
   GameOdds,
@@ -18,7 +19,11 @@ import LineupView from "./LineupView";
 import PlayByPlayTimeline from "./PlayByPlayTimeline";
 import Portal from "./Portal";
 import { useModalChrome } from "./modalChrome";
-import StatusBadge from "./StatusBadge";
+import StatusBadge, {
+  fightMethodLabel,
+  fightResultOf,
+  fightRoundLabel,
+} from "./StatusBadge";
 import WeatherInline from "./WeatherInline";
 import WinProbChart from "./WinProbChart";
 
@@ -172,6 +177,9 @@ function DetailBody({
   const hasSummary = summary !== null && hasSummaryContent(summary);
   const hasLineup =
     lineup !== null && (lineup.home !== null || lineup.away !== null);
+  // Individual sports have no box score at all, so for a finished fight the
+  // method of victory is the only thing worth reading — and it IS the result.
+  const fight = game !== undefined ? fightResultOf(game) : null;
   // Odds/win-prob are a pre-game and live artifact; never on a finished game.
   const hasOdds =
     odds !== null &&
@@ -180,7 +188,7 @@ function DetailBody({
     game?.phase !== "postponed" &&
     game?.phase !== "canceled";
 
-  if (!hasSummary && !hasLineup && !hasOdds && weather === null) {
+  if (!hasSummary && !hasLineup && !hasOdds && weather === null && fight === null) {
     return (
       <EmptyState
         message={
@@ -194,6 +202,7 @@ function DetailBody({
 
   return (
     <div className="space-y-6">
+      {fight !== null && <FightResultSection result={fight} />}
       {hasOdds && game !== undefined && <OddsSection odds={odds} game={game} />}
       {hasSummary && <SummaryBody summary={summary} game={game} />}
       {hasLineup && game !== undefined && (
@@ -205,6 +214,34 @@ function DetailBody({
           showNote={!hasSummary && !hasLineup}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * How a finished fight ended — the combat-sport stand-in for a line score.
+ * Leads the body because for MMA it IS the result: the method on top, the
+ * provider's flavour and the round/time under it.
+ */
+function FightResultSection({ result }: { result: FightResult }) {
+  const detail = [result.detail, fightRoundLabel(result)]
+    .filter((part): part is string => part !== null && part !== "")
+    .join(" · ");
+  return (
+    <div>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        Result
+      </h3>
+      <div className="rounded-lg border border-zinc-800 bg-zinc-800/30 px-3 py-3">
+        <div className="text-sm font-semibold text-zinc-100">
+          {fightMethodLabel(result.method)}
+        </div>
+        {detail !== "" && (
+          <div className="mt-0.5 text-xs tabular-nums text-zinc-400">
+            {detail}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

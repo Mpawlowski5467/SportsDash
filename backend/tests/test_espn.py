@@ -15,10 +15,20 @@ import httpx
 import pytest
 
 from app import timeutil
-from app.models.domain import GamePhase, League, PlayerStatus, Sport, Team
+from app.models.domain import (
+    FightMethod,
+    FightResult,
+    GamePhase,
+    League,
+    PlayerStatus,
+    Sport,
+    Team,
+)
 from app.providers.espn import (
     EspnProvider,
+    _FIGHT_RESULT_MAX_BOUTS,
     _career_line_from_overview,
+    _classify_fight_method,
     _core_event_path,
     _event_overlaps_window,
     _golf_detail,
@@ -28,7 +38,10 @@ from app.providers.espn import (
     _parse_athlete,
     _chunk_date_range,
     _format_stat_line,
+    _merge_fight_results,
     _merge_games,
+    _mma_status_urls,
+    _parse_bout_status,
     _parse_game_summary,
     _parse_golf_event,
     _parse_golf_scoreboard,
@@ -49,6 +62,7 @@ from app.providers.espn import (
     _stat_line_from_overview,
 )
 from app.providers.espn_catalog import get_catalog_league
+from app.providers.http_util import TransientProviderError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -2420,6 +2434,38 @@ async def test_get_roster_attaches_stat_lines_and_tolerates_missing() -> None:
     assert by_id["espn:9004"].career_stat_line is None
 
 
+async def test_get_roster_tolerates_an_overview_that_is_not_json() -> None:
+    """An HTML error page under a 200 degrades like any other blip.
+
+    ``json.JSONDecodeError`` is raised inside ``_get_json`` rather than by
+    the HTTP layer, so it is a ValueError, not an ``httpx.HTTPError``; the
+    roster still comes back, just without the garnish.
+    """
+    team = Team(
+        id="gravenford-owls",
+        league_id=BASKETBALL_LEAGUE.id,
+        name="Gravenford Owls",
+        abbreviation="GRV",
+        provider_key="501",
+    )
+    with (FIXTURES / "espn_basketball_roster.json").open(encoding="utf-8") as handle:
+        roster_payload = json.load(handle)
+
+    provider = EspnProvider()
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        if url.endswith("/roster"):
+            return roster_payload
+        raise json.JSONDecodeError("Expecting value", "<html>503</html>", 0)
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    roster = await provider.get_roster(BASKETBALL_LEAGUE, team)
+
+    assert len(roster.players) == 4
+    assert all(player.stat_line is None for player in roster.players)
+    assert all(player.career_stat_line is None for player in roster.players)
+
+
 async def test_get_roster_individual_sport_skips_stat_lines() -> None:
     """Tennis/MMA "teams" are single athletes with empty rosters; no
     overview calls happen."""
@@ -2957,13 +3003,22 @@ TENNIS_PLAYER = Team(
     abbreviation="R. Ashgrove",
     provider_key="70001",
 )
-# A followed fighter.
+# A followed fighter, mid-bout on the fixture card.
 MMA_FIGHTER = Team(
     id="summit-cassius-dunmore",
     league_id=MMA_LEAGUE.id,
     name="Cassius Dunmore",
     abbreviation="C. Dunmore",
     provider_key="80001",
+)
+# A followed fighter whose bout on the fixture card is already FINAL — the
+# only kind the method-of-victory enrichment spends a call on.
+MMA_FINISHED_FIGHTER = Team(
+    id="summit-dario-welkin",
+    league_id=MMA_LEAGUE.id,
+    name="Dario Welkin",
+    abbreviation="D. Welkin",
+    provider_key="80003",
 )
 
 
@@ -3145,6 +3200,229 @@ def test_mma_scoreboard_skips_one_sided_bout(ufc_scoreboard_data: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# MMA method of victory (a finished bout's round count is not a result)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def bout_status_ko_data() -> dict[str, Any]:
+    with (FIXTURES / "espn_ufc_bout_status_ko.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+@pytest.fixture(scope="module")
+def bout_status_submission_data() -> dict[str, Any]:
+    with (FIXTURES / "espn_ufc_bout_status_submission.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+@pytest.fixture(scope="module")
+def bout_status_decision_data() -> dict[str, Any]:
+    with (FIXTURES / "espn_ufc_bout_status_decision.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def test_bout_status_ko_carries_round_and_time(bout_status_ko_data: dict[str, Any]) -> None:
+    """A stoppage: the method, what caused it, and when it landed."""
+    result = _parse_bout_status(bout_status_ko_data)
+    assert result is not None
+    assert result.method is FightMethod.KO
+    # "KO/TKO" alone names no flavour; the richer "TKO - Punches" does.
+    assert result.detail == "Punches"
+    assert result.round == 2
+    assert result.clock == "4:21"
+
+
+def test_bout_status_submission_keeps_the_hold(
+    bout_status_submission_data: dict[str, Any],
+) -> None:
+    result = _parse_bout_status(bout_status_submission_data)
+    assert result is not None
+    assert result.method is FightMethod.SUBMISSION
+    assert result.detail == "Rear-Naked Choke"
+    assert result.round == 1
+    assert result.clock == "2:47"
+
+
+def test_bout_status_decision_keeps_its_flavour(
+    bout_status_decision_data: dict[str, Any],
+) -> None:
+    result = _parse_bout_status(bout_status_decision_data)
+    assert result is not None
+    assert result.method is FightMethod.DECISION
+    assert result.detail == "Unanimous"
+    assert result.round == 3
+    assert result.clock == "5:00"  # went the distance
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(None, id="not-a-dict"),
+        pytest.param("KO/TKO", id="string-body"),
+        pytest.param({}, id="empty"),
+        pytest.param({"result": "KO/TKO"}, id="result-not-an-object"),
+        pytest.param({"result": {}}, id="result-empty"),
+        pytest.param({"result": {"displayName": ""}}, id="result-blank-text"),
+        pytest.param({"result": {"displayName": "Final"}}, id="result-names-no-method"),
+        pytest.param({"result": {"displayName": 17}}, id="result-text-not-a-string"),
+        pytest.param({"period": 2, "displayClock": "4:21"}, id="status-without-a-result"),
+    ],
+)
+def test_bout_status_degrades_to_no_method_known(payload: Any) -> None:
+    """The core feed's shape is not contractual: anything unusable is None."""
+    assert _parse_bout_status(payload) is None
+
+
+def test_bout_status_reads_a_wrapped_status_document() -> None:
+    """The same parse serves a bare status and a competition wrapping one."""
+    result = _parse_bout_status(
+        {
+            "id": "9910011",
+            "status": {
+                "period": 3,
+                "displayClock": "0:42",
+                "result": {"displayName": "Submission - Guillotine Choke"},
+            },
+        }
+    )
+    assert result is not None
+    assert result.method is FightMethod.SUBMISSION
+    assert result.detail == "Guillotine Choke"
+    assert result.round == 3
+    assert result.clock == "0:42"
+
+
+@pytest.mark.parametrize(
+    ("text", "method", "detail"),
+    [
+        ("KO/TKO", FightMethod.KO, None),
+        ("TKO - Head Kick", FightMethod.KO, "Head Kick"),
+        # ESPN spells the method twice; only the spellings are dropped, so
+        # the flavour after them survives.
+        ("KO/TKO - Punches", FightMethod.KO, "Punches"),
+        ("Final - KO/TKO - Head Kick", FightMethod.KO, "Head Kick"),
+        ("Knockout", FightMethod.KO, None),
+        ("Submission (Armbar)", FightMethod.SUBMISSION, "Armbar"),
+        ("Technical Submission - Guillotine", FightMethod.SUBMISSION, "Technical Guillotine"),
+        ("Decision - Split", FightMethod.DECISION, "Split"),
+        ("Final - Decision - Unanimous", FightMethod.DECISION, "Unanimous"),
+        ("Majority Draw", FightMethod.DRAW, "Majority"),
+        ("DQ - Illegal Knee", FightMethod.DISQUALIFICATION, "Illegal Knee"),
+        ("No Contest - Accidental Clash", FightMethod.NO_CONTEST, "Accidental Clash"),
+        # Nothing here names a method — the bout keeps "no method known".
+        ("Final", None, None),
+        ("", None, None),
+        ("Sat, June 13th at 8:00 PM EDT", None, None),
+    ],
+)
+def test_fight_method_classification(
+    text: str, method: FightMethod | None, detail: str | None
+) -> None:
+    classified = _classify_fight_method(text)
+    if method is None:
+        assert classified is None
+        return
+    assert classified == (method, detail)
+
+
+def test_merge_fight_results_fills_gaps_without_losing_the_method() -> None:
+    """The core feed wins on the method; what it omits survives from the scoreboard."""
+    scoreboard = FightResult(method=FightMethod.DECISION, detail="Unanimous", round=3)
+    core = FightResult(method=FightMethod.DECISION, clock="5:00")
+    merged = _merge_fight_results(scoreboard, core)
+    assert merged == FightResult(
+        method=FightMethod.DECISION, detail="Unanimous", round=3, clock="5:00"
+    )
+    # Nothing known before: the fetched result stands on its own.
+    assert _merge_fight_results(None, core) == core
+
+
+def test_mma_scoreboard_detail_yields_a_method_for_free(
+    ufc_scoreboard_data: dict[str, Any],
+) -> None:
+    """The card's own "Final - Decision - Unanimous" needs no extra call."""
+    games = {g.id: g for g in _parse_individual_scoreboard(ufc_scoreboard_data, MMA_LEAGUE)}
+    result = games["espn:9910002"].fight_result
+    assert result is not None
+    assert result.method is FightMethod.DECISION
+    assert result.detail == "Unanimous"
+    assert result.round == 3  # the round the bout ended in
+    assert result.clock is None  # the scoreboard never carries the stoppage time
+
+
+def test_mma_unfinished_bouts_have_no_fight_result(
+    ufc_scoreboard_data: dict[str, Any],
+) -> None:
+    games = {g.id: g for g in _parse_individual_scoreboard(ufc_scoreboard_data, MMA_LEAGUE)}
+    assert games["espn:9910001"].fight_result is None  # in progress
+    assert games["espn:9910003"].fight_result is None  # scheduled
+
+
+def test_tennis_is_unaffected_by_the_fight_result_field(
+    tennis_scoreboard_data: dict[str, Any],
+) -> None:
+    games = _parse_individual_scoreboard(tennis_scoreboard_data, TENNIS_LEAGUE)
+    assert games  # the draw parsed
+    assert all(game.fight_result is None for game in games)
+
+
+def test_mma_status_urls_built_from_the_card(ufc_scoreboard_data: dict[str, Any]) -> None:
+    """UFC event id != bout id, so the mapping is read off the payload."""
+    urls = _mma_status_urls(
+        ufc_scoreboard_data,
+        core_league_base="https://sports.core.api.espn.com/v2/sports/mma/leagues/summit",
+    )
+    assert urls["espn:9910002"] == (
+        "https://sports.core.api.espn.com/v2/sports/mma/leagues/summit"
+        "/events/990058854/competitions/9910002/status"
+    )
+    assert set(urls) == {"espn:9910001", "espn:9910002", "espn:9910003", "espn:9910004"}
+
+
+def test_mma_status_urls_prefer_the_payloads_ref_over_https() -> None:
+    """ESPN publishes its ``$ref`` links as bare http; follow them as https."""
+    urls = _mma_status_urls(
+        {
+            "events": [
+                {
+                    "id": "990058854",
+                    "competitions": [
+                        {
+                            "id": "9910002",
+                            "status": {
+                                "$ref": (
+                                    "http://sports.core.api.espn.com/v2/sports/mma/leagues"
+                                    "/summit/events/990058854/competitions/9910002/status"
+                                    "?lang=en&region=us"
+                                )
+                            },
+                        },
+                        # No id at all: nothing to key a bout by, so skipped.
+                        {"status": {"$ref": "http://example.invalid/status"}},
+                    ],
+                },
+                # Junk entries never raise, they just contribute nothing.
+                "not-an-event",
+                {"id": "990058855", "competitions": "not-a-list"},
+            ]
+        },
+        core_league_base="https://sports.core.api.espn.com/v2/sports/mma/leagues/summit",
+    )
+    assert urls == {
+        "espn:9910002": (
+            "https://sports.core.api.espn.com/v2/sports/mma/leagues/summit"
+            "/events/990058854/competitions/9910002/status?lang=en&region=us"
+        )
+    }
+
+
+def test_mma_status_urls_ignore_an_unusable_payload() -> None:
+    assert _mma_status_urls(None, core_league_base="https://core.invalid") == {}
+    assert _mma_status_urls({"events": {}}, core_league_base="https://core.invalid") == {}
+
+
+# ---------------------------------------------------------------------------
 # Tennis rankings -> Standings
 # ---------------------------------------------------------------------------
 
@@ -3280,6 +3558,182 @@ async def test_mma_schedule_survives_one_failed_month(
     )
     # June still delivers the bout despite the failed July bucket.
     assert [g.id for g in games] == ["espn:9910001"]
+
+
+# ---------------------------------------------------------------------------
+# Method of victory: one bounded core-API call per FINISHED followed bout
+# ---------------------------------------------------------------------------
+
+_BOUT_STATUS_URL = (
+    "https://sports.core.api.espn.com/v2/sports/mma/leagues/summit"
+    "/events/990058854/competitions/9910002/status"
+)
+
+
+def _mma_provider(
+    scoreboard: dict[str, Any],
+    bout_status: Any,
+    calls: list[str],
+) -> EspnProvider:
+    """A provider whose scoreboard is ``scoreboard`` and core API ``bout_status``.
+
+    Every requested URL is appended to ``calls`` so a test can assert how
+    many core-API calls the enrichment actually spent.  ``bout_status`` may
+    be an exception instance, which is raised instead of returned.
+    """
+    provider = EspnProvider()
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        calls.append(url)
+        if "sports.core.api" not in url:
+            return scoreboard
+        if isinstance(bout_status, Exception):
+            raise bout_status
+        return bout_status
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    return provider
+
+
+async def test_mma_schedule_enriches_a_followed_fighters_finished_bout(
+    ufc_scoreboard_data: dict[str, Any],
+    bout_status_decision_data: dict[str, Any],
+) -> None:
+    """The finished bout gets ONE core-API call, which adds the stoppage time."""
+    calls: list[str] = []
+    provider = _mma_provider(ufc_scoreboard_data, bout_status_decision_data, calls)
+    games = await provider.get_schedule(
+        MMA_LEAGUE, MMA_FINISHED_FIGHTER, date(2026, 6, 1), date(2026, 6, 30)
+    )
+    assert [g.id for g in games] == ["espn:9910002"]
+    result = games[0].fight_result
+    assert result is not None
+    assert result.method is FightMethod.DECISION
+    assert result.detail == "Unanimous"
+    assert result.round == 3
+    assert result.clock == "5:00"  # only the core feed knows the time
+    # Exactly one core-API call, on the https-rewritten bout-status URL.
+    core_calls = [url for url in calls if "sports.core.api" in url]
+    assert core_calls == [_BOUT_STATUS_URL]
+
+
+async def test_mma_enrichment_skips_unfinished_and_unfollowed_bouts(
+    ufc_scoreboard_data: dict[str, Any],
+    bout_status_ko_data: dict[str, Any],
+) -> None:
+    """The followed fighter's bout is live, so nothing on the card is worth a call."""
+    calls: list[str] = []
+    provider = _mma_provider(ufc_scoreboard_data, bout_status_ko_data, calls)
+    games = await provider.get_schedule(
+        MMA_LEAGUE, MMA_FIGHTER, date(2026, 6, 1), date(2026, 6, 30)
+    )
+    assert [g.id for g in games] == ["espn:9910001"]
+    assert games[0].fight_result is None
+    assert [url for url in calls if "sports.core.api" in url] == []
+
+
+@pytest.mark.parametrize(
+    "bout_status",
+    [
+        pytest.param(httpx.ConnectError("core api down"), id="connect-error"),
+        pytest.param(TransientProviderError("core api rate limited"), id="transient"),
+        # A 200 whose body is an HTML error page: json.JSONDecodeError is
+        # raised inside _get_json, not by the HTTP layer.
+        pytest.param(json.JSONDecodeError("Expecting value", "<html>503</html>", 0), id="not-json"),
+        pytest.param({"result": "not-an-object"}, id="malformed-payload"),
+        pytest.param({}, id="empty-payload"),
+    ],
+)
+async def test_mma_fight_result_falls_back_when_the_core_call_is_useless(
+    ufc_scoreboard_data: dict[str, Any],
+    bout_status: Any,
+) -> None:
+    """A failed or unparseable status call must never break the bout.
+
+    The schedule still returns, and the bout keeps whatever the scoreboard's
+    own status text already told us (here: a unanimous decision, no time).
+    """
+    calls: list[str] = []
+    provider = _mma_provider(ufc_scoreboard_data, bout_status, calls)
+    games = await provider.get_schedule(
+        MMA_LEAGUE, MMA_FINISHED_FIGHTER, date(2026, 6, 1), date(2026, 6, 30)
+    )
+    assert [g.id for g in games] == ["espn:9910002"]
+    result = games[0].fight_result
+    assert result is not None
+    assert result.method is FightMethod.DECISION
+    assert result.detail == "Unanimous"
+    assert result.round == 3
+    assert result.clock is None  # the stoppage time stays unknown
+    assert len([url for url in calls if "sports.core.api" in url]) == 1
+
+
+def _finished_card(index: int, fighter_id: str) -> dict[str, Any]:
+    """One fight card with a single FINISHED bout, on day ``index`` of June."""
+    return {
+        "id": f"9900600{index:02d}",
+        "name": f"SFC {200 + index}",
+        "date": f"2026-06-{index:02d}T00:00Z",
+        "competitions": [
+            {
+                "id": f"9920{index:03d}",
+                "status": {
+                    "period": 3,
+                    "type": {
+                        "state": "post",
+                        "name": "STATUS_FINAL",
+                        "detail": "Final",  # no method: only the core feed knows
+                    },
+                },
+                "competitors": [
+                    {"id": fighter_id, "order": 1, "athlete": {"displayName": "Dario Welkin"}},
+                    {"id": f"8199{index:02d}", "order": 2, "athlete": {"displayName": "Opponent"}},
+                ],
+            }
+        ],
+    }
+
+
+async def test_mma_fight_result_fanout_is_bounded(
+    bout_status_ko_data: dict[str, Any],
+) -> None:
+    """A followed fighter with more finished bouts than the cap spends the cap.
+
+    An unbounded per-bout fan-out is exactly what rate-limits ESPN into an
+    open circuit breaker, so the enrichment stops at
+    ``_FIGHT_RESULT_MAX_BOUTS`` — keeping the NEWEST bouts, which are the
+    ones being looked at.
+    """
+    bouts = 20
+    assert bouts > _FIGHT_RESULT_MAX_BOUTS
+    scoreboard = {
+        "events": [
+            _finished_card(index, MMA_FINISHED_FIGHTER.provider_key)
+            for index in range(1, bouts + 1)
+        ]
+    }
+    calls: list[str] = []
+    provider = _mma_provider(scoreboard, bout_status_ko_data, calls)
+    games = await provider.get_schedule(
+        MMA_LEAGUE, MMA_FINISHED_FIGHTER, date(2026, 6, 1), date(2026, 6, 30)
+    )
+    assert len(games) == bouts
+    core_calls = [url for url in calls if "sports.core.api" in url]
+    assert len(core_calls) == _FIGHT_RESULT_MAX_BOUTS
+    # The enriched bouts are the newest ones; the older ones are untouched.
+    enriched = [game.id for game in games if game.fight_result is not None]
+    assert enriched == [f"espn:9920{index:03d}" for index in range(13, bouts + 1)]
+
+
+async def test_mma_live_games_never_call_the_bout_status_feed(
+    ufc_scoreboard_data: dict[str, Any],
+) -> None:
+    """The live path has no team scope, so it could only fan out card-wide."""
+    calls: list[str] = []
+    provider = _mma_provider(ufc_scoreboard_data, {}, calls)
+    games = await provider.get_live_games(MMA_LEAGUE)
+    assert len(games) == 3
+    assert [url for url in calls if "sports.core.api" in url] == []
 
 
 async def test_individual_schedule_raises_when_all_chunks_fail() -> None:

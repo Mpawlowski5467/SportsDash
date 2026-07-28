@@ -31,6 +31,7 @@ from app.models.orm import (
     NewsORM,
     NotificationSentORM,
     PlayerORM,
+    StandingsArchiveORM,
     StandingsORM,
     TeamORM,
 )
@@ -210,6 +211,25 @@ async def _seed_existing_followed_set(db: async_sessionmaker[AsyncSession]) -> N
                         "team_id": "ashport-comets",
                         "wins": 9,
                         "losses": 3,
+                    }
+                ],
+                fetched_at=now,
+            )
+        )
+        # Written by every standings refresh, so it is present within minutes
+        # of the first setup — and it is a leagues-FK child like the rest.
+        session.add(
+            StandingsArchiveORM(
+                league_id="pinnacle-basketball",
+                season="2026",
+                season_label="2025-26",
+                rows=[
+                    {
+                        "rank": 1,
+                        "team_name": "Ashport Comets",
+                        "team_id": "ashport-comets",
+                        "wins": 21,
+                        "losses": 9,
                     }
                 ],
                 fetched_at=now,
@@ -532,7 +552,14 @@ async def test_follow_happy_path_replaces_existing_set(
         pelicans_row = next(r for r in team_rows if r.id == "nba-harborlight-pelicans")
         assert pelicans_row.provider_key == "101"
         assert pelicans_row.league_id == "nba"
-        for table in (GameORM, StandingsORM, PlayerORM, NewsORM, NotificationSentORM):
+        for table in (
+            GameORM,
+            StandingsORM,
+            StandingsArchiveORM,
+            PlayerORM,
+            NewsORM,
+            NotificationSentORM,
+        ):
             assert await _count(session, table) == 0
         assert await repository.get_meta(session, "onboarded") == "1"
 

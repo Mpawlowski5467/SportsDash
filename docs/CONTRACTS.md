@@ -8,6 +8,14 @@
 > below are retained as historical design context and no longer reflect the
 > shipping code.
 
+> **Update (phased plan retired):** every `## Phase N` section below was
+> written against `docs/ROADMAP.md`, a phased build plan that **no longer
+> exists in this repo** — don't go looking for it. Inside those sections,
+> "per ROADMAP.md", "ROADMAP Phase N" and bare "ROADMAP.md" all refer to
+> that deleted file, *not* to the root [ROADMAP.md](../ROADMAP.md), which
+> is a forward-looking list with no phases. The phases shipped; the threads
+> still open from them live under **Loose ends** in that root ROADMAP.md.
+
 This file is the source of truth for every cross-module boundary. The
 foundation files (already written, **do not modify**) are:
 
@@ -26,8 +34,10 @@ foundation files (already written, **do not modify**) are:
   Anything read from the DB goes through `timeutil.ensure_utc` (SQLite
   returns naive datetimes). Localization only at the response boundary
   (`/today`'s day computation) or in the frontend.
-- **Fictional names only** in any sample config, mock data, or test
-  fixture — never real teams or leagues.
+- **Fictional names only** in test fixtures and recorded provider
+  payloads — never real teams, leagues, or players. Real names are fine in
+  the ESPN catalog and in whatever the user follows: that is live app
+  data, not sample data.
 - Internal game ids are `f"{provider}:{provider_game_key}"`.
 - Python 3.12, SQLAlchemy 2.0 style (`select()`, `Mapped`), Pydantic v2,
   full type hints, `logging.getLogger(__name__)` per module. No TODOs or
@@ -43,11 +53,23 @@ foundation files (already written, **do not modify**) are:
 ```python
 def register_provider(provider: SportsProvider) -> None
 def get_provider(provider_id: str) -> SportsProvider          # KeyError if unknown
+def provider_ids() -> list[str]                                # sorted ids, read-only view
 async def close_all() -> None                                  # close every registered provider
 ```
-Registers `espn` and `mock` at import time.
+Registers `espn` and `thesportsdb` at import time; both are wrapped in a
+circuit-breaker guard (`_GUARDED_PROVIDERS`) so a down or rate-limited
+source fails fast.
 
-### `app/providers/espn.py` (owner: providers agent)
+### `app/providers/espn/` (owner: providers agent)
+
+A package since 2026-07-12 (split from the original 3,174-line
+`espn.py`): `common` (constants, coercion, status/period normalization),
+`games`, `individual` (tennis / MMA), `golf`, `summary` (schedule
+chunking, box score, plays, win probability, odds), `standings`,
+`roster`, `news_location`, and `provider` (the class itself). Every
+module but `provider` is pure parsers over fetched JSON; `__init__`
+re-exports the provider and the parser entry points, so
+`from app.providers.espn import …` is unchanged.
 
 `class EspnProvider` implementing `SportsProvider`, `provider_id = "espn"`.
 `League.provider_key` is the ESPN sport/league URL fragment (e.g.
@@ -64,23 +86,17 @@ Period normalization: basketball → `"Q{n}"` / `"OT"`; soccer → period 1/2 �
 `"1st Half"/"2nd Half"`, halftime → `is_intermission=True`; baseball →
 `period` = inning, label `"Top {n}"/"Bot {n}"`, `clock=None`.
 
-### `app/providers/mock.py` (owner: providers agent)
+### `app/providers/thesportsdb.py` (owner: providers agent)
 
-`class MockProvider`, `provider_id = "mock"`. Deterministic fictional data
-so a fresh install demos every feature: per team — a final yesterday, one
-game today already in progress (started ~40 min ago, mid-game
-period/score), one tonight (~+4h), and a regular fixture grid every 2–3
-days for ±3 weeks (past ones final with plausible scores). The grid is a
-pure function of absolute days since a fixed epoch — never of "today" —
-and game ids encode league/day/pairing slots (`mock:{league}-d{N}-g{i}`),
-not team slugs, so fixtures and ids are stable across midnights, restarts,
-and registration order. Only the live/tonight anchor times live in process
-memory (restart re-anchors the live demo game; accepted). Standings with 8
-fictional teams per league (followed teams present with `team_id`,
-sport-appropriate columns), rosters of ~12 fictional players with 1
-`injured` and 1 `day_to_day` (with `status_detail`). Same inputs → same
-output (seed any RNG with a stable md5-derived hash, never builtin
-`hash()`).
+`class TheSportsDbProvider` implementing `SportsProvider`,
+`provider_id = "thesportsdb"` — the second live source, backing
+volleyball. `League.provider_key` is the TheSportsDB league id;
+`Team.provider_key` the TheSportsDB team id. Its full endpoint/parsing
+contract is in the *Phase 6: volleyball* section below.
+
+> There is no mock provider. `app/providers/mock.py` was deleted when
+> SportsDash went live-data only (see the banner at the top of this file);
+> the mock sections further down are historical design context.
 
 ### `app/services/repository.py` (owner: persistence agent)
 
@@ -103,7 +119,15 @@ async def upsert_games(session, games: Sequence[domain.Game]) -> int
     # an incoming FINAL state is authoritative from any stored phase
     # (games that ended while the app was down heal on daily refresh);
     # postponed/canceled rows may be reinstated by an incoming
-    # scheduled/in_progress state. All provider strings are clipped to
+    # scheduled/in_progress state. A game's fight_* columns (MMA method
+    # of victory) merge PER FIELD, and an incoming None never wipes a
+    # stored result: fight_method is overwritten outright, while
+    # fight_detail/fight_round/fight_clock are written only when the
+    # incoming value is not None (they come from a separate call that
+    # can fail on its own, so a thinner incoming result must not erase a
+    # richer stored one). This is NOT the crest/color rule — those merge
+    # on truthiness from a single source. See the fight_result section
+    # below. All provider strings are clipped to
     # their column widths on write. Returns number of rows touched.
 async def prune_stale_games(session, now_utc: datetime) -> int
     # delete ghost rows: 'scheduled' with start older than now-3d,
@@ -200,6 +224,17 @@ async def refresh_news() -> None            # delegates to services.news.refresh
 async def live_tick() -> None
 async def daily_refresh() -> None           # schedules + standings + rosters (+ news)
 ```
+**Where these actually live.** `jobs.py` kept the names above — it imports
+them to register them, so `jobs.refresh_schedules` still resolves — but only
+`setup_scheduler` is defined there. The package split into
+`scheduler/refresh.py` (`refresh_schedules`, `refresh_standings`,
+`refresh_rosters`, `refresh_news`, `refresh_locations`, `daily_refresh` and
+their `_resolve_*` helpers), `scheduler/live.py` (`live_tick`,
+`events_tick`), `scheduler/common.py` (shared constants and the golfer-id
+tagging) and `scheduler/stadium_cache.py` (competition stadium resolution).
+Sections written before the split — Phase 10, Phase 11, Phase 27 — still say
+`jobs.<name>`; read that as the name, not the file.
+
 Jobs use `session_scope()`, resolve providers via
 `registry.get_provider(league.provider)`, and must catch/log per-league
 and per-team errors so one bad source never kills a whole job. Schedule:
@@ -226,26 +261,37 @@ and per-team errors so one bad source never kills a whole job. Schedule:
 ```python
 async def seed_from_config(path: str | None = None) -> None   # parse YAML, upsert leagues+teams via repository
 ```
-YAML shape (`backend/config/teams.yaml`, fictional sample data, provider
-`mock` by default so a fresh install works instantly):
+Seeds **only while the teams table is empty** — once onboarded the DB is
+the source of truth for follows, so a stale config can never clobber the
+user's picks. When a config does seed at least one team it also sets the
+`onboarded` meta flag (the user authored their own follows; the wizard
+would only get in the way). A missing, unreadable, or malformed file is
+logged and skipped, never fatal; individual bad league/team entries are
+logged and skipped too.
+
+The shipped `backend/config/teams.yaml` is **comments-only** — a template,
+not sample data — so a fresh install seeds nothing and lands on the setup
+wizard. The documented shape (every league names a live provider; there is
+no `mock`):
 ```yaml
 leagues:
-  - id: pinnacle-basketball
-    sport: basketball
-    name: Pinnacle Basketball League
-    provider: mock
-    provider_key: mock-basketball
+  - id: my-league                    # internal slug, unique
+    sport: basketball                # any domain.Sport value
+    name: My League
+    provider: espn                   # espn | thesportsdb
+    provider_key: basketball/nba     # ESPN sport/league URL fragment
 teams:
-  - id: ashport-comets
-    league_id: pinnacle-basketball
-    name: Ashport Comets
-    abbreviation: ASH
-    provider_key: ashport-comets
-    color: "#f59e0b"
-    rss_feeds: []
+  - id: my-team
+    league_id: my-league
+    name: My Team
+    abbreviation: MYT
+    provider_key: "18"               # numeric ESPN team id, quoted
+    color: "#22c55e"                 # optional
+    rss_feeds: []                    # optional news feed URLs
 ```
-Sample contains 3 leagues (basketball/baseball/soccer) and 4 followed teams
-(2 in the soccer league).
+Because a hand-authored config names real leagues and teams, the
+fictional-names rule does not apply to it — it is user data, like the
+wizard's picks. Test fixtures stay fictional.
 
 ### `app/main.py` (owner: scheduler agent)
 
@@ -262,15 +308,17 @@ endpoint modules. `app/services/serialize.py` provides
 `game_to_out(row: GameORM, league: LeagueORM) -> GameOut` (scores are
 `None` while `phase == "scheduled"`; `followed_team_ids` = non-null
 home/away team ids). `app/services/ics.py` provides
-`games_to_ics(rows, leagues_by_id) -> str` (hand-rolled VCALENDAR, UTC
-`DTSTART`, escaped text).
+`games_to_ics(rows, leagues_by_id, *, events=()) -> str` (hand-rolled
+VCALENDAR, UTC `DTSTART`, escaped text; the keyword-only `events` adds
+all-day leaderboard spans — see *MMA method of victory + leaderboard
+events on the calendar* below).
 
 Route table (all under `/api`, response models from `schemas.py`):
 
 | Route | Response | Notes |
 |---|---|---|
-| `GET /health` | `{"status": "ok"}` | |
-| `GET /meta` | `MetaOut` | version "1.0.0" |
+| `GET /health` | `{status, database, providers, provider_health}` | deep check; `status` is `"ok"`/`"degraded"`, `providers` is the count, `provider_health` the per-provider circuit state. Always 200 — a failed DB probe degrades `status` rather than 500-ing (see *Ops: backups + health deep-check* below) |
+| `GET /meta` | `MetaOut` | `version` = `meta.APP_VERSION`, the shipped app version. Deliberately **not** repeated here as a literal: the string already ships in five files (only two of which fail the build when they disagree — see the release checklist in [CONTRIBUTING.md](../CONTRIBUTING.md#release-checklist)), and a copy in prose is the one nothing would catch |
 | `GET /teams` | `TeamsOut` | |
 | `GET /today` | `TodayOut` | local day via `local_day_bounds(local_today(tz), tz)`; sorted by start_time |
 | `GET /schedule?start=YYYY-MM-DD&end=YYYY-MM-DD&team_id=` | `list[GameOut]` | dates are local days, inclusive; defaults: start = today−7d, end = today+45d |
@@ -279,7 +327,7 @@ Route table (all under `/api`, response models from `schemas.py`):
 | `GET /roster/{team_id}` | `RosterOut` | 404 unknown team |
 | `GET /results/{team_id}?limit=25` | `list[GameOut]` | finals, newest first |
 | `GET /news?team_id=&limit=50` | `list[NewsItemOut]` | |
-| `GET /calendar.ics` | `text/calendar` | all games −30d…+60d, `Content-Disposition: attachment; filename=sportsdash.ics` |
+| `GET /calendar.ics?team_id=` | `text/calendar` | all games −30d…+60d **plus every leaderboard event overlapping that window** (all-day spans); `Content-Disposition: attachment; filename=sportsdash.ics`. `?team_id=` narrows to that team's games, omits events, and renames the file `sportsdash-{team_id}.ics`; 404 unknown team |
 
 404s raise `HTTPException(404, "...")`. Unknown query params ignored.
 
@@ -395,7 +443,7 @@ protocol, `app/migrations.py` additive-column migrations (append-only;
 `news_items.image_url` registered), repository serializes both new
 fields.
 
-### ESPN adapter (espn.py owner)
+### ESPN adapter (`espn/` package owner)
 
 - `get_schedule` soccer fix: for `Sport.SOCCER` leagues make TWO calls —
   bare (completed results) and `?fixture=true` (upcoming) — and merge by
@@ -451,7 +499,7 @@ Foundation already landed (do not redo): `Sport.HOCKEY`/`Sport.FOOTBALL`,
 `types.ts` Sport union. All payload facts below were verified against
 real ESPN traffic (see ROADMAP Phase 2).
 
-### ESPN adapter (espn.py + espn_catalog.py owner)
+### ESPN adapter (`espn/` package + espn_catalog.py owner)
 
 - Catalog: add `nhl` ("NHL", hockey, espn, "hockey/nhl") and `nfl`
   ("NFL", football, espn, "football/nfl").
@@ -463,8 +511,14 @@ real ESPN traffic (see ROADMAP Phase 2).
     `type.detail`/`altDetail` containing "SO" in preference to raw
     period). clock from displayClock while live. Intermission:
     state "in" + `END_PERIOD`-style status name (or detail "End of
-    {n}th") → is_intermission=True — defensive, live shape re-probe due
-    June 15 (SCF game 6).
+    {n}th") → is_intermission=True.
+    **Still provisional.** That intermission mapping was written
+    defensively from ESPN's documented status names and has never been
+    checked against a live NHL feed; it cannot be, because verifying it
+    needs a game actually sitting between periods. Next window: the
+    2026-27 NHL season, from October 2026. Tracked as *NHL intermission,
+    verified live* under **Loose ends** in
+    [ROADMAP.md](../ROADMAP.md).
   - Football: quarters like basketball ("Q1".."Q4", period≥5 → "OT");
     `STATUS_HALFTIME` → intermission.
 - Schedules: for hockey AND football leagues fetch `?seasontype=2` and
@@ -549,7 +603,7 @@ live (ROADMAP Phase 3 research).
   list[CatalogLeague]`. Because ESPN national-team ids are GLOBAL, the
   same `provider_key` works in every sibling context.
 
-**espn.py (adapter owner):**
+**ESPN adapter (`espn/` package owner):**
 - Implement `get_competition_schedule(league, start, end)`: ranged
   scoreboard `?dates=YYYYMMDD-YYYYMMDD&limit=400` (ET-bucketed dates),
   parse via the existing `_parse_scoreboard`, filter to [start,end].
@@ -666,7 +720,7 @@ persist series. All ESPN facts below verified live (ROADMAP Phase 4).
   (e.g. top ~120) so the picker is usable. Defensive parsing; cache as
   today.
 
-### espn.py (adapter owner)
+### ESPN adapter (`espn/` package owner)
 - `_normalize_period` gains TENNIS (period→"Set {n}", no clock, no
   intermission) and MMA (period→"R{n}", clock from displayClock while
   live) branches. Keep the scheduled/postponed→(0,"",None,False) guard.
@@ -750,7 +804,7 @@ already — currently only player/fighter/team; ADD golf→"golfer".)
   (provider_key=athlete id, name, short abbr, headshot if present).
   Cap ~120.
 
-### espn.py (adapter owner)
+### ESPN adapter (`espn/` package owner)
 - Implement `get_events(league, start, end)` for golf: scoreboard /
   tournament schedule → `Event` per tournament with a populated
   `leaderboard` (LeaderRow: position from `order`, position_label "T3"
@@ -806,7 +860,11 @@ already — currently only player/fighter/team; ADD golf→"golfer".)
 - TodayView: render `today.events` above or alongside games — a compact
   event card (name, round_label, top-3 + followed golfer's line).
 - CalendarView: optionally show event spans (start..end) as multi-day
-  background events — nice-to-have; at minimum don't break.
+  background events — nice-to-have; at minimum don't break. **Landed
+  2026-07-27**, as solid all-day spans rather than FullCalendar
+  *background* events (a background fill is unreadable under the light /
+  newsprint themes and can't be clicked open) — see "MMA method of
+  victory + leaderboard events on the calendar" for the shipped contract.
 - Onboarding: golf league picker uses entity_noun "golfer" ("Pick your
   golfers"); sport heading "golf"→"Golf".
 - Add `api.events(start,end)` + `api.event(id)` and `useEvents`,
@@ -832,7 +890,7 @@ exposes `register_provider`; build providers there.
 ### New provider `app/providers/thesportsdb.py` (provider owner)
 `class TheSportsDbProvider`, `provider_id = "thesportsdb"`, implementing
 the full SportsProvider protocol against `https://www.thesportsdb.com/api/v1/json/3/`.
-Pure parser functions over fetched JSON (like espn.py), lazy httpx
+Pure parser functions over fetched JSON (like the ESPN adapter), lazy httpx
 client, `close()`. `League.provider_key` is the TheSportsDB league id;
 `Team.provider_key` the TheSportsDB team id.
 - `get_schedule(league, team, start, end)`: `eventspastleague.php?id={key}`
@@ -1167,6 +1225,36 @@ ON-DEMAND: when `GET /api/map` finds followed teams without coords, kick
 silently missing — never block the response longer than a short budget;
 return what's resolved and let the rest fill in.
 
+**Narrowed 2026-07-27 — step (2) returns a venue name ONLY when the
+upstream record names a stadium.** (`_resolve_team_location` now lives in
+`app/scheduler/refresh.py`.) TheSportsDB's `strLocation` is free text and is
+usually an administrative area — "Dorset, England", "Kyiv, Ukraine" — so
+`stadiums._compose_venue` returns `None` rather than pass it off as a venue.
+The area is still returned as `TeamLocation.location` (a true fact, shown in
+the panel as *Location*); it is never promoted to `TeamLocation.venue`,
+because geocoding an area yields its **centroid**, which step (3) would then
+cache on the team row and `/api/map` would plot as a precise home-ground fix
+— a marker tens of km from the real ground, drawn and flown to exactly as
+confidently as a correct one, and never revisited (`refresh_locations` only
+processes teams *without* coordinates). Refusing there un-shadows step (4),
+the stored-game venue, which is a name worth geocoding; a team with neither
+is left **unplotted** rather than pinned somewhere plausible. Rows cached
+under the old rule are recognised by `stadiums.is_area_only_venue(venue,
+location)` — the pre-fix fallback's fingerprint is `venue == location` — and
+re-resolved by `refresh_locations` (teams) and
+`refresh_competition_stadiums` (competition/stadium cache), both of which
+skip their "already located / missed recently" shortcuts for such a row.
+The Redis venue index self-heals: `build_index` only indexes teams that have
+both a venue name and coordinates, so a repaired row stops feeding the
+county centroid into game-venue resolution.
+`services/venue_coords.py` and `services/geocode.py` are unchanged — the
+defect was the composition, not the geocoder.
+See *Loose ends* in [ROADMAP.md](../ROADMAP.md) for the two consequences
+that are still open: the repair has not been run against a live database,
+and a whole-competition team has no stored-fixture fallback to land on
+(`repository.most_common_home_venue()` is keyed by `team_id`, which those
+teams do not have), so it drops off the map instead of re-resolving.
+
 ### League logos in the picker (catalog owner)
 Populate `CatalogLeague.logo_url` for catalog leagues from ESPN (league
 logo — verify the endpoint, e.g. the league's `logos[].href` from a
@@ -1261,14 +1349,13 @@ from TeamORM so competition teams without a team row can be plotted);
 Followed teams live in the **DB**, not the YAML: `seed_from_config` seeds
 ONLY when the teams table is empty, and when it does seed from an
 explicit user config it also sets the onboarded flag. The shipped
-`backend/config/teams.yaml` is comments-only (a template); the fictional
-demo config moved to a `DEMO_CONFIG` constant in `seed.py`, installed via
-`POST /setup/demo`. First-run UX: frontend checks setup status and shows
-a full-screen wizard until onboarded.
+`backend/config/teams.yaml` is comments-only (a template), so a fresh
+install is never pre-seeded. First-run UX: frontend checks setup status
+and shows a full-screen wizard until onboarded.
 
 Real league/team names ARE allowed here: the catalog and whatever the
-user picks are live app data, not sample data. Test fixtures and the
-demo config stay fictional.
+user picks are live app data, not sample data. Test fixtures stay
+fictional.
 
 ### `app/providers/espn_catalog.py`
 
@@ -1303,7 +1390,6 @@ Onboarded flag: meta key `"onboarded"` = `"1"`.
 | `GET /setup/leagues` | `CatalogLeaguesOut{leagues: [{id,name,sport,provider}]}` | static, no network |
 | `GET /setup/teams/{league_id}` | `CatalogTeamsOut{league_id, teams: [CatalogTeamOut]}` | live ESPN fetch; 404 unknown league; 502 on upstream failure |
 | `POST /setup/follow` | `TeamsOut` | body `FollowRequest{selections: [{league_id, team_provider_keys}]}`; 400 on empty/unknown keys; `replace_followed` + set onboarded + commit + `kick_daily_refresh()` |
-| `POST /setup/demo` | `TeamsOut` | installs DEMO_CONFIG the same way |
 
 Internal ids from a follow: league id = catalog id; team id =
 `f"{league_id}-{slugify(team name)}"`. `scheduler/jobs.py` gains
@@ -1312,16 +1398,15 @@ must not import `app.main` — circular).
 
 ### Frontend onboarding
 
-`types.ts`/`api.ts`/`hooks.ts` mirror the five routes
+`types.ts`/`api.ts`/`hooks.ts` mirror the four routes
 (`useSetupStatus()` etc.; setup mutations via plain `api.*` calls +
 `queryClient.invalidateQueries()`). `App.tsx`: splash while status
 loads; full-screen `<OnboardingWizard mode="first-run" .../>` when not
 onboarded; gear button in `Layout` reopens it as `mode="manage"`.
-Wizard (in `src/components/onboarding/`): choose path (pick teams /
-demo) → league multi-select grouped by sport → per-league team grid
-(logo, name, search filter, multi-select) → review → POST → syncing
-screen (poll `useToday` until games or ~20s) → dashboard. Dark kiosk
-styling consistent with the rest.
+Wizard (in `src/components/onboarding/`): league multi-select grouped by
+sport → per-league team grid (logo, name, search filter, multi-select) →
+review → POST → syncing screen (poll `useToday` until games or ~20s) →
+dashboard. Dark kiosk styling consistent with the rest.
 
 ## Infra contracts (infra agent)
 
@@ -1337,12 +1422,26 @@ styling consistent with the rest.
   ./backend, env `SPORTSDASH_DATABASE_URL=postgresql+asyncpg://sportsdash:sportsdash@db:5432/sportsdash`,
   `SPORTSDASH_REDIS_URL=redis://redis:6379/0`,
   `SPORTSDASH_NTFY_URL=http://ntfy`, timezone from `.env`, depends_on db
-  healthy), `frontend` (build ./frontend, ports `3000:3000`,
-  `API_URL=http://api:8000`), `ntfy` (binwiederhier/ntfy, `serve`, port
-  `8090:80`, cache volume).
-- `.env.example` documenting `SPORTSDASH_TIMEZONE`, `SPORTSDASH_NTFY_TOPIC`, etc.
+  healthy, host port `127.0.0.1:8001:8000`), `frontend` (build ./frontend,
+  ports `3000:3000`, `API_URL=http://api:8000`), `ntfy`
+  (binwiederhier/ntfy, `serve`, port `8090:80`, cache volume), `backup`
+  (daily `pg_dump` loop into `./backups`, 14-day pruning, nothing
+  depends on it).
+- `SPORTSDASH_NTFY_TOPIC` is `${SPORTSDASH_NTFY_TOPIC:?…}` — **required,
+  no default**. ntfy runs without an auth file, so the topic name is the
+  only secret; compose fails closed (with a message telling you to
+  `openssl rand -hex 16`) rather than falling back to a guessable value.
+  `.env.example` therefore documents the variable but deliberately ships
+  no value for it.
+- Port bindings are *not* a security boundary and must not be documented
+  as one: `:3000` is LAN-published and proxies every `/api` path and
+  method, so anything reachable on the LAN reaches the whole (unauthed)
+  API. Binding `api` to loopback only avoids a second, unproxied entry
+  point and keeps `/docs`, `/redoc` and `/openapi.json` off the LAN.
+  README's *Trust model* note and the comments in `docker-compose.yml`
+  say the same thing; keep all three in step.
 - Root `.gitignore` (+ `.dockerignore`s), `README.md` (architecture, quick
-  start, switching a league from `mock` to `espn`, adding a provider).
+  start, following teams via the setup wizard, adding a provider).
 
 ## Phase 13 — standings crests + World Cup host-venue map
 
@@ -1357,11 +1456,12 @@ teams, so `team_id` is almost always null):
 `logo_url: str | None`, `abbreviation: str | None`, `color: str | None`
 (`#`-hex). ESPN fills them from each `entries[].team` object
 (`logos[0].href` / `abbreviation` / `color`) in `_parse_standing_entry`;
-`_team_logo`/`_team_color` helpers added to `espn.py`. Persisted by
-`repository._standing_row_to_dict` (so `StandingsORM.rows` JSON still
-mirrors `StandingRowOut`). Mock/TheSportsDB leave them null → the
-existing abbreviation-chip fallback. Frontend `StandingsView` renders
-`row.logo_url ?? meta?.logo_url` (followed-team `/teams` meta as fallback).
+`_team_logo`/`_team_color` helpers added to the ESPN adapter (now
+`espn/common.py`). Persisted by `repository._standing_row_to_dict` (so
+`StandingsORM.rows` JSON still mirrors `StandingRowOut`). Mock/TheSportsDB
+leave them null → the existing abbreviation-chip fallback. Frontend
+`StandingsView` renders `row.logo_url ?? meta?.logo_url` (followed-team
+`/teams` meta as fallback).
 
 ### `MapTeamOut` / `types.ts` `MapTeam`
 
@@ -1464,10 +1564,26 @@ removed.
   `GameSummaryOut.goals`/`types.ts`. espn `_parse_goals` reads soccer summary
   `keyEvents` (scoringPlay + type.type=="goal"; scorer from
   `participants[0].athlete`; own goals flagged). `GET /api/scorers/{league_id}`
-  (`ScorersOut`): walks the league's FINAL games, pulls each summary in
+  (`ScorersOut`): 404 on an unknown league. **Soccer only** — goals are parsed
+  from summaries for `Sport.SOCCER` alone, so any other sport short-circuits
+  to an empty board (`games_counted=0`) before the fan-out *and* before the
+  cache, rather than spending one upstream call per finished game on a
+  guaranteed-empty tally. For a soccer league it collects the stored FINAL
+  games, keeps only the **most recent `_MAX_GAMES` (120)** of
+  them (repository rows arrive oldest-first, so the tail is the current run of
+  the competition rather than its opening weeks), pulls those summaries in
   parallel (semaphore 8), tallies goals/player (own goals excluded), ranks,
-  caches in Redis (`scorers:{id}:{n}`, 30min TTL). LeadersView shows this
-  Golden Boot when present, else the roster-derived board.
+  and returns the top 30. The cap bounds the upstream fan-out: it is one
+  summary call per game and finished games are never pruned, so an uncapped
+  walk would grow every matchweek and again every season until the burst
+  rate-limited ESPN and opened the circuit breaker for the whole app.
+  `games_counted` therefore reports the games **actually tallied** (≤ 120),
+  not the league's total stored finals. Cached in Redis
+  (`scorers:{league_id}:{n}`, 30min TTL) where `n` is the FULL final count,
+  *not* the capped one, so a newly finished match still busts the cache once
+  the cap has bitten. A league whose provider isn't registered returns an
+  empty `ScorersOut` with `games_counted=0` rather than an error. LeadersView
+  shows this Golden Boot when present, else the roster-derived board.
 - `GET /api/nation/{league_id}/{name}` (`NationOut`): by-name mini-dashboard
   for a whole-competition team (group standing from stored standings +
   fixtures/results from synced games). `NationDetailPanel.tsx` modal.
@@ -1664,3 +1780,361 @@ to nothing when unpriced.
   → the season's FINAL games, redis-cached, never stored in ``games``.
 - ``LeagueOut`` carries ``provider`` so the frontend gates the season
   pickers (espn team sports only).
+
+## MMA method of victory + leaderboard events on the calendar (2026-07-27)
+
+Two of the *Loose ends* from the root ROADMAP.md, landed together (NHL
+live-intermission verification and `/metrics` are still open). Both are
+strictly additive: one new nullable field on `GameOut`, four new nullable
+`games` columns, and one existing endpoint (`/calendar.ics`) carrying
+extra entries.
+
+### Method of victory for finished bouts
+
+An MMA "score" is a round count (`1-0`), which says nothing about the
+fight, so a finished bout now carries HOW it ended.
+
+- `domain.FightMethod` — a closed str-enum, same idiom as
+  `Sport`/`GamePhase`/`PlayerStatus`: `ko` (covers KO *and* TKO — ESPN
+  spells both "KO/TKO"), `submission`, `decision`, `disqualification`,
+  `no_contest`, `draw`. Provider free text is classified into it so
+  nothing downstream pattern-matches a sport's vocabulary.
+- `domain.FightResult` (frozen): `method: FightMethod`, plus optional
+  `detail` (the provider's own flavour — "Unanimous", "Rear-Naked
+  Choke"), `round` (1-based), `clock` ("4:21"). Only `method` is
+  required — a partially known result is still worth showing.
+  `domain.Game.fight_result: FightResult | None = None`, after `series`.
+- `schemas.FightResultOut` (`method: str`, `detail?`, `round?`,
+  `clock?`) and `GameOut.fight_result: FightResultOut | None = None`,
+  mirrored in `types.ts` as `FightMethod` (string union), `FightResult`
+  and `Game.fight_result`. The **contracts triple** — domain, schema, TS
+  — changes together as always. Every endpoint serving `GameOut`
+  (`/today`, `/schedule`, `/schedule/{team_id}`, `/games/{id}`,
+  `/results/{team_id}`, `/history/results/{team_id}`, `/matchup/…`,
+  `/nation/…`) carries it for free — no route code changed, the field
+  rides the shared serializer. `null` for every non-MMA sport, every
+  unfinished bout, and any bout the provider never explained.
+  (`/map`'s `MapGameOut` is its own narrower shape and does not carry
+  it. `/history/results/{team_id}` is in that list for shape only — it
+  404s for an MMA team, see the season-history note below.)
+- Persistence: `GameORM` gains `fight_method VARCHAR(24)`,
+  `fight_detail VARCHAR(64)`, `fight_round INTEGER`,
+  `fight_clock VARCHAR(16)` — all nullable, all appended to
+  `migrations._ADDITIVE_COLUMNS`, so an existing homelab database gains
+  them at startup. `repository.upsert_games` writes them clipped, and
+  **never lets an incoming `None` wipe a stored result** (only the
+  schedule refresh enriches bouts, so most later refreshes carry no
+  method). The merge is **per field, not per block**: an incoming
+  `fight_result` overwrites `fight_method` outright, but `fight_detail` /
+  `fight_round` / `fight_clock` are written only when the incoming value
+  is non-`None`. The round, time and flavour come from a separate
+  core-API call that can fail on its own, so a thinner incoming result
+  (method only) must not erase a richer stored one — the same overlay
+  `espn/individual.py::_merge_fight_results` applies upstream. (The
+  crest/color columns merge on *truthiness* and only ever have one
+  source; `fight_*` is a stricter `is not None` test across two, so
+  "same rule as the crest/color columns" is NOT an accurate shorthand
+  for it.)
+- `serialize._fight_result_out(domain.FightResult | None)` and
+  `serialize._row_fight_result_out(GameORM)` feed `domain_game_to_out`
+  and `game_to_out` respectively, so the stored and the never-stored
+  (season-history) paths emit identical JSON.
+- **When `GameOut.fight_result` is present.** Only for a FINAL bout, and
+  each path enforces that differently:
+  - stored (`game_to_out` → `_row_fight_result_out`) returns `None`
+    unless `row.phase == "final"` **and** `fight_method` is set. The
+    phase gate is load-bearing, not belt-and-braces: the `fight_*`
+    columns deliberately outlive the phase (nothing wipes them), so a
+    bout ESPN reopens — a corrected state, a result under review — would
+    otherwise keep serving the superseded finish while it is back to
+    `in_progress`.
+  - never-stored (`domain_game_to_out` → `_fight_result_out`) has no
+    phase gate and needs none: a domain `Game` only ever carries a
+    `fight_result` for a finished bout, because
+    `espn/individual.py::_scoreboard_fight_result` returns `None` unless
+    the parsed state is `GamePhase.FINAL`, and `_attach_fight_results`
+    only targets FINAL bouts. **That path is unreachable for MMA
+    today** — its one caller is `services/season_results.py`, which
+    `supports_history` gates to team sports (see below). It is kept
+    symmetric so the field rides along for free if that ever opens up.
+  - the frontend applies the same rule independently
+    (`fightResultOf(game)` is null unless `phase === "final"`), so a
+    server that ever regressed here still wouldn't render a result on a
+    live bout.
+- ESPN adapter (`espn/individual.py`): ONE keyword classifier
+  (`_classify_fight_method`, `_FIGHT_METHOD_PATTERNS`) over two sources.
+  Pattern order is load-bearing — no_contest > disqualification >
+  submission > ko > draw > decision — so "Technical Submission" isn't a
+  knockout and "Split Draw" isn't a decision; matches are word-bounded
+  and only abbreviations ESPN actually publishes (`dq`, `sub`) are
+  matched, since `\bdec\b` would read a date and `\bnc\b` a state code.
+  (a) `_scoreboard_fight_result` reads the already-fetched
+  `status.type.detail` ("Final - Decision - Unanimous") for free — often
+  just "Final", which classifies as nothing; (b) `_parse_bout_status`
+  reads the core API's per-bout status feed, which also carries the round
+  and stoppage time. `_merge_fight_results` lets the core feed win on the
+  method while anything it omits survives from the scoreboard, so a core
+  outage still leaves whatever the card spelled out.
+- Fan-out bound (`espn/provider.py::_attach_fight_results`, mirroring the
+  `_STAT_LINE_*` roster backfill): exactly ONE core call per finished
+  bout, for bouts that are FINAL, involve the followed fighter, fall
+  inside the requested window and have a known status URL; sorted
+  newest-first and capped at `_FIGHT_RESULT_MAX_BOUTS = 8` with
+  `_FIGHT_RESULT_CONCURRENCY = 4`. `_mma_status_urls` prefers the
+  payload's own `status.$ref` (rewritten http→https, rejected otherwise)
+  and otherwise builds the core URL from the card's event id + the bout's
+  competition id — UFC is the one place those ids differ. Per-bout
+  `httpx.HTTPError`, `TransientProviderError` *and* `ValueError` are
+  swallowed so a bout-status blip can't trip the provider breaker — the
+  last of those covers `json.JSONDecodeError`, because the core API
+  answers an outage with an HTML error page under a `200`, and a
+  best-effort garnish must degrade on that exactly as on a dropped
+  connection.
+- Deliberately NOT enriched: `get_live_games` — no team scope, so it
+  could only fan out over every bout on every card.
+- **MMA has no season archive at all**, so there is no "history" path to
+  enrich or to reason about: `espn_history.supports_history(sport)` is
+  `sport not in INDIVIDUAL_SPORTS and sport not in LEADERBOARD_SPORTS`,
+  and MMA is an individual sport. `fetch_season_results` returns `[]`
+  before it builds a URL, and `GET /history/results/{team_id}` 404s
+  ("No season archive for this league") for a followed fighter. A
+  fighter's past bouts come from the stored `games` rows the schedule
+  refresh already enriched — i.e. `/results/{team_id}` — so nothing is
+  lost, but do NOT describe this as a fan-out decision: the code path
+  does not exist. (An earlier draft of this section listed
+  `fetch_season_results` alongside `get_live_games` as "deliberately not
+  enriched, unbounded fan-out over a whole career". That was wrong on
+  both counts and is corrected here.)
+- Frontend (`components/StatusBadge.tsx` owns the helpers, exported):
+  `fightMethodLabel(method)` via an exhaustive
+  `Record<FightMethod, string>` (adding a method upstream fails `tsc`
+  rather than rendering `undefined`), `fightResultOf(game)` (null unless
+  `phase === "final"`), `fightRoundLabel(result)` (`"R2 4:21"`),
+  `fightResultSummary(result)` (`"KO/TKO · Punches · R2 4:21"`). The
+  final pill reads `FINAL · KO/TKO` with the full summary as its title;
+  `GameCard` adds a zinc `R2 4:21` chip in the slot the odds chip vacates
+  once a game is final; `GameDetailModal` leads with a **Result** block —
+  for an individual sport it is the only body content there is.
+
+### Leaderboard events on the calendar and in the .ics feed
+
+Golf `Event`s (multi-day tournaments) now appear on the Calendar grid and
+in the subscription feed as multi-day ALL-DAY entries. No API shape
+changed — the calendar sources them from the existing `GET /events`, so
+there is no openapi drift from this half.
+
+**GOLF ONLY — not "golf/tennis".** `domain.LEADERBOARD_SPORTS` is
+`frozenset({Sport.GOLF})`. A tennis match is a two-sided `Game` (its
+tournament is carried as the `series` label), never an `Event`, so no
+tennis entry can reach `/events`, the calendar grid, or the `.ics` feed —
+tennis has been on the Calendar as an ordinary timed fixture since Phase
+4. Any "golf/tennis events" phrasing is a factual error; it was corrected
+throughout the docs, the module docstrings and the code comments on
+2026-07-27. This is the wording to reuse: *"leaderboard competitions
+(golf tournaments — golf is the only sport modeled as an `Event`)"*. If a
+second leaderboard sport is ever added it joins `LEADERBOARD_SPORTS`
+first, and the docs follow the set, not the other way round.
+
+- `services/ics.py::games_to_ics` gains a keyword-only
+  `events: Sequence[EventORM] = ()`; existing two-arg callers still
+  render a games-only feed. The private `_event_lines` was renamed
+  `_game_lines` (ambiguous once a domain `Event` is also a VEVENT), and
+  `_event_span_lines` renders the new all-day entries:
+  `UID:event:{event.id}@sportsdash`, `DTSTART;VALUE=DATE:YYYYMMDD`,
+  `DTEND;VALUE=DATE:YYYYMMDD`, `SUMMARY:{event.name} ({league.name})`,
+  optional `LOCATION`, and for a FINAL event a
+  `DESCRIPTION:Winner: {name} ({score})` from the first leaderboard row
+  (the stored board is position-ordered; read defensively, as
+  `serialize.event_to_out` reads it).
+- The event `UID` is **prefixed `event:`** (`ics._EVENT_UID_PREFIX`),
+  mirroring the grid's `SPAN_ID_PREFIX`, for the same reason and not a
+  weaker one: a game id and an event id are both `"{provider}:{key}"`
+  strings and one `VCALENDAR` holds both kinds side by side, so nothing
+  but the prefix keeps their identities apart. The ICS namespace is NOT
+  safer than the grid's — it is the same id space in the same container.
+  It only *looks* safer because nothing parses the UID back out, whereas
+  the grid round-trips its id through `eventIdFromSpanId` to pick a
+  modal; but a UID is what a subscribed client matches an entry on across
+  refreshes, so a collision would have one kind silently overwrite the
+  other. Pinned by
+  `test_event_uid_is_prefixed_so_it_cannot_collide_with_a_game`, which
+  renders a game and an event that share one id string. (Colons need no
+  RFC 5545 escaping in a TEXT value, and game UIDs already contain one.)
+- **`DTEND` is EXCLUSIVE** for `VALUE=DATE` (RFC 5545) — it is the day
+  *after* the last day, so a Thu–Sun major ends on the Monday. A null
+  `end_time`, or one predating the start, collapses to a single day.
+- The DATE values are **local calendar days in `SPORTSDASH_TIMEZONE`**,
+  not UTC dates: an all-day date is a display value, so this is the usual
+  response-boundary conversion (`ics.py` reads `get_settings().tzinfo`,
+  as `services/events.py` / `notify.py` / `weather.py` do). Storage and
+  comparison stay UTC.
+- `/calendar.ics` feeds `repository.events_between()` over the same
+  −30d…+60d window (an event OVERLAPS a range where a game falls inside
+  one). A `?team_id=` feed omits events entirely — an event has no team
+  side, so no team's calendar owns it; the grid follows the same rule, so
+  the UI and the feed agree. `events_between`'s overlap semantics are
+  **Phase-5 behaviour that predates this feature**;
+  `test_events_between_matches_overlap_not_just_start` (added here) is a
+  regression net around code the calendar merely became the second caller
+  of — do not count it as coverage of the calendar/ICS work, which is
+  covered by `tests/test_calendar_events.py`.
+- **A followed golfer has no per-team feed, by decision.** Individual
+  sports are followed as athlete-as-team `TeamORM` rows, and a golfer
+  (the one `LEADERBOARD_SPORTS` case) never appears on either side of a
+  game — so the rule above leaves their `?team_id=` feed permanently
+  empty. Considered and rejected: filtering events by the golfers in
+  them. The only link from a stored event back to a followed golfer is
+  `leaderboard[].player_id` (rewritten ESPN-id → internal-id by
+  `scheduler/common.py::_tag_followed_golfers`), which exists only once
+  the provider publishes a field — future tournaments arrive from the
+  season calendar with an empty board, so such a feed would carry the
+  tournaments the golfer has already played and none of the ones they are
+  about to. That is the wrong half for a *subscription*, and it fails in
+  a way the user can't see. Instead the **frontend never offers the
+  row**: `src/views/calendar/gameSideFollows.ts::appearsOnGameSide`
+  (whose `LEADERBOARD_SPORTS` mirrors the backend set) filters
+  leaderboard-sport follows out of **both** controls in the Calendar
+  header — the Subscribe menu, which then notes that tournaments ride in
+  the all-teams feed, and the team filter, which notes that All teams is
+  the view that shows them. One predicate, because the two shipped
+  disagreeing (2026-07-27): the filter went on offering golfers, and
+  picking one produced a permanently empty grid — a golfer matches
+  neither side of a game, and spans are hidden whenever the filter is not
+  `"all"`. A team whose league has not loaded yet is kept by both rather
+  than flickering out mid-choice. Pinned by
+  `src/views/calendar/gameSideFollows.test.ts`. **Note the move:**
+  `LEADERBOARD_SPORTS` now lives in `views/calendar/gameSideFollows.ts`,
+  not in `views/CalendarView.tsx` where earlier text placed it.
+  Tennis/MMA athletes are athlete-as-team too but their matches ARE
+  games, so their per-team feeds work and they are deliberately NOT
+  filtered. The backend is unchanged — one rule, "a per-team feed is that
+  team's games", with no sport special-casing in the route.
+- Frontend: `api.events({start, end}) -> Promise<SportEvent[]>` →
+  `GET /events?start=&end=`, and `useEvents(start, end)`, queryKey
+  `["events", start, end]`, default cache policy. `api.event(id)` was
+  deliberately not added — the calendar's modal renders from the
+  already-loaded event, as Today's does.
+- `src/views/calendar/eventSpans.ts` — a pure helper with its own vitest
+  suite, same pattern as `views/map/travel.ts`: `eventSpan(event) ->
+  EventSpan {id, eventId, title, sport, start, end}` where `end` is the
+  EXCLUSIVE local day key (FullCalendar's all-day `end` has iCalendar's
+  off-by-one, so both sides derive it from one expression),
+  `eventIdFromSpanId(spanId) -> string | null`, `SPAN_ID_PREFIX =
+  "event:"`. Game ids and event ids are both `"{provider}:{key}"` and now
+  share one FullCalendar list, hence the prefix rather than a loosely
+  typed `extendedProps` discriminator. Its `SPORT_GLYPH` map holds
+  **golf only** — the one sport that can reach it; the map keeps the
+  per-sport shape for a future leaderboard sport, and `eventSpan` falls
+  back to the bare event name for any sport without an entry.
+- `CalendarView` draws spans with a solid `leagueFallbackColor(sport)`
+  fill and `isLightColor`-derived text (the only theme-proof option —
+  a translucent fill would be unreadable under the light/newsprint
+  `[data-theme]`s), a ⛳ glyph in the title, and opens the existing
+  `EventLeaderboardModal` on click. Hidden while the team filter is set,
+  matching the per-team feed — which is why the filter offers only
+  game-side follows: a golfer selection would hide the very spans it was
+  picked for. A filter value that leaves the options (unfollowed
+  elsewhere, or recognized as a leaderboard follow once its league
+  arrives) resets to `"all"`, so the Select's display and the grid cannot
+  disagree — `Select` falls back to showing "All teams" for a value it
+  does not list, which would otherwise read as unfiltered over a grid
+  still filtered to a team that is no longer offered. The refresh button
+  spins on
+  `scheduleQuery.isFetching || eventsQuery.isFetching` — events are
+  primary content, unlike the secondary weather batch. Changing the
+  visible range **clears `selectedEventId`**: the new window re-queries
+  `/api/events`, so a tournament picked in the old one is no longer on
+  the grid, and a lingering id would re-open the modal by itself the next
+  time the user navigated to a window that contains that tournament.
+- This closes the Phase 5 *Frontend (views owner)* nice-to-have
+  "CalendarView: optionally show event spans" and adds the
+  `api.events`/`useEvents` pair that section prescribed but never landed.
+
+## Audit fixes — FK enforcement, honest map pins, named markers (2026-07-27)
+
+Four corrections from the `fix/audit-2026-07` sweep. Two are recorded in
+place because they narrow an earlier contract rather than add to it — the
+venue-composition rule is under *Phase 11 → Stadium enrichment*, and the
+Calendar team-filter rule is under *Leaderboard events on the calendar*
+above. The other two are here.
+
+### SQLite now enforces foreign keys, and startup sweeps the orphans
+
+**This changes runtime behaviour for the deployment most users are on.**
+SQLite parses `REFERENCES` but ignores it unless asked, per connection — so
+until now the desktop / homelab build was the one deployment where a delete
+that orphaned children succeeded silently, while Postgres (Compose) rejected
+it. That asymmetry is how `replace_followed` came to leave `standings_archive`
+rows behind with no league.
+
+- `app/db.py::_enable_sqlite_foreign_keys` is registered as a `connect`
+  listener on the sync engine, and **only when the dialect is sqlite**. It
+  runs `PRAGMA foreign_keys=ON` on every connection. It is the same PRAGMA
+  `tests/db_engine.py` has always set, so what the suite proves is now what
+  ships — previously the suite was *stricter* than production, which is the
+  wrong way round for a constraint bug to hide.
+- `app/migrations.py::prune_orphaned_rows(conn)` is the data-level
+  counterpart, run by `init_db` inside the same `engine.begin()` block, in
+  order: `create_all` → `run_additive_migrations` → `prune_orphaned_rows`.
+  Last, and before the app opens any session, because enforcement turns
+  pre-existing junk from invisible into fatal: under the PRAGMA, any
+  statement touching such a row fails on a constraint the row never
+  satisfied.
+- What it sweeps: for every mapped table present in the database, every
+  single-column foreign key whose parent table also exists (composite FKs
+  are skipped; the schema has none). A row is an orphan when its FK column
+  is **non-NULL** and no parent row matches — a nullable FK left NULL is
+  not an orphan and is never touched.
+- What it refuses to sweep: a table that some *other* table's foreign key
+  points at — `teams` is the only case. Deleting one could violate the very
+  constraint this repairs, and no code path can orphan a team anyway
+  (`replace_followed` deletes leagues and teams together), so those rows are
+  **counted and logged at WARNING, then left in place**.
+- Deletions are logged at WARNING with the row count and both table names.
+  Idempotent, and a guaranteed no-op on Postgres, which never allowed the
+  rows — it still runs there so both dialects exercise the same SQL.
+- **Upgrade note.** A database created by 1.3.0 or earlier can hold these
+  rows. The first launch after this change sweeps them — once, at startup,
+  with a WARNING line naming what went. The known case is
+  `standings_archive` (a re-follow dropped the league); those rows were
+  already unreachable junk, so nothing a user can see is lost. Repeated in
+  user-facing terms in [docs/desktop.md](desktop.md).
+
+### Map markers carry their own accessible name
+
+MapLibre adopts every marker element as a `role="button"` and stamps its own
+default name on any that arrives unlabeled, so the whole map read as twenty
+identical buttons called "Map marker".
+
+- `src/views/map/labels.ts` (pure string builders, unit-tested in
+  `labels.test.ts`, same pattern as `views/map/travel.ts` — the repo has no
+  component-test harness): `teamMarkerLabel(team, highlightToday, inTransit)`
+  names the club and its ground plus the state its badge encodes ("playing
+  today", "traveling to an away game"); `venueMarkerLabel(group,
+  highlightToday)` names the venue and what its number counts ("N upcoming
+  games"); `clusterMarkerLabel(count, hasFollowed, mode)` names a **count and
+  an action**, not a place — `"12 venues, zoom in"`, with `", including teams
+  you follow"` when the badge wears its amber ring, and the count abbreviated
+  exactly as the badge prints it.
+- A pin's name states its identity plus what its own badge shows; the fuller
+  story (next match, scores, the fixture list) stays in the hover label and
+  the side panel. An accessible name is announced on every reach, so it has
+  to stay short. That is why an individual pin gets no "a team you follow"
+  suffix while a cluster does: the cluster's ring is the only place that
+  information exists.
+- The name is written to the marker host **before** `addTo` (MapLibre only
+  defaults a marker that arrives unlabeled) and is signed into the marker's
+  `sig` (`views/map/reconcile.ts`), so a **kept** marker re-labels when its
+  content moves instead of freezing at first paint — the same defect class
+  this branch fixed for the hover label and the badge count. `rebindSpec`
+  now sets `aria-label` alongside rebinding the spec.
+- Decorative plane and fan markers are `aria-hidden="true"`
+  (`views/map/markers.ts`): they are unclickable, but MapLibre would still
+  file each one as a nameless button, so a crowd becomes a crowd of buttons.
+- **Still missing, pre-existing:** MapLibre gives markers `role="button"` but
+  never a `tabindex`, so pins are announced and still not keyboard-reachable.
+  Naming them was the scoped defect; a blanket `tabindex="0"` would put 700+
+  tab stops in front of a "follow all" user. Tracked in
+  [ROADMAP.md](../ROADMAP.md) *Loose ends*.
+- Sections *Phase 11 → Frontend* and *Phase 14* describe the marker
+  rendering and the hover label this sits alongside.

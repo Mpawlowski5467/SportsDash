@@ -13,7 +13,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-API_VERSION = "1.0.0"
+# The shipped app version, and the backend's single source of truth for it:
+# ``app.main`` builds ``FastAPI(version=...)`` from this constant instead of
+# repeating the literal, so /api/meta, /docs and the OpenAPI schema can never
+# disagree.  Bump it here at release, in step with the desktop bundle version
+# in ``frontend/src-tauri/tauri.conf.json`` (tests/test_api.py pins the two).
+APP_VERSION = "1.3.0"
 
 
 @router.get("/meta", response_model=MetaOut)
@@ -22,5 +27,5 @@ async def meta() -> MetaOut:
     return MetaOut(
         timezone=settings.timezone,
         live_poll_seconds=settings.live_poll_seconds,
-        version=API_VERSION,
+        version=APP_VERSION,
     )

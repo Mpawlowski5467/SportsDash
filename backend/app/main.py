@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.db import dispose_engine, init_db
 from app.providers import registry
 from app.routes import router as api_router
+from app.routes.meta import APP_VERSION
 from app.scheduler.jobs import (
     daily_refresh,
     refresh_locations,
@@ -75,7 +76,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("SportsDash shut down")
 
 
-app = FastAPI(title="SportsDash", version="1.3.0", lifespan=lifespan)
+# Version comes from app.routes.meta — one constant, so /docs, the OpenAPI
+# schema and the /api/meta payload cannot drift apart at the next release.
+app = FastAPI(title="SportsDash", version=APP_VERSION, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

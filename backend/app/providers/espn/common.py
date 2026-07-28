@@ -40,6 +40,16 @@ _CORE_BASE = "https://sports.core.api.espn.com/v2/sports"
 _STAT_LINE_MAX_ATHLETES = 40
 _STAT_LINE_CONCURRENCY = 6
 
+# The same bound for the MMA method-of-victory backfill, which costs ONE
+# core-API call per finished bout — and a UFC card is a dozen-plus bouts,
+# precisely the unbounded per-game fan-out that rate-limits ESPN into an
+# open circuit breaker (the /api/scorers lesson).  So the enrichment is
+# bounded three ways: only bouts a FOLLOWED fighter appears in, at most
+# this many of them per schedule refresh (newest first — the latest fight
+# is the one being looked at), and at most this many calls in flight.
+_FIGHT_RESULT_MAX_BOUTS = 8
+_FIGHT_RESULT_CONCURRENCY = 4
+
 # ESPN buckets scoreboard days by US/Eastern, not UTC.  Asking for the
 # UTC date after 8pm ET would return the next day's slate and silently
 # miss every live evening game.

@@ -7,8 +7,47 @@
  * - Extension-less paths fall back to dist/index.html (SPA routing).
  */
 
+// --- Bun runtime surface ----------------------------------------------------
+// This file shares a tsc program with the browser app in src/, so the Bun-only
+// globals it needs are declared HERE, at module scope, where they are visible
+// to this module alone. An ambient .d.ts (or @types/bun, which is global by
+// nature) would put `Bun` and `process` in scope for every file in the
+// program, and a React component writing `process.env.X` or `Bun.file(...)`
+// would typecheck and then explode in the browser. Only what this file
+// actually calls is declared.
+
+/** A lazily-read file handle; a Blob, so it is a valid Response body. */
+type BunFile = Blob & {
+  exists(): Promise<boolean>;
+};
+
+declare const Bun: {
+  file(path: string): BunFile;
+  serve(options: {
+    port: number;
+    fetch(req: Request): Response | Promise<Response>;
+  }): { port: number };
+};
+
+/**
+ * Just the sliver of `process` this file reads. It uses `process.env` rather
+ * than `Bun.env` because server.test.ts imports the module under vitest,
+ * which runs on Node — where `Bun` does not exist and evaluating the
+ * top-level `API_URL` would throw.
+ */
+declare const process: { env: Record<string, string | undefined> };
+
+/**
+ * `dir` (the module's own directory) and `main` (is this the entry point?) are
+ * Bun additions to `import.meta`. Unlike the two above, an interface is not
+ * scopable: augmenting the global `ImportMeta` would advertise both to browser
+ * code in src/, where they are always `undefined`. So this module narrows its
+ * own view instead, and nothing leaks.
+ */
+const meta = import.meta as ImportMeta & { dir: string; main: boolean };
+
 const API_URL: string = process.env.API_URL ?? "http://api:8000";
-const DIST_DIR: string = `${import.meta.dir}/dist`;
+const DIST_DIR: string = `${meta.dir}/dist`;
 
 // A hung upstream must fail the request, not pin it forever: without a
 // timeout, one wedged backend would hold every proxied request (and its
@@ -51,9 +90,10 @@ export function cacheControlFor(pathname: string): string {
     : "no-cache";
 }
 
-// `import.meta.main` keeps the module importable (tests) without starting
-// a listener; `bun server.ts` is always the entry point in production.
-if (import.meta.main) {
+// `import.meta.main` (via `meta` above) keeps the module importable (tests)
+// without starting a listener; `bun server.ts` is always the entry point in
+// production.
+if (meta.main) {
   const server = Bun.serve({
     port: 3000,
     async fetch(req: Request): Promise<Response> {
@@ -61,7 +101,12 @@ if (import.meta.main) {
       const { pathname, search } = url;
 
       // Proxy API traffic to the backend, preserving the query string and
-      // returning the upstream response as-is.
+      // returning the upstream response as-is. Deliberately unrestricted:
+      // the SPA's own setup wizard and settings screens POST/PUT through
+      // here, so a method or path allowlist would break them without
+      // narrowing the surface. Whoever can reach this port can reach the
+      // whole (auth-less) API — see the trust-model note in
+      // docker-compose.yml's api service.
       if (pathname.startsWith("/api")) {
         try {
           return await fetch(API_URL + pathname + search, {

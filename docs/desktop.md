@@ -43,9 +43,44 @@ data directory instead:
 ~/Library/Application Support/SportsDash/sportsdash.db
 ```
 
-A fresh launch starts with an empty DB, seeds leagues/teams from the
-bundled `config/teams.yaml`, and refreshes live data in the background —
-the same first-run flow as a fresh server install.
+A fresh launch starts with an empty DB and opens the in-app **setup
+wizard** — the same first-run flow as a fresh server install. The leagues
+and teams you pick land in that database and are refreshed in the
+background. (The bundled `config/teams.yaml` is a comments-only template,
+so nothing is pre-seeded.)
+
+#### Upgrading an existing database
+
+Nothing to do — but one thing happens on the first launch after upgrading
+from **1.3.0 or earlier**, and it is worth knowing about because it writes
+to your database.
+
+SQLite reads the `REFERENCES` in a schema but does not *enforce* them
+unless asked to, and SportsDash never asked. The Docker deployment runs on
+PostgreSQL, which enforces them unconditionally — so the desktop app was
+the one place where deleting something could quietly leave rows pointing at
+a parent that no longer existed. Re-picking your teams in the setup wizard
+did exactly that: it dropped leagues and left their archived standings
+tables behind.
+
+Foreign keys are now enforced here too, which means those leftover rows
+have to go — under enforcement, anything that touched one would fail on a
+rule the row never satisfied. So the app sweeps them **once, at startup**,
+and logs what it removed:
+
+```
+migrations: removed 42 orphaned standings_archive row(s) (no matching leagues)
+```
+
+They were unreachable junk — archived tables for leagues you had already
+stopped following — so nothing you can see in the app is lost. The sweep is
+safe to run repeatedly (later launches find nothing), and it never deletes
+a row that something else still references: a followed team in that
+position is counted and left alone rather than removed.
+
+Your picks, games, standings, rosters and news are untouched. There is no
+migration step and no downgrade concern — an older build simply stops
+enforcing the rule again.
 
 ## Building it
 
@@ -71,10 +106,11 @@ Output:
 
 ```
 frontend/src-tauri/target/release/bundle/macos/SportsDash.app
-frontend/src-tauri/target/release/bundle/dmg/SportsDash_1.0.0_aarch64.dmg
+frontend/src-tauri/target/release/bundle/dmg/SportsDash_<version>_aarch64.dmg
 ```
 
-Drag the `.app` to `/Applications`, or share the `.dmg`.
+`<version>` is whatever [tauri.conf.json](../frontend/src-tauri/tauri.conf.json)
+declares. Drag the `.app` to `/Applications`, or share the `.dmg`.
 
 ### Prerequisites (one-time)
 

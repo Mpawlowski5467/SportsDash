@@ -14,6 +14,7 @@ from app.models.domain import GameLineup, GameOdds, GameSummary, TeamLineup, Wea
 from app.models.orm import EventORM, GameORM, LeagueORM
 from app.schemas import (
     EventOut,
+    FightResultOut,
     GameLineupOut,
     GameOddsOut,
     GameOut,
@@ -37,6 +38,39 @@ logger = logging.getLogger(__name__)
 #: Phases for which scores are meaningless unless a live/final state was
 #: actually recorded for the game.
 _NO_STATE_PHASES = frozenset({"postponed", "canceled"})
+
+
+def _fight_result_out(result: domain.FightResult | None) -> FightResultOut | None:
+    """Serialize a domain method of victory (MMA), or None."""
+    if result is None:
+        return None
+    return FightResultOut(
+        method=result.method.value,
+        detail=result.detail,
+        round=result.round,
+        clock=result.clock,
+    )
+
+
+def _row_fight_result_out(row: GameORM) -> FightResultOut | None:
+    """Rebuild the API shape from a game row's fight_* columns.
+
+    Gated on the row being FINAL, because the columns outlive that phase:
+    they are never wiped by a later refresh, so a bout ESPN reopens (a
+    corrected state, a result under review) would otherwise keep serving
+    the superseded finish while it is back to ``in_progress``.  The
+    never-stored path can't have that problem — a domain ``Game`` only
+    carries a ``fight_result`` for a finished bout — and the schema, plus
+    every consumer, promises a result only once the bout is over.
+    """
+    if row.phase != "final" or row.fight_method is None:
+        return None
+    return FightResultOut(
+        method=row.fight_method,
+        detail=row.fight_detail,
+        round=row.fight_round,
+        clock=row.fight_clock,
+    )
 
 
 def domain_game_to_out(game: domain.Game, league: LeagueORM) -> GameOut:
@@ -74,6 +108,7 @@ def domain_game_to_out(game: domain.Game, league: LeagueORM) -> GameOut:
         start_time=game.start_time,
         venue=game.venue,
         series=game.series,
+        fight_result=_fight_result_out(game.fight_result),
         phase=phase,
         period=state.period if state is not None else 0,
         period_label=state.period_label if state is not None else "",
@@ -129,6 +164,7 @@ def game_to_out(row: GameORM, league: LeagueORM) -> GameOut:
         start_time=ensure_utc(row.start_time),
         venue=row.venue,
         series=row.series,
+        fight_result=_row_fight_result_out(row),
         phase=row.phase,
         period=row.period,
         period_label=row.period_label,

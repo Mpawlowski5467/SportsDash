@@ -16,4 +16,16 @@ export default tseslint.config(
       "react-hooks/exhaustive-deps": "warn",
     },
   },
+  // The Bun server ships in the Docker image and serves every request, so it
+  // is linted too — but it holds no React, which is all the block above knows
+  // how to check. It gets typescript-eslint's recommended set instead: the
+  // generic TypeScript smells (an unused binding, `any` widening its way into
+  // a request path, a non-null assertion standing in for a real guard) that
+  // strict tsc accepts. Its vitest suite is included so a rule can't be
+  // dodged by moving code into the test.
+  {
+    files: ["server.ts", "server.test.ts"],
+    extends: [tseslint.configs.recommended],
+    languageOptions: { parser: tseslint.parser },
+  },
 );

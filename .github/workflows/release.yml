@@ -19,41 +19,42 @@ permissions:
 jobs:
   macos-dmg:
     runs-on: macos-latest
-    env:
-      # Signing/notarization turn on automatically once the repo secrets
-      # exist (see docs/desktop.md "Code signing"); until then the build
-      # stays unsigned and everything else works as before.
-      HAS_APPLE_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' }}
+    # Signing/notarization turn on automatically once the repo secrets
+    # exist (see docs/desktop.md "Code signing"); until then the build
+    # stays unsigned and everything else works as before. The secrets are
+    # wired into the build step's own env below, never job-wide.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements*.txt
+          # build-desktop.sh installs requirements.lock into a fresh venv
+          # that shares this cache, so the lock must be in the key.
+          cache-dependency-path: backend/requirements*
       - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: frontend/src-tauri
-      - name: Configure code signing & notarization
-        if: env.HAS_APPLE_SIGNING == 'true'
-        run: |
-          # Tauri v2 reads these env vars natively: it imports the base64
-          # .p12 into a temporary keychain, signs with the given identity
-          # (hardened runtime), and notarizes + staples via notarytool.
-          {
-            echo "APPLE_CERTIFICATE<<APPLE_CERT_EOF"
-            echo "${{ secrets.APPLE_CERTIFICATE }}"
-            echo "APPLE_CERT_EOF"
-            echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}"
-            echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}"
-            echo "APPLE_ID=${{ secrets.APPLE_ID }}"
-            echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}"
-            echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
-          } >> "$GITHUB_ENV"
-
       - name: Build SportsDash.app + .dmg
+        # Tauri v2 reads these env vars natively: it imports the base64
+        # .p12 into a temporary keychain, signs with the given identity
+        # (hardened runtime), and notarizes + staples via notarytool.
+        # Scoped to this step on purpose — writing them to $GITHUB_ENV
+        # instead would hand every later step the certificate and the
+        # notarization password, including third-party actions and the
+        # post-steps that setup-bun/rust-cache register at job cleanup.
+        # GitHub cannot omit an env key conditionally, so these arrive as
+        # empty strings when the secrets are unset; build-desktop.sh drops
+        # the empty ones so the build stays unsigned, exactly as before.
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: ./scripts/build-desktop.sh
       - name: Locate artifacts
         id: artifacts

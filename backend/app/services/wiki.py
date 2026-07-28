@@ -25,9 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
-import unicodedata
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
@@ -50,18 +47,6 @@ _SPORT_QUALIFIER: dict[str, str] = {
     "hockey": "ice hockey team",
     "football": "American football team",
     "volleyball": "volleyball team",
-}
-
-# A sport-appropriate qualifier appended to a *player* search so a bare
-# name resolves to the athlete's article (and the club term in the query
-# biases toward the right person when several share a name).
-_PLAYER_SPORT_QUALIFIER: dict[str, str] = {
-    "soccer": "footballer",
-    "basketball": "basketball player",
-    "baseball": "baseball player",
-    "hockey": "ice hockey player",
-    "football": "American football player",
-    "volleyball": "volleyball player",
 }
 
 # Page titles that are never a club's main article — skip them so a search
@@ -110,53 +95,6 @@ async def team_summary(name: str, *, sport: str | None = None) -> WikiSummary | 
     return summary
 
 
-async def player_photo(
-    name: str, *, team_name: str | None = None, sport: str | None = None
-) -> str | None:
-    """Resolve a player's Wikipedia lead image URL; ``None`` on any miss.
-
-    The fallback that gives soccer players a headshot: ESPN soccer rosters
-    carry a photo for only a couple of players, so the rest are looked up
-    here.  Searches a club+sport-qualified query (e.g. ``"Cole Palmer
-    Chelsea footballer"``) so a common name resolves to the right athlete,
-    then returns that page's lead image (``originalimage``/``thumbnail``).
-
-    Precision over recall: a result whose title doesn't clearly match the
-    player's name is discarded (:func:`_title_matches_name`) — a wrong face
-    is worse than the initials chip the UI falls back to.  Cached per
-    ``(name, team, sport)`` with the long ``wiki_cache_minutes`` TTL —
-    misses included, so a photoless squad can't re-flood the free service on
-    every roster refresh — and never raises.
-    """
-    settings = get_settings()
-    if not getattr(settings, "wiki_enabled", True):
-        return None
-    clean = (name or "").strip()
-    if not clean:
-        return None
-
-    lang = getattr(settings, "wiki_lang", "en")
-    key = (
-        f"wikiphoto:{lang}:{clean.casefold()}|"
-        f"{(team_name or '').strip().casefold()}|{(sport or '').casefold()}"
-    )
-    cached = await cache.cache_get_json(key)
-    if isinstance(cached, dict) and "image_url" in cached:
-        url = cached.get("image_url")
-        return url if isinstance(url, str) and url else None
-
-    title = await _resolve_player_title(clean, team_name, sport, lang)
-    image_url: str | None = None
-    if title is not None:
-        summary = await _fetch_summary(title, lang)
-        if summary is not None:
-            image_url = summary.image_url
-
-    ttl = getattr(settings, "wiki_cache_minutes", 10080) * 60
-    await cache.cache_set_json(key, {"image_url": image_url}, ttl)
-    return image_url
-
-
 async def _resolve_title(name: str, sport: str | None, lang: str) -> str | None:
     """Best article title for ``name`` via the search API, or ``None``."""
     qualifier = _SPORT_QUALIFIER.get((sport or "").casefold(), "")
@@ -164,14 +102,10 @@ async def _resolve_title(name: str, sport: str | None, lang: str) -> str | None:
     return await _search_title(query, lang)
 
 
-async def _search_title(
-    query: str, lang: str, accept: Callable[[str], bool] | None = None
-) -> str | None:
+async def _search_title(query: str, lang: str) -> str | None:
     """Best search-result title for ``query``, or ``None``.
 
-    Skips the junk titles in :data:`_BAD_TITLE_MARKERS`; an optional
-    ``accept`` predicate adds a further per-title guard (e.g. the player
-    name-match below), so a returned title has passed both filters.
+    Skips the junk titles in :data:`_BAD_TITLE_MARKERS`.
     """
     params = {
         "action": "query",
@@ -195,56 +129,8 @@ async def _search_title(
         lowered = title.casefold()
         if any(marker in lowered for marker in _BAD_TITLE_MARKERS):
             continue
-        if accept is not None and not accept(title):
-            continue
         return title
     return None
-
-
-async def _resolve_player_title(
-    name: str, team_name: str | None, sport: str | None, lang: str
-) -> str | None:
-    """Best article title for a *player*, name-matched for precision.
-
-    The query carries the club and a player qualifier ("Cole Palmer Chelsea
-    footballer") so the search ranks the right athlete first; the
-    name-match guard then rejects any result that fell through to a club /
-    competition page because the player has no article of their own.
-    """
-    qualifier = _PLAYER_SPORT_QUALIFIER.get((sport or "").casefold(), "")
-    query = " ".join(part.strip() for part in (name, team_name, qualifier) if part and part.strip())
-    if not query:
-        return None
-    return await _search_title(query, lang, accept=lambda t: _title_matches_name(t, name))
-
-
-def _title_matches_name(title: str, name: str) -> bool:
-    """True when an article title clearly belongs to ``name``.
-
-    A person's article title is their name, sometimes with a parenthetical
-    qualifier ("Cole Palmer (footballer, born 2002)"), so every significant
-    name token must appear among the title's tokens — accent-insensitively,
-    since rosters and Wikipedia spell diacritics inconsistently.  This
-    rejects a search that landed on a club / list / disambiguation page.
-    """
-    base = re.sub(r"\(.*?\)", " ", title)  # drop "(footballer, born 2002)"
-    title_tokens = set(_normalize_tokens(base))
-    if not title_tokens:
-        return False
-    name_tokens = [t for t in _normalize_tokens(name) if len(t) >= 3]
-    if not name_tokens:
-        # A very short / initials-only name — match on whatever tokens exist.
-        name_tokens = _normalize_tokens(name)
-    if not name_tokens:
-        return False
-    return all(token in title_tokens for token in name_tokens)
-
-
-def _normalize_tokens(text: str) -> list[str]:
-    """Lowercased, accent-stripped, alphanumeric tokens of ``text``."""
-    decomposed = unicodedata.normalize("NFKD", text)
-    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    return [tok for tok in re.split(r"[^a-z0-9]+", stripped.casefold()) if tok]
 
 
 async def _fetch_summary(title: str, lang: str) -> WikiSummary | None:

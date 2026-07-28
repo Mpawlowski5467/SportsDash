@@ -45,6 +45,22 @@ export interface TeamsResponse {
   teams: Team[];
 }
 
+/** How a finished combat-sport bout ended (MMA). */
+export type FightMethod =
+  | "ko" // knockout or technical knockout
+  | "submission"
+  | "decision"
+  | "disqualification"
+  | "no_contest"
+  | "draw";
+
+export interface FightResult {
+  method: FightMethod;
+  detail: string | null; // provider flavour, e.g. "Unanimous", "Rear-Naked Choke"
+  round: number | null; // 1-based round the bout ended in
+  clock: string | null; // time into that round, e.g. "4:21"
+}
+
 export interface GameSide {
   team_id: string | null;
   name: string;
@@ -63,6 +79,7 @@ export interface Game {
   start_time: string;
   venue: string | null;
   series: string | null; // tournament/round or fight card (individual sports)
+  fight_result: FightResult | null; // MMA: method of victory (finished bouts)
   phase: GamePhase;
   period: number;
   period_label: string;

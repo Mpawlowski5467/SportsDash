@@ -7,8 +7,10 @@ aiosqlite engine, and seeds fictional data directly via the ORM.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
@@ -39,6 +41,7 @@ from app.models.orm import (
     TeamORM,
 )
 from app.services import game_detail as game_detail_service
+from app.routes import meta as meta_route
 from app.routes import odds as odds_route
 from app.routes import router as api_router
 from app.services.ics import games_to_ics
@@ -282,11 +285,36 @@ async def test_meta(client: AsyncClient) -> None:
     resp = await client.get("/api/meta")
     assert resp.status_code == 200
     data = resp.json()
+    # Read from the module rather than repeating the literal: the shipped
+    # version moves every release, the contract (the three keys) does not.
     assert data == {
         "timezone": settings.timezone,
         "live_poll_seconds": settings.live_poll_seconds,
-        "version": "1.0.0",
+        "version": meta_route.APP_VERSION,
     }
+
+
+def test_app_version_has_one_source_of_truth() -> None:
+    """Every shipped copy of the version must agree with ``meta.APP_VERSION``.
+
+    ``test_meta`` reads the constant to check the /meta *contract*, which
+    makes it blind to the version itself — it would pass with the constant
+    set to anything.  This is the counterpart: pin the constant against the
+    two independent copies that ship, so a release that bumps one and
+    forgets the other fails here instead of in the wild.
+    """
+    # Imported lazily: this is the only test that needs the real application
+    # object (and with it the scheduler), the rest build their own app.
+    from app.main import app as application
+
+    # What /docs and the OpenAPI schema advertise.
+    assert application.version == meta_route.APP_VERSION
+
+    # What the desktop bundle ships as, from the Tauri config.
+    tauri_conf = Path(__file__).resolve().parents[2] / "frontend" / "src-tauri" / "tauri.conf.json"
+    if not tauri_conf.exists():  # backend-only checkout (e.g. the API image)
+        pytest.skip(f"{tauri_conf} not present")
+    assert json.loads(tauri_conf.read_text())["version"] == meta_route.APP_VERSION
 
 
 async def test_teams(client: AsyncClient) -> None:

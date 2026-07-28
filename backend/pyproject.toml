@@ -14,3 +14,10 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests may use quick lambdas for spies.
 "tests/*" = ["E731"]
+
+[tool.coverage.run]
+# SQLAlchemy's asyncio layer runs ORM work inside greenlet_spawn. Without
+# these tracers coverage.py stops recording at the first bridged await, so
+# every line after it in the frame reads as never executed — route modules
+# that the suite exercises end to end were reporting as low as 24%.
+concurrency = ["thread", "greenlet"]

@@ -3,9 +3,8 @@
 # Followed teams live in the DATABASE, not in this file.  This config is
 # read once at startup and ONLY while the teams table is empty; after
 # that it is ignored, so editing it never clobbers your picks.  The
-# normal first-run path is the in-app setup wizard (or POST
-# /api/setup/demo for a fictional zero-network demo) — leave this file
-# as comments unless you'd rather author your followed set by hand.
+# normal first-run path is the in-app setup wizard — leave this file as
+# comments unless you'd rather author your followed set by hand.
 #
 # Seeding actual teams from this file marks the app as onboarded, so
 # the wizard won't appear.
@@ -17,10 +16,21 @@
 #
 #   leagues:
 #     - id: my-league                          # internal slug, unique
-#       sport: basketball                      # basketball | baseball | soccer
+#       sport: basketball                      # one of the nine below
 #       name: My League
 #       provider: espn                         # espn | thesportsdb
 #       provider_key: <sport>/<league-code>    # e.g. an ESPN URL path fragment
+#
+# The nine values `sport` accepts (app/models/domain.py::Sport is the
+# source of truth — anything else fails to load):
+#
+#   basketball | baseball | soccer | hockey | football (American) |
+#   tennis | mma | golf | volleyball
+#
+# In tennis, MMA and golf a "team" is a single athlete, so the entries
+# under `teams:` are players/fighters/golfers and provider_key is the
+# ESPN athlete id.  Golf goes further: a tournament is one leaderboard
+# event with a whole field, not a two-sided game.
 #
 #   teams:
 #     - id: my-team                            # internal slug, unique

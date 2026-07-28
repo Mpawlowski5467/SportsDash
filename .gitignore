@@ -4,6 +4,10 @@ __pycache__/
 *.pyc
 *.db
 
+# Coverage data left behind by `pytest --cov`
+.coverage
+.coverage.*
+
 # Node / Bun (bun.lock stays committed)
 node_modules/
 dist/

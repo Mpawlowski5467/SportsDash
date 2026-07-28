@@ -55,6 +55,24 @@ class PlayerStatus(str, Enum):
     OUT = "out"
 
 
+class FightMethod(str, Enum):
+    """How a combat-sport bout ended, normalized across providers.
+
+    Providers spell the method as free text ("KO/TKO", "Submission -
+    Rear-Naked Choke", "Decision - Unanimous"); the adapter classifies it
+    into one of these so nothing downstream has to pattern-match a sport's
+    vocabulary.  The provider's own wording survives in
+    :attr:`FightResult.detail`.
+    """
+
+    KO = "ko"  # knockout or technical knockout (spelled "KO/TKO" upstream)
+    SUBMISSION = "submission"
+    DECISION = "decision"
+    DISQUALIFICATION = "disqualification"
+    NO_CONTEST = "no_contest"
+    DRAW = "draw"
+
+
 class EventType(str, Enum):
     STARTING_SOON = "starting_soon"
     GAME_START = "game_start"
@@ -142,6 +160,25 @@ class GameState:
 
 
 @dataclass(frozen=True)
+class FightResult:
+    """How a finished bout ended — the combat-sport answer to a final score.
+
+    An MMA "score" is a round count (``1-0``), which says almost nothing
+    about the fight, so a finished bout carries its method of victory
+    instead: the normalized :class:`FightMethod`, the provider's own
+    flavour wording (``detail``: "Unanimous", "Rear-Naked Choke"), and the
+    round/time it ended at.  Only ``method`` is required — providers report
+    the method far more reliably than the stoppage time — so a partially
+    known result is still worth showing.
+    """
+
+    method: FightMethod
+    detail: str | None = None  # provider flavour, e.g. "Unanimous", "Punches"
+    round: int | None = None  # 1-based round the bout ended in
+    clock: str | None = None  # time into that round, e.g. "4:21"
+
+
+@dataclass(frozen=True)
 class Game:
     id: str  # internal id: f"{provider}:{provider_game_key}"
     league_id: str
@@ -158,6 +195,10 @@ class Game:
     away_color: str | None = None
     venue: str | None = None
     series: str | None = None  # tournament/round or card context, e.g. "Wimbledon · QF"
+    # MMA: how a finished bout ended.  ``None`` for every other sport, for a
+    # bout that hasn't finished, and whenever the provider doesn't say — the
+    # field is purely additive, so no other sport changes shape.
+    fight_result: FightResult | None = None
     state: GameState | None = None
 
     @property

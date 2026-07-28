@@ -12,5 +12,5 @@
     "noUnusedLocals": true,
     "types": ["vite/client"]
   },
-  "include": ["src"]
+  "include": ["src", "server.ts", "server.test.ts"]
 }

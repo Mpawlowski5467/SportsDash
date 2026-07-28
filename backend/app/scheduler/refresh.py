@@ -381,10 +381,16 @@ async def _resolve_team_location(
        team's most-common stored-game venue) when no coordinates resolved.
     4. Stored-game venue: when the provider and enrichment had no venue
        name at all, borrow the team's most-common home-game venue from
-       stored fixtures and geocode that.
+       stored fixtures and geocode that.  This is the step that saves a
+       club whose stadium TheSportsDB simply doesn't know — the enrichment
+       yields no venue name at all rather than the county it does know
+       (see :func:`app.services.stadiums._compose_venue`), so the club
+       lands on the ground its own fixtures name instead of on a regional
+       centroid.
 
     Returns ``None`` when nothing usable could be found, so the caller
-    skips the team (and retries it on a later run).
+    skips the team (and retries it on a later run) rather than pinning it
+    somewhere merely plausible.
     """
     # (1) Provider coords / venue.
     location: domain.TeamLocation | None = None
@@ -425,16 +431,67 @@ async def _resolve_team_location(
     return replace(location, venue=venue, lat=lat, lon=lon)
 
 
+async def _clear_area_only_team_locations() -> None:
+    """Drop cached team coordinates that are really an area centroid.
+
+    Repairs rows written before the venue-composition fix: when the
+    enrichment found no stadium name it used to hand back the bare location
+    text ("Dorset, England") as the venue, which geocoded to the AREA'S
+    centre and was then cached on the team row as a precise home-venue fix
+    — a marker tens of km from the real ground, and one the location job
+    would never revisit, because it only processes teams *without*
+    coordinates.
+
+    Clearing the two false facts (the venue name and the coordinates) while
+    keeping the true ones (the area text, capacity, photo, surface) puts the
+    team back in the pending set, so the very same pass re-resolves it from
+    a venue name worth trusting — or leaves it off the map.  Never raises:
+    a repair failure must not cost the caller its refresh.
+    """
+    repaired = 0
+    try:
+        async with session_scope() as session:
+            for row in await repository.list_teams(session):
+                if not stadiums.is_area_only_venue(row.home_venue, row.venue_location):
+                    continue
+                await repository.set_team_location(
+                    session,
+                    row.id,
+                    None,
+                    None,
+                    None,
+                    capacity=row.venue_capacity,
+                    opened=row.venue_opened,
+                    image_url=row.venue_image_url,
+                    location=row.venue_location,
+                    surface=row.venue_surface,
+                )
+                repaired += 1
+                logger.info(
+                    "refresh_locations: %s was pinned at the centroid of %r — "
+                    "clearing for re-resolution",
+                    row.id,
+                    row.venue_location,
+                )
+    except Exception:
+        logger.exception("refresh_locations: area-centroid repair failed — continuing")
+    if repaired:
+        logger.info("refresh_locations: cleared %d area-centroid pin(s)", repaired)
+
+
 async def refresh_locations() -> None:
     """Resolve + cache home-venue coordinates for followed teams (map view).
 
     Only teams that do not already have coordinates are processed — a
     resolved team is never geocoded again (the lat/lon are cached on the
-    team row).  Per-team failures are isolated so one unresolvable venue
-    never aborts the rest, and the job itself never raises (the scheduler
-    and the startup kick both rely on that).
+    team row) — except for a team cached at an area centroid, which
+    :func:`_clear_area_only_team_locations` puts back in the pending set
+    first.  Per-team failures are isolated so one unresolvable venue never
+    aborts the rest, and the job itself never raises (the scheduler and the
+    startup kick both rely on that).
     """
     try:
+        await _clear_area_only_team_locations()
         leagues, _ = await _load_leagues_and_teams()
         async with session_scope() as session:
             team_rows = await repository.list_teams(session)

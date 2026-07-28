@@ -9,9 +9,10 @@
 #
 # Output: frontend/src-tauri/target/release/bundle/{macos,dmg}/
 #
-# Self-bootstrapping: creates backend/.venv (with PyInstaller, from
-# requirements-dev.txt) when missing, and fails early with a clear
-# message if rustc / bun / python3.12 aren't installed.
+# Self-bootstrapping: creates backend/.venv when missing and re-syncs it to
+# requirements.lock + requirements-dev.txt (PyInstaller) on every run, and
+# fails early with a clear message if rustc / bun / python3.12 aren't
+# installed.
 #
 # Re-run this whenever the backend or frontend changes.
 set -euo pipefail
@@ -33,14 +34,20 @@ need python3.12 "Install Python 3.12 (e.g. 'brew install python@3.12')"
 TRIPLE="$(rustc -Vv | sed -n 's/^host: //p')"
 echo "==> Host target triple: $TRIPLE"
 
-if [ ! -x "$ROOT/backend/.venv/bin/pyinstaller" ]; then
-  echo "==> Bootstrapping backend/.venv (+ PyInstaller)…"
+if [ ! -x "$ROOT/backend/.venv/bin/pip" ]; then
+  echo "==> Creating backend/.venv…"
   python3.12 -m venv "$ROOT/backend/.venv"
   "$ROOT/backend/.venv/bin/pip" install --quiet --upgrade pip
-  "$ROOT/backend/.venv/bin/pip" install --quiet \
-    -r "$ROOT/backend/requirements.lock" \
-    -r "$ROOT/backend/requirements-dev.txt"
 fi
+
+# Always re-sync, never just on first create: an existing venv from before a
+# lock bump would otherwise freeze the bundle against stale dependencies,
+# and requirements.txt promises "Docker, CI, and the desktop build all
+# install from the lock".  A no-op resolve costs a couple of seconds.
+echo "==> Syncing backend/.venv to requirements.lock…"
+"$ROOT/backend/.venv/bin/pip" install --quiet \
+  -r "$ROOT/backend/requirements.lock" \
+  -r "$ROOT/backend/requirements-dev.txt"
 
 echo "==> Freezing backend (PyInstaller onedir)…"
 cd "$ROOT/backend"
@@ -57,6 +64,15 @@ rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR"
 cp -R "$ROOT/backend/dist/sportsdash-backend/" "$STAGE_DIR/"
 chmod +x "$STAGE_DIR/sportsdash-backend"
+
+# GitHub Actions can set a step's env vars but never omit one, so on a repo
+# without the signing secrets the APPLE_* vars arrive as empty strings —
+# which Tauri reads as "configured" and then fails on. Drop the empties so
+# an unsigned build looks exactly like a local one.
+for var in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+  APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+  [ -n "${!var:-}" ] || unset "$var"
+done
 
 # Sign locally when a Developer ID certificate is in the keychain and no
 # identity was chosen explicitly; otherwise build unsigned (Gatekeeper will
