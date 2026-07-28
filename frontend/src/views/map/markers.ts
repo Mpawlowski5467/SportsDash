@@ -257,6 +257,10 @@ export function createPlaneElement(): { el: HTMLDivElement; glyph: HTMLElement }
   const el = document.createElement("div");
   el.className = "sd-map-plane";
   el.style.pointerEvents = "none";
+  // Pure decoration, and unclickable — but MapLibre files every marker it
+  // adopts as a role="button", so hide it or a screen reader meets one
+  // nameless button per plane in flight.
+  el.setAttribute("aria-hidden", "true");
   el.innerHTML = PLANE_SVG;
   return { el, glyph: el.firstElementChild as HTMLElement };
 }
@@ -337,6 +341,9 @@ export function createFanElement(
   el.className = faceLeft ? "sd-map-fan sd-map-fan-l" : "sd-map-fan sd-map-fan-r";
   el.style.color = color;
   el.style.pointerEvents = "none";
+  // Decoration, like the planes: a crowd of dozens must not become a crowd of
+  // buttons in the accessibility tree (see createPlaneElement).
+  el.setAttribute("aria-hidden", "true");
   const glyph =
     FAN_GLYPHS[((variant % FAN_GLYPHS.length) + FAN_GLYPHS.length) % FAN_GLYPHS.length];
   const width = Math.round(size * 0.8); // viewBox is 24x30

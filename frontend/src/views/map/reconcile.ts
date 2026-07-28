@@ -18,9 +18,10 @@ export interface MarkerSignature {
   lat: number;
   lon: number;
   /**
-   * Content signature: everything this pin renders — badge, hover label, and
-   * the payload its click hands to the side panel. This is what tells the
-   * reconciler that a marker it is KEEPING has to be refreshed after a poll.
+   * Content signature: everything this pin renders — badge, hover label,
+   * accessible name, and the payload its click hands to the side panel. This
+   * is what tells the reconciler that a marker it is KEEPING has to be
+   * refreshed after a poll.
    */
   sig: string;
   /**
@@ -44,9 +45,10 @@ export interface KeptMarkerUpdate {
   move: boolean;
   /**
    * Rebind the spec the once-bound hover/click handlers read through — what
-   * makes the hover label, the side panel and the click's fly-to target show
-   * current data. Implied by either of the other two: a marker whose badge or
-   * position changed must never keep handlers pointing at the old payload.
+   * makes the hover label, the accessible name, the side panel and the click's
+   * fly-to target show current data. Implied by either of the other two: a
+   * marker whose badge or position changed must never keep handlers pointing
+   * at the old payload.
    */
   rebindSpec: boolean;
 }

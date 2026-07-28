@@ -34,6 +34,11 @@ import {
   writeBasemap,
   type BasemapId,
 } from "./map/basemap";
+import {
+  clusterMarkerLabel,
+  teamMarkerLabel,
+  venueMarkerLabel,
+} from "./map/labels";
 import { diffKeptMarker, type MarkerSignature } from "./map/reconcile";
 import { CameraOrbit } from "./map/orbit";
 import { FanCrowd } from "./map/fans";
@@ -123,6 +128,11 @@ const DAY_WINDOW_OPTIONS: SelectOption[] = [
  *  for what each signature covers and how a kept marker is refreshed. */
 interface MapMarker extends MarkerSignature {
   id: string;
+  /** The pin's accessible name (MapLibre turns every marker into a button, and
+   *  names them all "Map marker" unless we label them). Part of `sig`, so a
+   *  kept marker's name follows its content instead of freezing at first
+   *  paint — see map/labels.ts for what each kind says. */
+  label: string;
   makeElement: () => HTMLDivElement;
   makeTooltip: () => HTMLDivElement;
   onSelect: () => void;
@@ -354,6 +364,7 @@ function clusterForViewport(
       const clusterId = props.cluster_id;
       const count = props.point_count;
       const hasFollowed = props.followedCount > 0;
+      const label = clusterMarkerLabel(count, hasFollowed, mode);
       out.push({
         id: `cluster:${clusterId}`,
         lat,
@@ -361,8 +372,9 @@ function clusterForViewport(
         // A cluster id already encodes its point count and zoom, but the
         // centroid, the tooltip's noun and the expansion zoom the click reads
         // do not — sign them so a kept badge still refreshes.
-        sig: `${count}|${hasFollowed ? 1 : 0}|${lon},${lat}|${zoom}|${mode}`,
+        sig: `${count}|${hasFollowed ? 1 : 0}|${lon},${lat}|${zoom}|${mode}|${label}`,
         elementSig: `${count}|${hasFollowed ? 1 : 0}`,
+        label,
         followed: hasFollowed,
         isCluster: true,
         makeElement: () => createClusterElement(count, hasFollowed),
@@ -635,15 +647,19 @@ export default function MapView() {
         const pulse = group.games.some(
           (game) => game.phase === "in_progress" || isToday(game.start_time),
         );
+        const label = venueMarkerLabel(group, pulse);
         return {
           id: `venue:${group.key}`,
           lat: group.lat,
           lon: group.lon,
           // The whole group: the badge count and hover label read it, and so
           // does the venue panel this pin's click opens (scores, phase, the
-          // fixtures still in the window).
-          sig: `${pulse ? 1 : 0}|${JSON.stringify(group)}`,
+          // fixtures still in the window). The accessible name rides along
+          // spelled out, so a renamed venue or a changed count re-labels the
+          // kept marker rather than keeping the name it was born with.
+          sig: `${pulse ? 1 : 0}|${label}|${JSON.stringify(group)}`,
           elementSig: `${pulse ? 1 : 0}|${group.source}|${group.games.length}`,
+          label,
           followed: group.source === "followed",
           makeElement: () => createVenueMarkerElement(group, pulse),
           makeTooltip: () => createVenueTooltipElement(group),
@@ -654,17 +670,20 @@ export default function MapView() {
     return visibleTeams.map((team) => {
       const pulse = isToday(team.next_match_time);
       const inTransit = inTransitIds.has(team.team_id);
+      const label = teamMarkerLabel(team, pulse, inTransit);
       return {
         id: `team:${team.team_id}`,
         lat: team.lat,
         lon: team.lon,
         // The whole team plus the two derived flags (neither is a field on it):
         // the tooltip shows the next match and the team panel shows venue
-        // facts / weather / travel, all of which move between polls.
-        sig: `${pulse ? 1 : 0}${inTransit ? 1 : 0}|${JSON.stringify(team)}`,
+        // facts / weather / travel, all of which move between polls. The
+        // accessible name rides along spelled out (see the venue pin above).
+        sig: `${pulse ? 1 : 0}${inTransit ? 1 : 0}|${label}|${JSON.stringify(team)}`,
         elementSig:
           `${pulse ? 1 : 0}${inTransit ? 1 : 0}|${team.source}|` +
           `${team.color ?? ""}|${team.logo_url ?? ""}|${team.name}`,
+        label,
         followed: team.source === "followed",
         makeElement: () => createMarkerElement(team, pulse, inTransit),
         makeTooltip: () => createTooltipElement(team),
@@ -1362,13 +1381,22 @@ export default function MapView() {
           }
           if (update.move) existing.marker.setLngLat([spec.lon, spec.lat]);
           // The handlers below read through the entry, so this is also what
-          // makes the hover label and the side panel show current data.
-          if (update.rebindSpec) existing.spec = spec;
+          // makes the hover label and the side panel show current data — and
+          // the accessible name, which is signed into `sig` so a badge that
+          // now counts four games stops announcing three.
+          if (update.rebindSpec) {
+            existing.spec = spec;
+            existing.host.setAttribute("aria-label", spec.label);
+          }
           continue;
         }
         // The host stays put for the marker's whole life (MapLibre owns its
         // transform); the badge element is its single replaceable child.
         const host = document.createElement("div");
+        // MapLibre only defaults the name of a marker that arrives unlabeled,
+        // so labelling the host BEFORE addTo is what keeps it off "Map marker"
+        // (it still supplies role="button", which is what this element is).
+        host.setAttribute("aria-label", spec.label);
         host.appendChild(spec.makeElement());
         const marker = new maplibregl.Marker({ element: host })
           .setLngLat([spec.lon, spec.lat])
