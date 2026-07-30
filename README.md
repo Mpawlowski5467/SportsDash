@@ -38,7 +38,7 @@ tennis, MMA, golf, motorsport, and volleyball.**
 | **Stat leaders** | |
 | ![Leaders](docs/screenshots/leaders.png) | |
 
-[![Watch the 17-second SportsDash trailer](docs/trailer-poster.svg)](docs/trailer.mp4)
+[![Watch the live SportsDash product trailer](docs/trailer-poster.svg)](docs/trailer.mp4)
 
 ## Features
 

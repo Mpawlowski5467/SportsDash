@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title">
+  <title id="title">See the season. Standings, leaders, and playoff brackets.</title>
+  <defs>
+    <linearGradient id="card" x1="0" x2="1">
+      <stop stop-color="#101318" stop-opacity=".97"/>
+      <stop offset="1" stop-color="#1a2029" stop-opacity=".93"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0" x2="1">
+      <stop stop-color="#d4d94f"/><stop offset="1" stop-color="#4c7de0"/>
+    </linearGradient>
+  </defs>
+  <rect x="470" y="514" width="756" height="150" rx="24" fill="url(#card)" stroke="#fff" stroke-opacity=".12"/>
+  <rect x="1218" y="514" width="8" height="150" rx="4" fill="url(#line)"/>
+  <text x="506" y="566" fill="#d4d94f" font-family="SF Pro Text, Inter, Arial, sans-serif"
+        font-size="17" font-weight="800" letter-spacing="3">SEE THE SEASON</text>
+  <text x="506" y="615" fill="#f8f5ef" font-family="SF Pro Display, Inter, Arial, sans-serif"
+        font-size="31" font-weight="700">Standings, leaders, and playoff brackets.</text>
+</svg>

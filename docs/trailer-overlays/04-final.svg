@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">SportsDash 1.4.0</title>
+  <desc id="desc">Ten sports, more than 50 leagues. No accounts. No tracking. Just your dashboard.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="74%">
+      <stop offset="0" stop-color="#292e37"/>
+      <stop offset=".58" stop-color="#13161c"/>
+      <stop offset="1" stop-color="#07080a"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="0" x2="1">
+      <stop stop-color="#e8643c"/><stop offset=".5" stop-color="#d4d94f"/><stop offset="1" stop-color="#4c7de0"/>
+    </linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="38"/></filter>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <circle cx="1060" cy="98" r="190" fill="#e8643c" opacity=".09" filter="url(#soft)"/>
+  <circle cx="180" cy="620" r="220" fill="#4c7de0" opacity=".10" filter="url(#soft)"/>
+  <text x="640" y="202" text-anchor="middle" fill="#f8f5ef"
+        font-family="SF Pro Display, Inter, Arial, sans-serif"
+        font-size="64" font-weight="780" letter-spacing="-1">Ten sports. 50+ leagues.</text>
+  <text x="640" y="280" text-anchor="middle" fill="#cdd1d8"
+        font-family="SF Pro Text, Inter, Arial, sans-serif"
+        font-size="28" font-weight="500">No accounts. No tracking. Just your dashboard.</text>
+  <rect x="334" y="338" width="612" height="7" rx="3.5" fill="url(#accent)"/>
+  <text x="640" y="458" text-anchor="middle" fill="#f8f5ef"
+        font-family="SF Pro Display, Inter, Arial, sans-serif"
+        font-size="62" font-weight="760">SportsDash 1.4.0</text>
+  <text x="640" y="518" text-anchor="middle" fill="#9298a3"
+        font-family="SF Pro Text, Inter, Arial, sans-serif"
+        font-size="19" font-weight="700" letter-spacing="3">OPEN SOURCE · SELF-HOSTED</text>
+  <rect x="404" y="578" width="472" height="58" rx="29" fill="#f4f1eb"/>
+  <text x="640" y="615" text-anchor="middle" fill="#111318"
+        font-family="SF Pro Text, Inter, Arial, sans-serif"
+        font-size="18" font-weight="800">github.com/Mpawlowski5467/SportsDash</text>
+</svg>

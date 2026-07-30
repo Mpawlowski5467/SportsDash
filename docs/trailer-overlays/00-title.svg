@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">SportsDash trailer title</title>
+  <desc id="desc">SportsDash. Your sports, one screen.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="72%">
+      <stop offset="0" stop-color="#2c313b"/>
+      <stop offset=".56" stop-color="#14171d"/>
+      <stop offset="1" stop-color="#08090c"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="0" x2="1">
+      <stop stop-color="#e8643c"/>
+      <stop offset=".5" stop-color="#d4d94f"/>
+      <stop offset="1" stop-color="#4c7de0"/>
+    </linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="34"/></filter>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <circle cx="224" cy="95" r="180" fill="#e8643c" opacity=".09" filter="url(#soft)"/>
+  <circle cx="1080" cy="600" r="230" fill="#4c7de0" opacity=".10" filter="url(#soft)"/>
+  <g transform="translate(556 82) scale(1.4)">
+    <path d="M60 60 L60 8 A52 52 0 0 1 105 34 Z" fill="#e8643c"/>
+    <path d="M60 60 L105 34 A52 52 0 0 1 105 86 Z" fill="#f4f1ec"/>
+    <path d="M60 60 L105 86 A52 52 0 0 1 60 112 Z" fill="#c9d14a"/>
+    <path d="M60 60 L60 112 A52 52 0 0 1 15 86 Z" fill="#3b6fd4"/>
+    <path d="M60 60 L15 86 A52 52 0 0 1 15 34 Z" fill="#f4efe6"/>
+    <path d="M60 60 L15 34 A52 52 0 0 1 60 8 Z" fill="#9a6a43"/>
+    <g fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round">
+      <path d="M60 60 L60 8"/><path d="M60 60 L105 34"/><path d="M60 60 L105 86"/>
+      <path d="M60 60 L60 112"/><path d="M60 60 L15 86"/><path d="M60 60 L15 34"/>
+      <circle cx="60" cy="60" r="52"/>
+    </g>
+    <circle cx="60" cy="60" r="4" fill="#fff"/>
+  </g>
+  <text x="640" y="360" text-anchor="middle" fill="#f8f5ef"
+        font-family="SF Pro Display, Inter, Arial, sans-serif"
+        font-size="88" font-weight="750" letter-spacing="-3">SportsDash</text>
+  <rect x="438" y="392" width="404" height="7" rx="3.5" fill="url(#accent)"/>
+  <text x="640" y="486" text-anchor="middle" fill="#d4d7dc"
+        font-family="SF Pro Text, Inter, Arial, sans-serif"
+        font-size="35" font-weight="600" letter-spacing=".5">Your sports. One screen.</text>
+  <text x="640" y="552" text-anchor="middle" fill="#858b95"
+        font-family="SF Pro Text, Inter, Arial, sans-serif"
+        font-size="17" font-weight="700" letter-spacing="4">LIVE · PERSONAL · SELF-HOSTED</text>
+</svg>
