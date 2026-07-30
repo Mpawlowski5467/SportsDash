@@ -18,7 +18,7 @@ router = APIRouter()
 # repeating the literal, so /api/meta, /docs and the OpenAPI schema can never
 # disagree.  Bump it here at release, in step with the desktop bundle version
 # in ``frontend/src-tauri/tauri.conf.json`` (tests/test_api.py pins the two).
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 
 @router.get("/meta", response_model=MetaOut)

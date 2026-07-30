@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">SportsDash trailer</title>
+  <desc id="desc">SportsDash logo with the words Your sports, one screen and a play button.</desc>
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="42%" r="70%">
+      <stop offset="0" stop-color="#252a32"/>
+      <stop offset="0.58" stop-color="#111318"/>
+      <stop offset="1" stop-color="#08090c"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="0" x2="1">
+      <stop stop-color="#e8643c"/>
+      <stop offset="0.52" stop-color="#c9d14a"/>
+      <stop offset="1" stop-color="#3b6fd4"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#glow)"/>
+  <ellipse cx="800" cy="472" rx="440" ry="290" fill="#000" opacity=".32" filter="url(#shadow)"/>
+  <g transform="translate(680 150) scale(2)">
+    <path d="M60 60 L60 8 A52 52 0 0 1 105 34 Z" fill="#e8643c"/>
+    <path d="M60 60 L105 34 A52 52 0 0 1 105 86 Z" fill="#f4f1ec"/>
+    <path d="M60 60 L105 86 A52 52 0 0 1 60 112 Z" fill="#c9d14a"/>
+    <path d="M60 60 L60 112 A52 52 0 0 1 15 86 Z" fill="#3b6fd4"/>
+    <path d="M60 60 L15 86 A52 52 0 0 1 15 34 Z" fill="#f4efe6"/>
+    <path d="M60 60 L15 34 A52 52 0 0 1 60 8 Z" fill="#9a6a43"/>
+    <g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round">
+      <path d="M60 60 L60 8"/>
+      <path d="M60 60 L105 34"/>
+      <path d="M60 60 L105 86"/>
+      <path d="M60 60 L60 112"/>
+      <path d="M60 60 L15 86"/>
+      <path d="M60 60 L15 34"/>
+      <circle cx="60" cy="60" r="52"/>
+    </g>
+    <circle cx="60" cy="60" r="4.5" fill="#fff"/>
+  </g>
+
+  <text x="800" y="495" text-anchor="middle" fill="#f7f4ee"
+        font-family="SF Pro Display, Inter, Arial, sans-serif"
+        font-size="104" font-weight="700" letter-spacing="-4">SportsDash</text>
+  <rect x="554" y="532" width="492" height="8" rx="4" fill="url(#accent)"/>
+  <text x="800" y="630" text-anchor="middle" fill="#c8cbd1"
+        font-family="SF Pro Text, Inter, Arial, sans-serif"
+        font-size="42" font-weight="500" letter-spacing="1">Your sports. One screen.</text>
+
+  <circle cx="800" cy="738" r="58" fill="#f7f4ee"/>
+  <path d="M783 705 L833 738 L783 771 Z" fill="#111318"/>
+  <text x="800" y="842" text-anchor="middle" fill="#8d929c"
+        font-family="SF Pro Text, Inter, Arial, sans-serif"
+        font-size="22" font-weight="600" letter-spacing="3">WATCH THE 17-SECOND TRAILER</text>
+</svg>

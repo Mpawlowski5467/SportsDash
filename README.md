@@ -30,11 +30,15 @@ tennis, MMA, golf, motorsport, and volleyball.**
 
 | Playoff bracket | World stadium map |
 |---|---|
-| ![NBA playoff bracket](docs/screenshots/bracket.png) | ![Stadium map](docs/screenshots/map.jpg) |
+| ![NBA playoff bracket](docs/screenshots/bracket.png) | ![Stadium map](docs/screenshots/map.png) |
+| **Follow individual players** | **Ten sports, including motorsport** |
+| ![Team profile roster with player-follow stars](docs/screenshots/player-follows.png) | ![Sports catalog with Formula 1, NASCAR Cup, and IndyCar](docs/screenshots/onboarding-leagues.png) |
 | **Standings** | **Calendar** |
 | ![League standings](docs/screenshots/standings.png) | ![Calendar](docs/screenshots/calendar.png) |
-| **Stat leaders** | **Onboarding — follow a team or a whole league** |
-| ![Leaders](docs/screenshots/leaders.png) | ![Onboarding](docs/screenshots/onboarding-leagues.png) |
+| **Stat leaders** | |
+| ![Leaders](docs/screenshots/leaders.png) | |
+
+[![Watch the 17-second SportsDash trailer](docs/trailer-poster.svg)](docs/trailer.mp4)
 
 ## Features
 
@@ -244,8 +248,9 @@ above (`SPORTSDASH_NTFY_TOPIC`).
 ### Option B — macOS desktop app
 
 A native `SportsDash.app` you double-click — **no browser, no Docker, and no
-Python to install.** The FastAPI backend is frozen into the bundle and starts
-automatically when you launch the app. Build it with one command:
+Python to install.** Download the
+[latest macOS release](https://github.com/Mpawlowski5467/SportsDash/releases/latest),
+or build it locally with one command:
 
 ```sh
 ./scripts/build-desktop.sh

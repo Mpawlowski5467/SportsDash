@@ -12,6 +12,49 @@ that shipped on 2026-07-27 were pinned by tests and had still never been
 looked at running, and the map bug fixed that day was a confidently wrong
 pin that every gate passed happily. A green suite is not a sighting.
 
+## At a glance
+
+```mermaid
+flowchart LR
+    shipped["Shipped in 1.4.0<br/>motorsport · player follows<br/>watch links · highlights · metrics"]:::done
+
+    subgraph verify["Verify in the wild"]
+        race["Observe live race gaps<br/>NASCAR · 2026-08-08<br/>F1 · 2026-08-23"]
+        roster["Watch a real same-day<br/>player status change"]
+        nhl["Confirm NHL intermission<br/>October 2026"]
+        calendar["Open tournament spans<br/>in a real calendar app"]
+    end
+
+    subgraph distribute["Distribution"]
+        signing["Code signing<br/>and notarization"]
+        targets["Intel macOS<br/>Windows · Linux"]
+    end
+
+    subgraph later["Later"]
+        mobile["iOS and Android<br/>via Capacitor"]
+        providers["More sports<br/>provider redundancy"]
+        components["Focused React<br/>component harness"]
+    end
+
+    shipped --> race
+    shipped --> roster
+    race --> signing
+    roster --> signing
+    nhl --> signing
+    calendar --> signing
+    signing --> targets
+    targets --> mobile
+    targets --> providers
+    providers --> components
+
+    classDef done fill:#163f34,stroke:#46c59a,color:#fff
+    classDef default fill:#17191d,stroke:#6b7280,color:#fff
+```
+
+The graph is the short version. The dated evidence, decision rules, and
+verification criteria remain below so a green test suite is never mistaken
+for a live sighting.
+
 ## ✅ Recently shipped
 
 - **Race leaderboards carry constructors and race times** (2026-07-29) —
