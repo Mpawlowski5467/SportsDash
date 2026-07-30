@@ -25,15 +25,17 @@ class Sport(str, Enum):
     MMA = "mma"  # individual: a bout is two fighters
     GOLF = "golf"  # leaderboard: one event, a field of players
     VOLLEYBALL = "volleyball"  # two-sided, set-scored (score = sets won)
+    RACING = "racing"  # leaderboard: one race weekend, a field of drivers
 
 
-# Sports where a "team" is really one athlete (a player, fighter, or
-# golfer).  The picker/label wording changes; for tennis/mma the Game
-# model still has two sides, while golf uses the Event model instead.
-INDIVIDUAL_SPORTS = frozenset({Sport.TENNIS, Sport.MMA, Sport.GOLF})
+# Sports where a "team" is really one athlete (a player, fighter,
+# golfer, or driver).  The picker/label wording changes; for tennis/mma
+# the Game model still has two sides, while golf and racing use the
+# Event model instead.
+INDIVIDUAL_SPORTS = frozenset({Sport.TENNIS, Sport.MMA, Sport.GOLF, Sport.RACING})
 
 # Sports modeled as leaderboard Events rather than two-sided Games.
-LEADERBOARD_SPORTS = frozenset({Sport.GOLF})
+LEADERBOARD_SPORTS = frozenset({Sport.GOLF, Sport.RACING})
 
 # Sports usually played outdoors, where venue weather is meaningful.  Indoor
 # sports (basketball, hockey, volleyball, mma) skip the weather lookup.
@@ -79,6 +81,9 @@ class EventType(str, Enum):
     PERIOD_START = "period_start"
     INTERMISSION = "intermission"
     FINAL = "final"
+    # A followed player's roster status changed (injury designation moved,
+    # or a ruled-out player's game is about to start).
+    PLAYER_STATUS = "player_status"
 
 
 @dataclass(frozen=True)
@@ -199,6 +204,10 @@ class Game:
     # bout that hasn't finished, and whenever the provider doesn't say — the
     # field is purely additive, so no other sport changes shape.
     fight_result: FightResult | None = None
+    # Where to watch: broadcast network names, national market first.  ``()``
+    # whenever the provider lists none (individual sports never fill it) —
+    # the field is purely additive, so no other path changes shape.
+    broadcasts: tuple[str, ...] = ()
     state: GameState | None = None
 
     @property
@@ -379,6 +388,22 @@ class GamePlay:
 
 
 @dataclass(frozen=True)
+class Clip:
+    """A highlight video clip from a game's summary feed (never stored).
+
+    ``url`` is the provider's clip page, not a raw media file — clip
+    assets are volatile (they expire and get pulled), so the app links
+    out instead of persisting anything.
+    """
+
+    headline: str
+    url: str
+    description: str | None = None
+    duration_seconds: int | None = None
+    thumbnail_url: str | None = None
+
+
+@dataclass(frozen=True)
 class GameSummary:
     """On-demand box score for a single game (never stored).
 
@@ -398,6 +423,8 @@ class GameSummary:
     win_probability: tuple[float, ...] = ()
     # Condensed key-moment play-by-play (scoring plays / goals / cards).
     plays: tuple[GamePlay, ...] = ()
+    # Highlight clips, when the provider ships them (soccer rarely does).
+    clips: tuple[Clip, ...] = ()
 
 
 @dataclass(frozen=True)

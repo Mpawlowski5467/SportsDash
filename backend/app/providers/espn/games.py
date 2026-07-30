@@ -32,6 +32,70 @@ logger = logging.getLogger(__name__)
 # Pure parsers (take already-fetched JSON, never raise on bad records)
 # ---------------------------------------------------------------------------
 
+# "Where to watch" ordering: the national feed leads, then the home call,
+# then the away call.  Unranked/unknown markets sort after all three.
+_BROADCAST_MARKET_ORDER = {"national": 0, "home": 1, "away": 2}
+_BROADCASTS_MAX = 6
+
+
+def _parse_broadcasts(competition: dict[str, Any]) -> tuple[str, ...]:
+    """Broadcast network names for a competition, best-known-first.
+
+    Two payload shapes exist upstream.  Scoreboards carry rich entries
+    (structured market plus region/lang, so foreign feeds can be
+    filtered out) under ``geoBroadcasts`` alongside a flat
+    ``broadcasts[].names`` summary; team-schedule payloads have NO
+    ``geoBroadcasts`` and instead put the same rich entries directly in
+    ``broadcasts``.  So: collect rich US-English entries'
+    ``media.shortName`` from BOTH keys, ordered National → Home → Away.
+    When that yields nothing, fall back to the flat
+    ``broadcasts[].names`` (national market entries first).  Deduped
+    preserving order, capped; malformed entries are skipped, never
+    fatal.
+    """
+    ranked: list[tuple[int, str]] = []
+    for key in ("geoBroadcasts", "broadcasts"):
+        source = competition.get(key)
+        if not isinstance(source, list):
+            continue
+        for entry in source:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("region") != "us" or entry.get("lang") != "en":
+                continue
+            media = entry.get("media")
+            name = media.get("shortName") if isinstance(media, dict) else None
+            if not (isinstance(name, str) and name.strip()):
+                continue
+            market = entry.get("market")
+            market_type = market.get("type") if isinstance(market, dict) else None
+            market_key = market_type.strip().lower() if isinstance(market_type, str) else ""
+            rank = _BROADCAST_MARKET_ORDER.get(market_key, len(_BROADCAST_MARKET_ORDER))
+            ranked.append((rank, name.strip()))
+
+    if not ranked:
+        flat = competition.get("broadcasts")
+        if isinstance(flat, list):
+            for entry in flat:
+                if not isinstance(entry, dict):
+                    continue
+                market = entry.get("market")
+                market_key = market.strip().lower() if isinstance(market, str) else ""
+                rank = 0 if market_key == "national" else 1
+                raw_names = entry.get("names")
+                if not isinstance(raw_names, list):
+                    continue
+                for raw in raw_names:
+                    if isinstance(raw, str) and raw.strip():
+                        ranked.append((rank, raw.strip()))
+
+    names: list[str] = []
+    # sort() is stable, so the feed's own order survives within a market.
+    for _, name in sorted(ranked, key=lambda item: item[0]):
+        if name not in names:
+            names.append(name)
+    return tuple(names[:_BROADCASTS_MAX])
+
 
 def _parse_event(event: Any, league: League, team: Team | None = None) -> Game | None:
     """Parse a single scoreboard/schedule event; None (+warning) if malformed."""
@@ -80,6 +144,8 @@ def _parse_event(event: Any, league: League, team: Team | None = None) -> Game |
         if not (isinstance(venue, str) and venue):
             venue = None
 
+        broadcasts = _parse_broadcasts(competition)
+
         home_team_id: str | None = None
         away_team_id: str | None = None
         if team is not None:
@@ -103,6 +169,7 @@ def _parse_event(event: Any, league: League, team: Team | None = None) -> Game |
             home_color=_team_color(home_team),
             away_color=_team_color(away_team),
             venue=venue,
+            broadcasts=broadcasts,
             state=state,
         )
     except Exception:

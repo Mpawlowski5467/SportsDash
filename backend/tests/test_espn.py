@@ -300,6 +300,157 @@ def test_scoreboard_final_game(scoreboard_data: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Broadcasts ("where to watch")
+# ---------------------------------------------------------------------------
+
+
+def test_scoreboard_broadcasts_prefer_us_english_geo(scoreboard_data: dict[str, Any]) -> None:
+    """geoBroadcasts win: US-English feeds only, national market first.
+
+    The fixture lists the home feed before the national one and includes
+    a foreign-language entry — the parse must reorder and filter both.
+    """
+    games = _parse_scoreboard(scoreboard_data, BASKETBALL_LEAGUE)
+    game = next(g for g in games if g.id == "espn:9100001")
+    assert game.broadcasts == ("Crestline Sports Network", "Fieldhouse Local 5")
+
+
+def test_scoreboard_broadcasts_fall_back_to_flat_names(scoreboard_data: dict[str, Any]) -> None:
+    """Without geoBroadcasts, ``broadcasts[].names`` fills in, national first."""
+    games = _parse_scoreboard(scoreboard_data, BASKETBALL_LEAGUE)
+    game = next(g for g in games if g.id == "espn:9100002")
+    assert game.broadcasts == ("Meridian Sports Web", "Dunwick Cable One")
+
+
+def test_schedule_broadcasts_rich_entries_without_geo_key() -> None:
+    """Team-schedule payloads put the rich entries in ``broadcasts`` itself.
+
+    The schedule endpoint has no ``geoBroadcasts`` key at all — the same
+    market/media/lang/region shape arrives under ``broadcasts``.  The
+    daily refresh syncs followed teams through that endpoint, so this
+    shape MUST parse (regression: it originally fell through both the
+    geo pass and the flat-names fallback and stored nothing).
+    """
+    event = _event(
+        event_id="9100021",
+        date="2026-06-13T23:00Z",
+        home=("55", "Crestfall Lynx", "CFL"),
+        away=("77", "Rivermont Gulls", "RVG"),
+        home_score="0",
+        away_score="0",
+        status=_status(state="pre", name="STATUS_SCHEDULED"),
+    )
+    event["competitions"][0]["broadcasts"] = [
+        {
+            "type": {"id": "4", "shortName": "Streaming"},
+            "market": {"id": "1", "type": "National"},
+            "media": {"shortName": "Meridian Sports Web"},
+            "lang": "en",
+            "region": "us",
+        },
+        {
+            "type": {"id": "1", "shortName": "TV"},
+            "market": {"id": "2", "type": "Home"},
+            "media": {"shortName": "Lynx Local"},
+            "lang": "en",
+            "region": "us",
+        },
+        # Foreign-language feed: filtered out like any rich entry.
+        {
+            "market": {"id": "1", "type": "National"},
+            "media": {"shortName": "Meridian Norte"},
+            "lang": "es",
+            "region": "us",
+        },
+    ]
+    assert "geoBroadcasts" not in event["competitions"][0]
+    games = _parse_scoreboard({"events": [event]}, BASKETBALL_LEAGUE)
+    assert games[0].broadcasts == ("Meridian Sports Web", "Lynx Local")
+
+
+def test_broadcasts_dedupe_case_insensitive_markets_and_skip_malformed() -> None:
+    event = _event(
+        event_id="9100020",
+        date="2026-06-12T23:00Z",
+        home=("55", "Crestfall Lynx", "CFL"),
+        away=("77", "Rivermont Gulls", "RVG"),
+        home_score="0",
+        away_score="0",
+        status=_status(state="pre", name="STATUS_SCHEDULED"),
+    )
+    event["competitions"][0]["geoBroadcasts"] = [
+        # Away feed listed first; market.type case varies across sports.
+        {
+            "market": {"type": "AWAY"},
+            "media": {"shortName": "Gullscast"},
+            "lang": "en",
+            "region": "us",
+        },
+        # Malformed entries in every shape the feed has shipped: skipped.
+        "not-an-object",
+        {"market": {"type": "National"}, "lang": "en", "region": "us"},
+        {
+            "market": {"type": "National"},
+            "media": {"shortName": "  "},
+            "lang": "en",
+            "region": "us",
+        },
+        {"market": "not-an-object", "media": {"shortName": "Fieldhouse Local 5"}},
+        {
+            "market": {"type": "national"},
+            "media": {"shortName": "Crestline Sports Network"},
+            "lang": "en",
+            "region": "us",
+        },
+        # The same network on a second (streaming) entry: deduped.
+        {
+            "market": {"type": "National"},
+            "media": {"shortName": "Crestline Sports Network"},
+            "lang": "en",
+            "region": "us",
+        },
+    ]
+    games = _parse_scoreboard({"events": [event]}, BASKETBALL_LEAGUE)
+    assert games[0].broadcasts == ("Crestline Sports Network", "Gullscast")
+
+
+def test_broadcasts_capped_and_default_empty() -> None:
+    event = _event(
+        event_id="9100021",
+        date="2026-06-12T23:00Z",
+        home=("55", "Crestfall Lynx", "CFL"),
+        away=("77", "Rivermont Gulls", "RVG"),
+        home_score="0",
+        away_score="0",
+        status=_status(state="pre", name="STATUS_SCHEDULED"),
+    )
+    event["competitions"][0]["geoBroadcasts"] = [
+        {
+            "market": {"type": "National"},
+            "media": {"shortName": f"Crestline Feed {index}"},
+            "lang": "en",
+            "region": "us",
+        }
+        for index in range(9)
+    ]
+    games = _parse_scoreboard({"events": [event]}, BASKETBALL_LEAGUE)
+    assert games[0].broadcasts == tuple(f"Crestline Feed {index}" for index in range(6))
+
+    # No broadcast keys at all (every committed pre-feature payload): ().
+    bare = _event(
+        event_id="9100022",
+        date="2026-06-12T23:00Z",
+        home=("55", "Crestfall Lynx", "CFL"),
+        away=("77", "Rivermont Gulls", "RVG"),
+        home_score="0",
+        away_score="0",
+        status=_status(state="pre", name="STATUS_SCHEDULED"),
+    )
+    games = _parse_scoreboard({"events": [bare]}, BASKETBALL_LEAGUE)
+    assert games[0].broadcasts == ()
+
+
+# ---------------------------------------------------------------------------
 # Status / period normalization across sports
 # ---------------------------------------------------------------------------
 
@@ -1293,6 +1444,81 @@ def test_game_summary_returns_none_without_header() -> None:
     # Header present but no home/away competitors -> None.
     no_sides = {"header": {"competitions": [{"id": "9100200", "competitors": []}]}}
     assert _parse_game_summary(no_sides, BASKETBALL_LEAGUE, "9100200") is None
+
+
+def test_game_summary_parses_highlight_clips(basketball_summary_data: dict[str, Any]) -> None:
+    summary = _parse_game_summary(basketball_summary_data, BASKETBALL_LEAGUE, "9100200")
+    assert summary is not None
+    full, bare = summary.clips
+    assert full.headline == "Lynx storm back in the fourth"
+    assert full.description == "Crestfall closes on a 12-0 run to take the opener."
+    assert full.duration_seconds == 58
+    assert full.thumbnail_url == "https://cdn.example/clips/82000001.jpg"
+    assert full.url == "https://video.example/clips/82000001"
+    # A clip is web link + headline; everything else is optional.
+    assert bare.headline == "Marsh drops 34 on the Gulls"
+    assert bare.url == "https://video.example/clips/82000002"
+    assert bare.description is None
+    assert bare.duration_seconds is None
+    assert bare.thumbnail_url is None
+
+
+def _clip_video(clip_id: int, **overrides: Any) -> dict[str, Any]:
+    """A minimal valid summary ``videos[]`` entry, fictional throughout."""
+    video: dict[str, Any] = {
+        "id": clip_id,
+        "headline": f"Fictional highlight {clip_id}",
+        "links": {"web": {"href": f"https://video.example/clips/{clip_id}"}},
+    }
+    video.update(overrides)
+    return video
+
+
+def test_game_summary_clips_skip_expired_unplayable_and_malformed() -> None:
+    data = _final_summary(
+        event_id="9100230",
+        status_name="STATUS_FINAL",
+        home_score="101",
+        away_score="99",
+        home_linescores=["25", "25", "25", "26"],
+        away_linescores=["24", "25", "25", "25"],
+    )
+    data["videos"] = [
+        # Already expired: the provider pulls these, so linking one 404s.
+        _clip_video(1, timeRestrictions={"expirationDate": "2020-01-01T00:00Z"}),
+        # No web link / no headline: nothing to show, skipped.
+        _clip_video(2, links={"source": {"href": "https://media.example/2.mp4"}}),
+        _clip_video(3, headline=""),
+        "not-an-object",
+        # Unparseable or absent expiry keeps the clip.
+        _clip_video(4, timeRestrictions={"expirationDate": "whenever"}),
+        _clip_video(5, timeRestrictions="not-an-object"),
+        _clip_video(6),
+    ]
+    summary = _parse_game_summary(data, BASKETBALL_LEAGUE, "9100230")
+    assert summary is not None
+    assert [clip.url for clip in summary.clips] == [
+        "https://video.example/clips/4",
+        "https://video.example/clips/5",
+        "https://video.example/clips/6",
+    ]
+
+
+def test_game_summary_clips_capped() -> None:
+    data = _final_summary(
+        event_id="9100231",
+        status_name="STATUS_FINAL",
+        home_score="101",
+        away_score="99",
+        home_linescores=["25", "25", "25", "26"],
+        away_linescores=["24", "25", "25", "25"],
+    )
+    data["videos"] = [_clip_video(clip_id) for clip_id in range(20)]
+    summary = _parse_game_summary(data, BASKETBALL_LEAGUE, "9100231")
+    assert summary is not None
+    assert len(summary.clips) == 12
+    assert summary.clips[0].url == "https://video.example/clips/0"
+    assert summary.clips[-1].url == "https://video.example/clips/11"
 
 
 def test_game_summary_hockey_period_labels() -> None:

@@ -67,6 +67,11 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("games", "fight_detail", "VARCHAR(64)"),
     ("games", "fight_round", "INTEGER"),
     ("games", "fight_clock", "VARCHAR(16)"),
+    # Where to watch: broadcast network names (JSON list of strings).
+    ("games", "broadcasts", "JSON"),
+    # Per-follow player-status alert baseline (advanced only on confirmed
+    # delivery; the baseline is the roster-diff alerts' dedupe).
+    ("player_follows", "last_notified_status", "VARCHAR(24)"),
 )
 
 

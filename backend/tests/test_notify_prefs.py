@@ -44,6 +44,7 @@ GAME_START = domain.EventType.GAME_START.value
 STARTING_SOON = domain.EventType.STARTING_SOON.value
 PERIOD_START = domain.EventType.PERIOD_START.value
 INTERMISSION = domain.EventType.INTERMISSION.value
+PLAYER_STATUS = domain.EventType.PLAYER_STATUS.value
 
 TEAM_COMETS = "ashport-comets"
 TEAM_STAGS = "rivermont-stags"
@@ -68,13 +69,14 @@ class Pref:
 # ---------------------------------------------------------------------------
 
 
-def test_event_types_are_the_five_ordered() -> None:
+def test_event_types_are_the_six_ordered() -> None:
     assert EVENT_TYPES == (
         STARTING_SOON,
         GAME_START,
         PERIOD_START,
         INTERMISSION,
         FINAL,
+        PLAYER_STATUS,
     )
 
 
@@ -89,6 +91,7 @@ def test_follow_all_default_events_only_start_and_final() -> None:
         PERIOD_START: False,
         INTERMISSION: False,
         FINAL: True,
+        PLAYER_STATUS: False,
     }
 
 
@@ -116,7 +119,7 @@ def test_global_events_final_false_disables_only_final() -> None:
     prefs = {"global": Pref(events={FINAL: False})}
     assert decide(prefs, FINAL, [TEAM_COMETS], LEAGUE_ID) is False
     # Every other type is unaffected by the single disabled key.
-    for event_type in (STARTING_SOON, GAME_START, PERIOD_START, INTERMISSION):
+    for event_type in (STARTING_SOON, GAME_START, PERIOD_START, INTERMISSION, PLAYER_STATUS):
         assert decide(prefs, event_type, [TEAM_COMETS], LEAGUE_ID) is True
 
 

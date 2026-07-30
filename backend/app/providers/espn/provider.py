@@ -49,6 +49,26 @@ from app.providers.espn.common import (
 )
 from app.providers.espn.games import _parse_schedule, _parse_scoreboard
 from app.providers.espn.golf import _event_overlaps_window, _parse_golf_scoreboard
+from app.providers.espn.racing import (
+    _ENRICH_CONCURRENCY,
+    _ENRICH_MAX_CARS,
+    _ENRICH_MEMO_MAX,
+    _ORDER_LAST,
+    _RacingCar,
+    _RacingCarFacts,
+    _RacingCarStats,
+    _apply_racing_facts,
+    _parse_racing_car_status,
+    _parse_racing_scoreboard,
+    _parse_racing_stats,
+    _racing_competition_statistics_url,
+    _racing_core_event_url,
+    _racing_enrich_targets,
+    _racing_facts,
+    _racing_field,
+    _racing_lap_label,
+    _racing_race_distance,
+)
 from app.providers.espn.individual import (
     _games_for_athlete,
     _merge_fight_results,
@@ -99,6 +119,14 @@ class EspnProvider:
         # by the time standings are fetched the mapping is populated and
         # followed teams can be tagged in standings rows.
         self._known_teams: dict[str, dict[str, str]] = {}
+        # Racing enrichment memos, keyed by provider event key (see
+        # _enrich_racing_event).  ``_racing_facts_memo`` holds the rendered
+        # score/detail of a race that has gone FINAL — a finished
+        # classification never changes, so re-polling it must not re-spend
+        # the per-car fan-out.  ``_racing_laps`` holds each event's
+        # scheduled race distance, a constant the site scoreboard omits.
+        self._racing_facts_memo: dict[str, dict[str, _RacingCarFacts]] = {}
+        self._racing_laps: dict[str, int | None] = {}
 
     def _register(self, league: League, team: Team) -> None:
         self._known_teams.setdefault(league.id, {})[str(team.provider_key)] = team.id
@@ -128,6 +156,12 @@ class EspnProvider:
 
     async def get_schedule(self, league: League, team: Team, start: date, end: date) -> list[Game]:
         self._register(league, team)
+        if league.sport in LEADERBOARD_SPORTS:
+            # A leaderboard sport has no two-sided games by definition — its
+            # tournaments/race weekends come from get_events.  Scanning the
+            # tour scoreboard here only ever produced "Skipping malformed"
+            # log noise, so the fetch is skipped outright.
+            return []
         if league.sport in INDIVIDUAL_SPORTS:
             # An athlete has no ``/teams/{id}/schedule`` endpoint; scan the
             # tour/card scoreboard for the competitions they appear in.
@@ -361,6 +395,11 @@ class EspnProvider:
         ESPN's day boundaries; the final ``[start, end]`` filter is applied
         to each game's tz-aware UTC start date.
         """
+        if league.sport in LEADERBOARD_SPORTS:
+            # A leaderboard follow_all league (a golf tour, a racing series)
+            # has no fixtures on the games path; its Events come from
+            # get_events (see get_schedule's identical gate).
+            return []
         url = f"{_SITE_BASE}/{league.provider_key}/scoreboard"
         batches: list[list[Game]] = []
         errors: list[Exception] = []
@@ -386,23 +425,35 @@ class EspnProvider:
             key=lambda game: game.start_time,
         )
 
-    async def get_events(self, league: League, start: date, end: date) -> list[Event]:
-        """Leaderboard tournaments in ``[start, end]`` for a golf league.
+    @staticmethod
+    def _event_scoreboard_parser(league: League):
+        """The leaderboard scoreboard parser for ``league``'s sport.
 
-        Golf is the only leaderboard sport today; every other sport returns
-        ``[]``.  ESPN's golf scoreboard exposes the current/most-recent
-        tournament (and the season calendar around it) — a single
-        ``?dates=YYYYMMDD-YYYYMMDD`` call covers the window (chunked by
-        month for long ranges, like the competition scoreboard), and each
-        tournament becomes one :class:`Event` with a populated leaderboard.
-        Each :class:`LeaderRow` carries the golfer's ESPN athlete id in
-        ``player_id`` TRANSIENTLY; the scheduler rewrites it to the internal
-        followed-team id (or None) before persisting.  Tournaments are kept
+        Golf and racing share the Event pipeline but not a payload shape
+        (golf: one competition with linescored golfers; racing: one
+        competition per session with thin competitors), so each leaderboard
+        sport brings its own parser.
+        """
+        return _parse_racing_scoreboard if league.sport is Sport.RACING else _parse_golf_scoreboard
+
+    async def get_events(self, league: League, start: date, end: date) -> list[Event]:
+        """Leaderboard events in ``[start, end]`` for a golf/racing league.
+
+        Non-leaderboard sports return ``[]``.  ESPN's tour/series scoreboard
+        exposes the current/most-recent event (and the season calendar
+        around it) — a single ``?dates=YYYYMMDD-YYYYMMDD`` call covers the
+        window (chunked by month for long ranges, like the competition
+        scoreboard), and each tournament/race weekend becomes one
+        :class:`Event` with a populated leaderboard.  Each
+        :class:`LeaderRow` carries the athlete's ESPN id in ``player_id``
+        TRANSIENTLY; the scheduler rewrites it to the internal
+        followed-team id (or None) before persisting.  Events are kept
         when their span overlaps ``[start, end]`` (a multi-day event that
         merely brackets the window still counts).
         """
         if league.sport not in LEADERBOARD_SPORTS:
             return []
+        parse = self._event_scoreboard_parser(league)
         url = f"{_SITE_BASE}/{league.provider_key}/scoreboard"
         batches: list[list[Event]] = []
         errors: list[Exception] = []
@@ -412,14 +463,14 @@ class EspnProvider:
                 data = await self._get_json(url, params={"dates": dates, "limit": "400"})
             except Exception as exc:
                 logger.warning(
-                    "ESPN golf scoreboard call failed for league %s (dates=%s): %s",
+                    "ESPN leaderboard scoreboard call failed for league %s (dates=%s): %s",
                     league.id,
                     dates,
                     exc,
                 )
                 errors.append(exc)
                 continue
-            batches.append(_parse_golf_scoreboard(data, league))
+            batches.append(parse(data, league))
         if not batches and errors:
             raise errors[0]
         # Merge by event id (first batch wins on duplicates) and keep any
@@ -429,25 +480,200 @@ class EspnProvider:
             for event in batch:
                 merged.setdefault(event.id, event)
         kept = [event for event in merged.values() if _event_overlaps_window(event, start, end)]
-        return sorted(kept, key=lambda event: event.start_time)
+        return await self._enrich_racing(league, sorted(kept, key=lambda e: e.start_time))
 
     async def get_event_state(self, league: League, provider_event_key: str) -> Event | None:
-        """Current state of a single golf tournament, or None if unknown.
+        """Current state of a single leaderboard event, or None if unknown.
 
-        Golf's ``/summary`` endpoint is unreliable (returns a non-JSON error
-        body for an event id — verified live), so the current scoreboard is
-        scanned for the tournament whose id matches ``provider_event_key``.
+        The ``/summary`` endpoint is unreliable for leaderboard sports
+        (golf returns a non-JSON error body for an event id; racing's 404s
+        outright — both verified live), so the current scoreboard is
+        scanned for the event whose id matches ``provider_event_key``.
         Non-leaderboard leagues always return None.
         """
         if league.sport not in LEADERBOARD_SPORTS:
             return None
+        parse = self._event_scoreboard_parser(league)
         target = f"espn:{provider_event_key}"
         url = f"{_SITE_BASE}/{league.provider_key}/scoreboard"
         data = await self._get_json(url, params={"limit": "400"})
-        for event in _parse_golf_scoreboard(data, league):
+        for event in parse(data, league):
             if event.id == target:
-                return event
+                enriched = await self._enrich_racing(league, [event])
+                return enriched[0]
         return None
+
+    # -- racing leaderboard enrichment ------------------------------------
+
+    async def _enrich_racing(self, league: League, events: list[Event]) -> list[Event]:
+        """Fill racing boards' ``score``/``detail`` from ESPN's core API.
+
+        Racing only: a golf board is already scored by the site scoreboard,
+        and no other sport reaches here.  The fan-out is bounded by
+        :func:`_racing_enrich_targets` (which also skips scheduled weekends,
+        whose entry lists ESPN has not published yet) and every failure
+        degrades to the un-enriched board — a core-API outage must never
+        cost us the leaderboard the site scoreboard already gave us.
+        """
+        if league.sport is not Sport.RACING:
+            return events
+        targets = _racing_enrich_targets(events)
+        if not targets:
+            return events
+        # Sequential across events (at most _ENRICH_MAX_EVENTS of them);
+        # the per-car fan-out INSIDE an event is what runs concurrently.
+        enriched: dict[str, Event] = {}
+        for event in targets:
+            try:
+                fresh = await self._enrich_racing_event(league, event)
+            except Exception:
+                # Belt and braces around the fetch-level degrade below: an
+                # unannounced shape change in these feeds must cost us the
+                # garnish, never the board (or the whole league's fetch).
+                logger.exception(
+                    "ESPN racing enrichment failed for %s (league %s) — keeping the plain board",
+                    event.id,
+                    league.id,
+                )
+                continue
+            if fresh is not None:
+                enriched[event.id] = fresh
+        if not enriched:
+            return events
+        return [enriched.get(event.id, event) for event in events]
+
+    async def _enrich_racing_event(self, league: League, event: Event) -> Event | None:
+        """One race weekend enriched, or None when nothing could be added.
+
+        Tier A (always): the core event root, for each car's constructor,
+        number and grid slot — plus, on a live race, the scheduled distance
+        that turns "Lap 44" into "Lap 44 of 70".  Tier B (only once the race
+        is FINAL): the per-car statistics/status N+1 behind the race time,
+        gap and retirements.  A FINAL race's rendered facts are memoized, so
+        the second poll of a finished race costs zero calls.
+        """
+        key = event.provider_event_key
+        final = event.phase is GamePhase.FINAL
+        memo = self._racing_facts_memo.get(key) if final else None
+        if memo is not None:
+            return replace(event, leaderboard=_apply_racing_facts(event.leaderboard, memo))
+
+        data = await self._racing_json(_racing_core_event_url(league.provider_key, key), key)
+        if data is None:
+            return None
+        competition_id, cars = _racing_field(data)
+        if not cars:
+            return None
+
+        stats: dict[str, _RacingCarStats] = {}
+        statuses: dict[str, tuple[str, int | None]] = {}
+        if final:
+            stats, statuses = await self._racing_car_details(cars, key)
+        facts = _racing_facts(cars, stats, statuses)
+        if final and facts:
+            self._memoize(self._racing_facts_memo, key, facts)
+
+        board = _apply_racing_facts(event.leaderboard, facts)
+        label = event.round_label
+        if event.phase is GamePhase.IN_PROGRESS and competition_id is not None:
+            label = _racing_lap_label(
+                label, await self._racing_distance(league, key, competition_id)
+            )
+        if board == event.leaderboard and label == event.round_label:
+            return None
+        return replace(event, leaderboard=board, round_label=label)
+
+    async def _racing_car_details(
+        self, cars: dict[str, _RacingCar], event_key: str
+    ) -> tuple[dict[str, _RacingCarStats], dict[str, tuple[str, int | None]]]:
+        """Tier B: per-car statistics (+ status where it exists), bounded.
+
+        ESPN cannot expand those refs in bulk, so this is a genuine N+1 —
+        run once per race, at FINAL, over at most ``_ENRICH_MAX_CARS`` cars
+        (front of the field first, so a truncated fan-out still covers the
+        rows anyone reads) with at most ``_ENRICH_CONCURRENCY`` calls in
+        flight.  The status call is issued only when the feed offered a
+        status ref: stock-car and IndyCar competitors have none, and that
+        endpoint answers 400 for them.  A per-car failure leaves that car
+        with its tier-A facts alone — plus, for an F1 car whose status call
+        is the half that failed, whatever its statistics can be trusted to
+        say about a retirement (see ``_racing_render_outcome``).
+        """
+        targets = sorted(cars.items(), key=lambda item: item[1].order or _ORDER_LAST)
+        targets = targets[:_ENRICH_MAX_CARS]
+        semaphore = asyncio.Semaphore(_ENRICH_CONCURRENCY)
+
+        async def fetch(
+            athlete_id: str, car: _RacingCar
+        ) -> tuple[str, _RacingCarStats | None, tuple[str, int | None]]:
+            async with semaphore:
+                stats_data = (
+                    await self._racing_json(car.statistics_url, event_key)
+                    if car.statistics_url is not None
+                    else None
+                )
+                status_data = (
+                    await self._racing_json(car.status_url, event_key)
+                    if car.status_url is not None
+                    else None
+                )
+            return (
+                athlete_id,
+                _parse_racing_stats(stats_data),
+                _parse_racing_car_status(status_data),
+            )
+
+        fetched = await asyncio.gather(*(fetch(aid, car) for aid, car in targets))
+        stats = {aid: parsed for aid, parsed, _ in fetched if parsed is not None}
+        statuses = {aid: status for aid, _, status in fetched}
+        return stats, statuses
+
+    async def _racing_distance(
+        self, league: League, event_key: str, competition_id: str
+    ) -> int | None:
+        """The race's scheduled lap count — one call per event, then memoized.
+
+        The distance is a constant for the event's whole lifetime, so even a
+        parse miss is remembered (a live race polls every few minutes); only
+        a failed FETCH is left to retry next tick.
+        """
+        if event_key in self._racing_laps:
+            return self._racing_laps[event_key]
+        data = await self._racing_json(
+            _racing_competition_statistics_url(league.provider_key, event_key, competition_id),
+            event_key,
+        )
+        if data is None:
+            return None
+        laps = _racing_race_distance(data)
+        self._memoize(self._racing_laps, event_key, laps)
+        return laps
+
+    async def _racing_json(self, url: str, event_key: str) -> dict[str, Any] | None:
+        """A core-API GET for the racing enrichment; any failure yields None.
+
+        Everything degrades here, including a transient outage that
+        exhausted its retries: the board parsed from the site scoreboard is
+        the product, and this is garnish that must never take it down or
+        trip the breaker.  A 404 is the NORMAL answer for a canceled race
+        and for one whose entry list is not published yet; a 200 carrying an
+        HTML error page (``ValueError`` from the JSON decode) is how the
+        core API answers its own outages.
+        """
+        try:
+            return await self._get_json(url)
+        except (httpx.HTTPError, TransientProviderError, ValueError) as exc:
+            logger.warning(
+                "ESPN racing enrichment call failed for event %s (%s): %s", event_key, url, exc
+            )
+            return None
+
+    @staticmethod
+    def _memoize(store: dict[str, Any], key: str, value: Any) -> None:
+        """Store ``value`` in a bounded, insertion-ordered memo."""
+        store[key] = value
+        while len(store) > _ENRICH_MEMO_MAX:
+            store.pop(next(iter(store)))
 
     async def get_game_state(self, league: League, provider_game_key: str) -> GameState | None:
         if league.sport in INDIVIDUAL_SPORTS:
@@ -581,7 +807,16 @@ class EspnProvider:
         data = await self._get_json(url, params={"level": "3"})
         return _parse_standings(data, league, self._known_teams.get(league.id))
 
-    async def get_roster(self, league: League, team: Team) -> Roster:
+    async def get_roster(
+        self, league: League, team: Team, *, with_stat_lines: bool = True
+    ) -> Roster:
+        """A team's roster; ``with_stat_lines=False`` is the one-call variant.
+
+        The stat-line pass below costs one athlete-overview request PER
+        player, which the same-day pre-game re-sync runs far too often to
+        afford — and it needs none of it: injury/scratch designations ride on
+        the roster payload this single call already returns.
+        """
         self._register(league, team)
         if league.sport in INDIVIDUAL_SPORTS:
             # An athlete is a single-member "team"; there is no roster.
@@ -589,6 +824,8 @@ class EspnProvider:
         url = f"{_SITE_BASE}/{league.provider_key}/teams/{team.provider_key}/roster"
         data = await self._get_json(url)
         roster = _parse_roster(data, league, team)
+        if not with_stat_lines:
+            return roster
         return await self._attach_stat_lines(league, roster)
 
     async def _attach_stat_lines(self, league: League, roster: Roster) -> Roster:

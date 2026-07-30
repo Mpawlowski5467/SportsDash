@@ -17,12 +17,26 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from app.models.domain import EventType, GameEvent, GamePhase, GameState
+from app.models.domain import EventType, GameEvent, GamePhase, GameState, PlayerStatus
 from app.timeutil import ensure_utc
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["diff_states", "starting_soon_event"]
+__all__ = ["diff_states", "player_status_label", "starting_soon_event"]
+
+
+# Human labels for PlayerStatus values in notification text.
+_PLAYER_STATUS_LABELS: dict[str, str] = {
+    PlayerStatus.ACTIVE.value: "active",
+    PlayerStatus.DAY_TO_DAY.value: "day-to-day",
+    PlayerStatus.INJURED.value: "injured",
+    PlayerStatus.OUT.value: "out",
+}
+
+
+def player_status_label(status: str) -> str:
+    """Human form of a stored player status ("day_to_day" -> "day-to-day")."""
+    return _PLAYER_STATUS_LABELS.get(status, status.replace("_", " "))
 
 
 def _title(home_name: str, away_name: str) -> str:

@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     news_locale: str = "en-US"
     daily_refresh_hour: int = 5  # local hour for schedule/standings/roster refresh
 
+    # Same-day pre-game roster re-sync.  Injury/scratch designations are only
+    # final in the hours before kickoff, while the daily roster sync
+    # (daily_refresh_hour) can be a whole day stale — so a team with an
+    # imminent game gets a cheap status-only roster re-fetch, and a scratch
+    # announced at noon alerts within a tick instead of tomorrow morning.
+    pregame_roster_refresh_enabled: bool = True
+    pregame_roster_lookahead_hours: int = 4  # re-sync teams playing this soon
+    pregame_roster_cooldown_minutes: int = 45  # minimum gap between one team's re-syncs
+    pregame_roster_refresh_minutes: int = 15  # job interval
+
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
     # Venue weather (Open-Meteo, keyless).  Current conditions on map pins and

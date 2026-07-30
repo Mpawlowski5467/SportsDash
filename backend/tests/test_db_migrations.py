@@ -10,6 +10,7 @@ test.  All fixture data is fictional.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import AsyncIterator
@@ -25,7 +26,7 @@ from sqlalchemy.ext.asyncio import (
 
 from app import db
 from app.migrations import prune_orphaned_rows
-from app.models.orm import LeagueORM, StandingsArchiveORM, TeamORM
+from app.models.orm import GameORM, LeagueORM, StandingsArchiveORM, TeamORM
 from tests.db_engine import create_test_schema, make_test_engine
 
 LEAGUE_ID = "verdant-league"
@@ -137,6 +138,52 @@ async def test_init_db_prunes_rows_a_pre_pragma_database_orphaned(
         teams = (await session.execute(select(TeamORM.league_id))).scalars().all()
     assert list(archived) == [LEAGUE_ID]
     assert list(teams) == [GONE_LEAGUE_ID]
+
+
+async def test_broadcasts_json_column_arrives_on_a_pre_existing_database(
+    app_engine: AsyncEngine,
+) -> None:
+    """The first JSON entry in the additive path lands on the shipped engine.
+
+    Simulates a database from a build predating ``games.broadcasts`` by
+    dropping the column ``create_all`` just made (sqlite drops its data
+    with it), then boots again: the additive migration must add it back
+    as a JSON column, existing rows read NULL — the serializer treats
+    that as ``[]`` — and a JSON list round-trips through it.
+    """
+    await db.init_db()
+    sessions = async_sessionmaker(app_engine, expire_on_commit=False)
+    async with sessions() as session:
+        session.add(_league(LEAGUE_ID))
+        await session.flush()
+        session.add(
+            GameORM(
+                id="mock:g-tv",
+                league_id=LEAGUE_ID,
+                home_name="Verdant Harriers",
+                away_name="Thistledown Rovers",
+                start_time=datetime(2026, 6, 26, 23, 0, tzinfo=timezone.utc),
+            )
+        )
+        await session.commit()
+
+    # A build without the column — i.e. every release before this one.
+    async with app_engine.begin() as conn:
+        await conn.execute(text("ALTER TABLE games DROP COLUMN broadcasts"))
+
+    await db.init_db()  # the next startup
+
+    async with sessions() as session:
+        row = await session.get(GameORM, "mock:g-tv")
+        assert row is not None
+        assert row.broadcasts is None  # pre-existing row: NULL, never []
+        row.broadcasts = ["Verdant Sports Network"]
+        await session.commit()
+
+    async with sessions() as session:
+        row = await session.get(GameORM, "mock:g-tv")
+        assert row is not None
+        assert row.broadcasts == ["Verdant Sports Network"]
 
 
 async def test_prune_orphaned_rows_leaves_a_healthy_database_untouched() -> None:

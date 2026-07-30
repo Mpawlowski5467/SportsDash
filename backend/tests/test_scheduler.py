@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 
+from app.config import get_settings
 from app.models import domain
 from tests.db_engine import create_test_schema, make_test_engine
 from app.models.orm import EventORM, NotificationPrefORM, TeamCompetitionORM, TeamORM
@@ -246,7 +247,7 @@ class FakeProvider:
             fetched_at=utcnow(),
         )
 
-    async def get_roster(self, league, team):
+    async def get_roster(self, league, team, *, with_stat_lines: bool = True):
         raise NotImplementedError
 
     async def get_news(self, league, team):
@@ -1355,6 +1356,19 @@ def test_refresh_news_interval_job_is_single_instance() -> None:
     live_job = scheduler.get_job("live_tick")
     assert live_job is not None
     assert live_job.max_instances == 1
+
+
+def test_pregame_roster_job_runs_on_its_own_interval() -> None:
+    """The pre-game roster re-sync is a separate interval job (its own
+    /api/metrics counters), capped at one instance so two runs can't race the
+    same team's roster replace, and paced by its own setting."""
+    scheduler = jobs.setup_scheduler()
+    job = scheduler.get_job("refresh_pregame_rosters")
+    assert job is not None
+    assert job.max_instances == 1
+    assert job.coalesce is True
+    assert job.misfire_grace_time == 300
+    assert job.trigger.interval == timedelta(minutes=get_settings().pregame_roster_refresh_minutes)
 
 
 # ---------------------------------------------------------------------------

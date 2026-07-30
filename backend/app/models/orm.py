@@ -119,6 +119,9 @@ class GameORM(Base):
     fight_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
     fight_round: Mapped[int | None] = mapped_column(Integer, nullable=True)
     fight_clock: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Where to watch: broadcast network names, national market first.  NULL
+    # on rows predating the additive migration — read as an empty list.
+    broadcasts: Mapped[list] = mapped_column(JSON, default=list)
 
     phase: Mapped[str] = mapped_column(String(16), default="scheduled", index=True)
     home_score: Mapped[int] = mapped_column(Integer, default=0)
@@ -206,6 +209,37 @@ class PlayerORM(Base):
     stat_line: Mapped[str | None] = mapped_column(String(256), nullable=True)
     career_stat_line: Mapped[str | None] = mapped_column(String(256), nullable=True)
     photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PlayerFollowORM(Base):
+    """A followed individual player on a followed team-sport team.
+
+    Keyed by the BARE ESPN athlete id (the byathlete leaders feed, the
+    athlete overview endpoint, and roster ids all share it — roster rows
+    store it prefixed as ``"espn:{athlete_id}"``).  ``team_id`` /
+    ``league_id`` are plain strings, deliberately NOT foreign keys:
+    rosters are delete+reinserted on every daily sync and
+    ``replace_followed`` wipes this table anyway, so an FK would only
+    add churn.  Roster data (status, stat line) is joined logically at
+    read time via ``PlayerORM.id == f"espn:{athlete_id}"``.
+    """
+
+    __tablename__ = "player_follows"
+
+    athlete_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    team_id: Mapped[str] = mapped_column(String(64))
+    league_id: Mapped[str] = mapped_column(String(64))
+    position: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    photo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    followed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Roster-diff alert baseline: the last status this follow was alerted
+    # about (or silently seeded with — at follow time, or on first sighting
+    # by a roster sync).  The baseline IS the dedupe for the roster-diff
+    # alerts: it advances only on confirmed delivery, so a failed send
+    # retries next sync and a re-injury after a recovery alerts again.
+    # None until seeded.
+    last_notified_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
 
 
 class NewsORM(Base):

@@ -28,14 +28,16 @@ export const SPAN_ID_PREFIX = "event:";
 /**
  * Leading glyph so a span reads as a tournament at a glance.
  *
- * Golf is the backend's only `LEADERBOARD_SPORTS` member, so it is the only
- * key that can resolve today — a tennis match is a two-sided `Game` (with a
- * `series` label), never an `Event`, so no tennis entry could ever be hit.
- * The map keeps the per-sport shape for whichever leaderboard sport lands
- * next; until then the `undefined` fallback in `eventSpan` covers the rest.
+ * Golf and racing are the backend's `LEADERBOARD_SPORTS`, so they are the
+ * only keys that can resolve today — a tennis match is a two-sided `Game`
+ * (with a `series` label), never an `Event`, so no tennis entry could ever
+ * be hit. The map keeps the per-sport shape for whichever leaderboard sport
+ * lands next; until then the `undefined` fallback in `eventSpan` covers the
+ * rest.
  */
 const SPORT_GLYPH: Partial<Record<Sport, string>> = {
   golf: "⛳",
+  racing: "🏁",
 };
 
 export interface EventSpan {

@@ -4,12 +4,12 @@
 
 # SportsDash
 
-**Nine sports · 50+ leagues · one self-hosted screen**
+**Ten sports · 50+ leagues · one self-hosted screen**
 
 </div>
 
 A single-user, self-hosted **sports dashboard** for a wall display, a
-desktop tab, or your phone. Follow teams — or whole leagues — across **nine
+desktop tab, or your phone. Follow teams — or whole leagues — across **ten
 sports** and 50+ competitions, and see today's games, live scores, a full
 calendar, standings, stat leaders, playoff brackets, rosters, results, news,
 and a world map of stadiums, all in one place. Get push notifications when a
@@ -22,7 +22,7 @@ macOS app** that double-clicks open with the backend bundled inside — see
 user: you. Data comes live from ESPN and TheSportsDB — no API keys required.
 
 Sports covered: **basketball, baseball, soccer, hockey, American football,
-tennis, MMA, golf, and volleyball.**
+tennis, MMA, golf, motorsport, and volleyball.**
 
 ## Screenshots
 
@@ -40,10 +40,17 @@ tennis, MMA, golf, and volleyball.**
 
 - **Today** — every game for the teams and leagues you follow, with live
   scores, period/clock, and auto-refresh that polls faster while a game is in
-  progress. Click any card for a box score (line scores + top performers).
+  progress. Cards carry a where-to-watch chip when the provider names the
+  broadcast networks, and a small why-watch flag when a game is tight late,
+  an upset watch, or a toss-up. Click any card for a box score (line scores
+  + top performers, plus highlight clips where ESPN has them). In-progress
+  golf and race-weekend leaderboards sit here too — a race board names each
+  car's constructor, number, and grid slot, shows a running gap while the
+  race is on wherever ESPN publishes one for that car, and once the race
+  finishes fills in the race time, the gap (`+15.080`, `+1 lap`), DNF, or DSQ.
 - **Calendar** — month/week calendar of all games, colored per team, with
-  multi-day golf tournaments drawn as span bars, plus an `.ics` /
-  `webcal://` feed you can subscribe to from any calendar app.
+  multi-day golf tournaments and race weekends drawn as span bars, plus an
+  `.ics` / `webcal://` feed you can subscribe to from any calendar app.
 - **Standings** — per-league tables with sport-appropriate columns and
   conference/division grouping; team crests inline.
 - **Leaders** — league-wide stat leaders (points, home runs, goals…), with
@@ -53,11 +60,16 @@ tennis, MMA, golf, and volleyball.**
   finals.
 - **Rosters** — players, positions, jersey numbers, season stat lines, and
   injury status.
+- **Follow individual players** — star players on any followed roster;
+  they're highlighted on the Leaders boards and you get injury-status
+  alerts, plus a ruled-out heads-up shortly before their game starts.
 - **Results** — recent finals per team with streak / last-10 chips.
 - **Season archives** — jump any ESPN league or team back up to 15 years:
   past-season standings tables (archived in the DB after one fetch) and
   full past-season results, straight from the season pickers on the
   Standings and Results views.
+- **On this day** — a Today-view card of each followed team's past games
+  that fell on today's date, pulled from the last five seasons of archives.
 - **News** — aggregated headlines per team (ESPN + Google News + RSS) with an
   in-app reader.
 - **Map** — your followed teams' (and every active competition's) home venues
@@ -67,7 +79,10 @@ tennis, MMA, golf, and volleyball.**
 - **Team & nation profiles** — click a team anywhere to open a unified page:
   next match, recent form, fixtures, results, roster, news, and stadium.
 - **Notifications** — pushed to your own [ntfy](https://ntfy.sh) topic:
-  starting soon, game start, period start, intermission, and final.
+  starting soon, game start, period start, intermission, final, and a
+  followed player's injury or scratch. Injury alerts don't wait for the
+  daily sync: a followed team's roster is re-checked in the hours before
+  kickoff, so a same-day scratch reaches you the same afternoon.
   Deduplicated, so the same alert never fires twice.
 - **Themes & kiosk** — four themes (Light, Dark, Newsprint, Stadium), a
   kiosk auto-rotation mode with an idle clock, and an installable PWA.
@@ -79,7 +94,7 @@ slide-over panels you reach by clicking a team or game anywhere in the UI.
 
 | Tab | What you see / do |
 |---|---|
-| **Today** | The landing page: every game for your follows on the local calendar day, with live score, period, and clock. It auto-refreshes — fast while a game is in progress, slow otherwise. Click a card for a **box score** (line scores + top performers). In-progress golf leaderboards show up here too. |
+| **Today** | The landing page: every game for your follows on the local calendar day, with live score, period, and clock. It auto-refreshes — fast while a game is in progress, slow otherwise. Click a card for a **box score** (line scores + top performers). In-progress golf and race-weekend leaderboards show up here too — a race board carries each car's constructor, number, and grid slot, plus its race time, gap, DNF, or DSQ once the race is over. A live race board shows the field, the lap count ("Lap 44 of 70"), and a running gap for each car wherever ESPN publishes one. |
 | **Calendar** | A month / week grid of all your fixtures, color-coded per team, with golf tournaments spanning the days they run over (click one for its leaderboard — they show under *All teams*, since a tournament belongs to no team). **Subscribe** hands you ready-made `webcal://` feeds (all games, or one per team) and a one-off `.ics` export. |
 | **Matchup** | A pre-game **preview browser**: upcoming games with head-to-head context — recent form, last meetings, and where each side sits — so you can scan what's coming before it starts. |
 | **League** | Pick one of your leagues and drill in through three sub-tabs: **Standings** (sport-appropriate columns, conference/division grouping), **Leaders** (stat leaders, or the soccer Golden Boot), and **Bracket** (cup knockouts and best-of-N playoff series, grouped by round). |
@@ -121,7 +136,7 @@ flowchart TB
     end
 
     subgraph ext["External data"]
-        espn["ESPN<br/>(8 sports)"]
+        espn["ESPN<br/>(9 sports)"]
         tsdb["TheSportsDB<br/>(volleyball)"]
         tiles["OpenFreeMap<br/>map tiles"]
     end
@@ -149,7 +164,7 @@ Two principles shape the codebase:
   shared domain models — including sport-specific period semantics (`Q3`,
   `2nd Half`, `Top 5`, `P2`, `Set 3`). Routes, services, and the scheduler
   never see provider- or sport-specific fields, so adding a source or a sport
-  rarely touches them. ESPN backs eight sports; TheSportsDB backs volleyball.
+  rarely touches them. ESPN backs nine sports; TheSportsDB backs volleyball.
 
 ```mermaid
 flowchart LR
@@ -273,6 +288,7 @@ is playing (or about to). Detected transitions are pushed to
 | Period start | Each new quarter/half/inning/period after the first |
 | Intermission | Halftime / between periods, with the current score |
 | Final | Game ends, with the final score |
+| Player status | A followed player's injury or scratch designation changes |
 
 Each event is recorded after a successful send, so restarts and re-polls never
 duplicate an alert. Whole-league follows default to game-start + final only
@@ -283,6 +299,17 @@ everything without touching the rest of the stack. The
 non-Docker run (it is how the desktop app ships); under Compose it has to go
 in the `api` service's `environment:` block, because the root `.env` is only
 interpolated into `docker-compose.yml` and never injected into the container.
+
+Injury and scratch designations are only final in the hours before kickoff,
+and the daily 5am refresh can be a whole day stale. So every
+`SPORTSDASH_PREGAME_ROSTER_REFRESH_MINUTES` (15) SportsDash re-checks the
+roster of any followed team whose game starts within
+`SPORTSDASH_PREGAME_ROSTER_LOOKAHEAD_HOURS` (4) — but only when you follow
+one of its players, and at most once per
+`SPORTSDASH_PREGAME_ROSTER_COOLDOWN_MINUTES` (45) per team. That is one
+roster request per team per window, not a per-player fan-out, so a lunchtime
+scratch reaches your phone the same afternoon. Set
+`SPORTSDASH_PREGAME_ROSTER_REFRESH_ENABLED=false` to turn it off.
 
 ## Subscribe to your calendar
 
@@ -338,6 +365,20 @@ gunzip -c backups/sportsdash-YYYYMMDD-HHMMSS.sql.gz \
   | docker compose exec -T db psql -U sportsdash sportsdash
 ```
 
+### Prove a backup restores
+
+`scripts/verify-backup.sh` is the restore drill: it restores the newest dump
+into a throwaway `postgres:16-alpine` container (no host ports published) and
+sanity-checks the row counts, exiting nonzero on any failure. It also warns
+when the newest dump is older than `SPORTSDASH_BACKUP_MAX_AGE_DAYS` (default
+16) days — a sign the backup loop is dead; pass `--strict-age` to make that
+fatal, which is the right mode for a homelab cron job.
+
+```sh
+scripts/verify-backup.sh              # warn on stale dumps
+scripts/verify-backup.sh --strict-age # fail on stale dumps (cron mode)
+```
+
 ## Local development
 
 Backend (Python 3.12, SQLite by default — zero setup):
@@ -368,6 +409,7 @@ representative selection:
 | Route | Returns |
 |---|---|
 | `GET /api/health` | Deep check: `{status, database, providers}` (always 200) |
+| `GET /api/metrics` | Prometheus text-format metrics (DB probe, provider breakers, cache hit/miss, scheduler job runs) |
 | `GET /api/meta` | App version, timezone, live polling cadence |
 | `GET /api/teams` | All followed leagues and teams |
 | `GET /api/today` | Today's games and events (local calendar day) |
@@ -376,7 +418,10 @@ representative selection:
 | `GET /api/leaders/{league_id}` | League-wide stat leaders (or Golden Boot) |
 | `GET /api/bracket/{league_id}` | Playoff series grouped into rounds |
 | `GET /api/roster/{team_id}` | Team roster with player status |
+| `GET /api/players/follows` | Followed players |
+| `PUT`/`DELETE /api/players/follows/{athlete_id}` | Follow or unfollow a player on a followed team's roster |
 | `GET /api/results/{team_id}?limit=` | Recent finals, newest first |
+| `GET /api/history/on-this-day` | Followed teams' past games on today's date (last five seasons) |
 | `GET /api/news?team_id=&limit=` | Aggregated news items |
 | `GET /api/games/{game_id}` | On-demand box score (line scores + performers) |
 | `GET /api/map` | Followed/competition team venues for the map |

@@ -336,6 +336,10 @@ async def test_setup_leagues_static_shape(client: AsyncClient) -> None:
         "ufc",
         # Phase 5: golf (leaderboard events).
         "pga",
+        # Motorsport (leaderboard events, driver-as-team).
+        "f1",
+        "nascar-cup",
+        "indycar",
         # Phase 6: volleyball (second provider — TheSportsDB).
         "cev-euro-men",
         "evl-men",

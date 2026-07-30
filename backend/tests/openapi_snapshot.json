@@ -251,6 +251,58 @@
         "title": "CatalogTeamsOut",
         "type": "object"
       },
+      "ClipOut": {
+        "description": "A highlight video clip; ``url`` is the provider's clip page.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          },
+          "thumbnail_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumbnail Url"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "headline",
+          "url"
+        ],
+        "title": "ClipOut",
+        "type": "object"
+      },
       "EventOut": {
         "properties": {
           "end_time": {
@@ -601,6 +653,14 @@
           "away": {
             "$ref": "#/components/schemas/GameSideOut"
           },
+          "broadcasts": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Broadcasts",
+            "type": "array"
+          },
           "clock": {
             "anyOf": [
               {
@@ -851,6 +911,14 @@
               }
             ],
             "title": "Away Total"
+          },
+          "clips": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ClipOut"
+            },
+            "title": "Clips",
+            "type": "array"
           },
           "game_id": {
             "title": "Game Id",
@@ -1964,6 +2032,55 @@
         "title": "NotificationPrefsOut",
         "type": "object"
       },
+      "OnThisDayOut": {
+        "description": "Followed teams' historical games on today's calendar date.\n\n``teams`` only carries teams with at least one match; empty is the\nnormal no-anniversary state (never a 404).",
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "teams": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OnThisDayTeamOut"
+            },
+            "title": "Teams",
+            "type": "array"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "title": "OnThisDayOut",
+        "type": "object"
+      },
+      "OnThisDayTeamOut": {
+        "description": "One followed team's past games on today's local month-day.",
+        "properties": {
+          "games": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GameOut"
+            },
+            "title": "Games",
+            "type": "array"
+          },
+          "team_id": {
+            "title": "Team Id",
+            "type": "string"
+          },
+          "team_name": {
+            "title": "Team Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id",
+          "team_name"
+        ],
+        "title": "OnThisDayTeamOut",
+        "type": "object"
+      },
       "PerformerOut": {
         "properties": {
           "detail": {
@@ -2008,6 +2125,109 @@
           "away"
         ],
         "title": "PeriodScoreOut",
+        "type": "object"
+      },
+      "PlayerFollowIn": {
+        "description": "Body of ``PUT /players/follows/{athlete_id}``.\n\nv1 constraint: ``team_id`` must be a followed team and the athlete\nmust be on its stored roster (the roster is the picker).",
+        "properties": {
+          "league_id": {
+            "title": "League Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "photo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Photo Url"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "team_id": {
+            "title": "Team Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "team_id",
+          "league_id"
+        ],
+        "title": "PlayerFollowIn",
+        "type": "object"
+      },
+      "PlayerFollowOut": {
+        "description": "One followed individual player (on a followed team-sport team).",
+        "properties": {
+          "athlete_id": {
+            "title": "Athlete Id",
+            "type": "string"
+          },
+          "followed_at": {
+            "format": "date-time",
+            "title": "Followed At",
+            "type": "string"
+          },
+          "league_id": {
+            "title": "League Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "photo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Photo Url"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "team_id": {
+            "title": "Team Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "athlete_id",
+          "name",
+          "team_id",
+          "league_id",
+          "followed_at"
+        ],
+        "title": "PlayerFollowOut",
         "type": "object"
       },
       "PlayerOut": {
@@ -2448,6 +2668,11 @@
           "detail": {
             "title": "Detail",
             "type": "string"
+          },
+          "followed": {
+            "default": false,
+            "title": "Followed",
+            "type": "boolean"
           },
           "highlighted": {
             "default": false,
@@ -3093,6 +3318,25 @@
         "summary": "Health"
       }
     },
+    "/api/history/on-this-day": {
+      "get": {
+        "description": "Every followed team's past games on today's local month-day.\n\nAlways 200: an empty ``teams`` list is the normal no-anniversary\nstate, and teams on providers/sports without archives are skipped\nsilently rather than erroring the whole payload.",
+        "operationId": "on_this_day_route_api_history_on_this_day_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnThisDayOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "On This Day Route"
+      }
+    },
     "/api/history/results/{team_id}": {
       "get": {
         "operationId": "season_results_route_api_history_results__team_id__get",
@@ -3285,6 +3529,25 @@
           }
         },
         "summary": "Meta"
+      }
+    },
+    "/api/metrics": {
+      "get": {
+        "description": "Prometheus scrape target mirroring ``/api/health``.",
+        "operationId": "metrics_api_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Metrics"
       }
     },
     "/api/nation/{league_id}/{name}": {
@@ -3573,6 +3836,108 @@
           }
         },
         "summary": "Odds"
+      }
+    },
+    "/api/players/follows": {
+      "get": {
+        "operationId": "list_player_follows_api_players_follows_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlayerFollowOut"
+                  },
+                  "title": "Response List Player Follows Api Players Follows Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Player Follows"
+      }
+    },
+    "/api/players/follows/{athlete_id}": {
+      "delete": {
+        "operationId": "unfollow_player_api_players_follows__athlete_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "athlete_id",
+            "required": true,
+            "schema": {
+              "title": "Athlete Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unfollow Player"
+      },
+      "put": {
+        "description": "Follow (or re-follow) one player; validates the v1 roster constraint.\n\nESPN athlete ids are only unique per sport (the same bare id can name\nboth an NHL and an MLB athlete), and follows key on the bare id alone\n\u2014 so an id already followed under a DIFFERENT league is rejected with\n409 rather than silently overwriting that follow.  The roster row's\ncurrent status seeds the follow's alert baseline, so following an\nalready-injured player fires no alert.",
+        "operationId": "follow_player_api_players_follows__athlete_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "athlete_id",
+            "required": true,
+            "schema": {
+              "title": "Athlete Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlayerFollowIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerFollowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Follow Player"
       }
     },
     "/api/results/{team_id}": {

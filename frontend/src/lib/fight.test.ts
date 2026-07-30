@@ -54,6 +54,7 @@ function makeGame(overrides: Partial<Game> = {}): Game {
     venue: null,
     series: "Ironclad 41",
     fight_result: makeResult(),
+    broadcasts: [],
     phase: "final",
     period: 2,
     period_label: "R2",

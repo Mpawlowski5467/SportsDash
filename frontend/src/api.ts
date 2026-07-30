@@ -23,6 +23,9 @@ import type {
   NotificationPrefUpdate,
   Nation,
   NewsRefreshResult,
+  OnThisDay,
+  PlayerFollow,
+  PlayerFollowIn,
   Roster,
   Scorers,
   SetupStatus,
@@ -102,6 +105,18 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** DELETE returning no body (the backend answers 204 No Content). */
+async function del(path: string): Promise<void> {
+  const res = await fetch(API_BASE + path, {
+    method: "DELETE",
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ApiError(res.status, text);
+  }
+}
+
 export const api = {
   teams: () => get<TeamsResponse>("/teams"),
 
@@ -151,6 +166,9 @@ export const api = {
   // provider on demand; espn team sports only).
   historyResults: (teamId: string, season: number) =>
     get<Game[]>(`/history/results/${encodeURIComponent(teamId)}`, { season }),
+
+  /** Followed teams' past games on today's month-day (empty = no anniversaries). */
+  onThisDay: () => get<OnThisDay>("/history/on-this-day"),
 
   leaders: (leagueId: string) =>
     get<StatLeaders>(`/leaders/${encodeURIComponent(leagueId)}`),
@@ -206,6 +224,24 @@ export const api = {
 
   updateNotificationPref: (body: NotificationPrefUpdate) =>
     put<NotificationPrefsResponse>("/notifications/prefs", body),
+
+  /** Every individually-followed player (team-sport athletes, keyed by bare ESPN id). */
+  playerFollows: () => get<PlayerFollow[]>("/players/follows"),
+
+  /**
+   * Follow (or re-follow) one player. The body carries the roster row's
+   * context (name/team/league/position/photo); the backend validates the
+   * v1 constraint that the athlete is on that followed team's roster.
+   */
+  followPlayer: (athleteId: string, body: PlayerFollowIn) =>
+    put<PlayerFollow>(
+      `/players/follows/${encodeURIComponent(athleteId)}`,
+      body,
+    ),
+
+  /** Stop following a player (404s if the follow doesn't exist). */
+  unfollowPlayer: (athleteId: string) =>
+    del(`/players/follows/${encodeURIComponent(athleteId)}`),
 
   calendarIcsUrl: API_BASE + "/calendar.ics",
 };

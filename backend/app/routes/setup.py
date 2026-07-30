@@ -119,6 +119,8 @@ async def setup_leagues() -> CatalogLeaguesOut:
                     if league.sport is domain.Sport.MMA
                     else "golfer"
                     if league.sport is domain.Sport.GOLF
+                    else "driver"
+                    if league.sport is domain.Sport.RACING
                     else "team"
                 ),
                 logo_url=getattr(league, "logo_url", None),

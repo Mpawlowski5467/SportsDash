@@ -37,6 +37,7 @@ const EVENT_LABELS: Record<string, string> = {
   period_start: "Period start",
   intermission: "Intermission",
   final: "Final",
+  player_status: "Player status", // a followed player's injury designation moved
 };
 
 function eventLabel(eventType: string): string {

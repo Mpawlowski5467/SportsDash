@@ -1,7 +1,13 @@
 
 import { useState } from "react";
 
-import type { Game, NewsItem, Player } from "../types";
+import type { Game, NewsItem, Player, Sport } from "../types";
+import {
+  useFollowPlayer,
+  usePlayerFollows,
+  useTeams,
+  useUnfollowPlayer,
+} from "../hooks";
 import { formatShortDate, relativeTime } from "../lib/time";
 import Portal from "./Portal";
 import { useModalChrome } from "./modalChrome";
@@ -50,6 +56,71 @@ const FORM_CHIP: Record<Outcome, string> = {
 };
 
 /**
+ * Sports whose "teams" are individual athletes (or, for golf, Events) — they
+ * have no roster players to follow, so the follow star never renders for
+ * them. Shared with RosterView, which shows the same star full-size.
+ */
+export const NO_PLAYER_FOLLOW_SPORTS: ReadonlySet<Sport> = new Set([
+  "tennis",
+  "mma",
+  "golf",
+  "racing",
+]);
+
+/** Roster ids are provider-prefixed ("espn:4711294"); follows key on the bare id. */
+export function bareAthleteId(playerId: string): string {
+  return playerId.startsWith("espn:") ? playerId.slice(5) : playerId;
+}
+
+/**
+ * Ghost star toggle for following one player, shared by the roster surfaces
+ * (RosterView's table, this panel's roster list) so the affordance reads the
+ * same everywhere; `compact` tightens it for dense list rows. Disabled while
+ * its own mutation is in flight — the follows-cache invalidation flips it.
+ */
+export function FollowStarButton({
+  name,
+  followed,
+  pending,
+  onToggle,
+  compact = false,
+}: {
+  name: string;
+  followed: boolean;
+  pending: boolean;
+  onToggle: () => void;
+  compact?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={followed}
+      aria-label={`${followed ? "Unfollow" : "Follow"} ${name}`}
+      title={followed ? `Unfollow ${name}` : `Follow ${name}`}
+      disabled={pending}
+      onClick={onToggle}
+      className={
+        "shrink-0 rounded-md transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 " +
+        (compact ? "p-0.5 " : "p-1 ") +
+        (followed ? "text-amber-400" : "text-zinc-600 hover:text-amber-400")
+      }
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill={followed ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+        className={compact ? "h-3.5 w-3.5" : "h-4 w-4"}
+        aria-hidden="true"
+      >
+        <path d="m12 2.6 2.95 5.9 6.55.95-4.75 4.6 1.12 6.5L12 17.5l-5.87 3.05 1.12-6.5-4.75-4.6 6.55-.95z" />
+      </svg>
+    </button>
+  );
+}
+
+/**
  * The unified team/nation dashboard. A hero header (crest, record, recent
  * form, next match) over an optional stadium photo, then fixtures, recent
  * results, roster, and news — each section shown only when it has data, so
@@ -71,6 +142,73 @@ export default function TeamProfileView({
 
   const { requestFocus } = useMapFocus();
   const accent = profile?.color ?? "#f59e0b";
+
+  // Player-follow stars for the roster list. The profile is name-keyed (a
+  // nation has no team row at all), so recover the followed-team row by name
+  // to get the ids a follow needs. No matching team / an ambiguous name /
+  // an individual sport / a non-ESPN league / a failed follows fetch all
+  // hide the stars — the roster list itself is a supplementary surface and
+  // renders unchanged.
+  const teamsQuery = useTeams();
+  const followsQuery = usePlayerFollows();
+  const followPlayer = useFollowPlayer();
+  const unfollowPlayer = useUnfollowPlayer();
+  // Two followed teams CAN share a display name (one club name across two
+  // leagues); binding the star to whichever row matched first would attach
+  // follows to — and delete follows from — the wrong team, so an ambiguous
+  // name hides the stars instead.
+  const namesakes =
+    teamsQuery.data?.teams.filter((t) => t.name === profile?.name) ?? [];
+  const team = namesakes.length === 1 ? namesakes[0] : undefined;
+  const league = teamsQuery.data?.leagues.find(
+    (l) => l.id === team?.league_id,
+  );
+  // Provider gate: the follow endpoint validates against ESPN-keyed roster
+  // rows, so a TheSportsDB roster would render stars whose PUT can only 404.
+  const canFollow =
+    team !== undefined &&
+    league !== undefined &&
+    league.provider === "espn" &&
+    !NO_PLAYER_FOLLOW_SPORTS.has(league.sport) &&
+    followsQuery.data !== undefined;
+  // Scoped to THIS team's follows: bare ESPN athlete ids are only unique
+  // per sport, so an id match alone could fill (and unfollow) a stranger.
+  const followedIds = new Set(
+    (followsQuery.data ?? [])
+      .filter((f) => f.team_id === team?.id)
+      .map((f) => f.athlete_id),
+  );
+  // Only the stars whose mutations are in flight disable (mutations carry
+  // their athlete id in `variables`). Follow and unfollow are independent
+  // mutations that can BOTH be pending (star one player, unstar another
+  // before the first settles), so each contributes its id — an either/or
+  // here left the second row enabled for a duplicate fire.
+  const pendingAthleteIds = new Set<string>();
+  if (followPlayer.isPending && followPlayer.variables !== undefined) {
+    pendingAthleteIds.add(followPlayer.variables.athleteId);
+  }
+  if (unfollowPlayer.isPending && unfollowPlayer.variables !== undefined) {
+    pendingAthleteIds.add(unfollowPlayer.variables);
+  }
+
+  const toggleFollow = (p: Player) => {
+    if (team === undefined) return;
+    const athleteId = bareAthleteId(p.id);
+    if (followedIds.has(athleteId)) {
+      unfollowPlayer.mutate(athleteId);
+    } else {
+      followPlayer.mutate({
+        athleteId,
+        body: {
+          name: p.name,
+          team_id: team.id,
+          league_id: team.league_id,
+          position: p.position,
+          photo_url: p.photo_url,
+        },
+      });
+    }
+  };
 
   return (
     <Portal>
@@ -295,6 +433,17 @@ export default function TeamProfileView({
                               <span className="shrink-0 text-xs tabular-nums text-zinc-400">
                                 {p.stat_line}
                               </span>
+                            )}
+                            {canFollow && (
+                              <FollowStarButton
+                                name={p.name}
+                                followed={followedIds.has(bareAthleteId(p.id))}
+                                pending={pendingAthleteIds.has(
+                                  bareAthleteId(p.id),
+                                )}
+                                onToggle={() => toggleFollow(p)}
+                                compact
+                              />
                             )}
                           </li>
                         ))}

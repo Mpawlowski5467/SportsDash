@@ -1,15 +1,27 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { useRoster, useTeams } from "../hooks";
+import {
+  useFollowPlayer,
+  usePlayerFollows,
+  useRoster,
+  useTeams,
+  useUnfollowPlayer,
+} from "../hooks";
 import { formatDateTime } from "../lib/time";
-import type { Player, PlayerStatus, Sport } from "../types";
+import type { League, Player, PlayerStatus, Sport } from "../types";
 import TeamLogo from "../components/TeamLogo";
 import PlayerAvatar from "../components/PlayerAvatar";
 import Select, { type SelectOption } from "../components/Select";
 import { useManageTeams } from "../components/ManageTeamsContext";
+import {
+  bareAthleteId,
+  FollowStarButton,
+  NO_PLAYER_FOLLOW_SPORTS,
+} from "../components/TeamProfileView";
 
-// Tennis players and UFC fighters are modeled as single-member "teams" with
-// no roster — show a friendly note instead of an empty table.
-const INDIVIDUAL_SPORTS: ReadonlySet<Sport> = new Set(["tennis", "mma"]);
+// Tennis players, UFC fighters, and racing drivers are modeled as
+// single-member "teams" with no roster — show a friendly note instead of an
+// empty table.
+const INDIVIDUAL_SPORTS: ReadonlySet<Sport> = new Set(["tennis", "mma", "racing"]);
 
 const HEADER_CELL =
   "sticky top-0 z-10 bg-zinc-950 px-2 py-2 text-xs font-medium uppercase tracking-wider text-zinc-500";
@@ -39,7 +51,20 @@ function isUnavailable(player: Player): boolean {
   return player.status === "injured" || player.status === "out";
 }
 
-function RosterRow({ player }: { player: Player }) {
+/** Per-row follow-star state; null hides the star column entirely. */
+interface FollowCell {
+  followed: boolean;
+  pending: boolean;
+  onToggle: () => void;
+}
+
+function RosterRow({
+  player,
+  follow,
+}: {
+  player: Player;
+  follow: FollowCell | null;
+}) {
   const unavailable = isUnavailable(player);
   return (
     <tr className="sd-stagger-item">
@@ -79,6 +104,16 @@ function RosterRow({ player }: { player: Player }) {
           </span>
         )}
       </td>
+      {follow !== null && (
+        <td className="px-2 py-1.5 text-right">
+          <FollowStarButton
+            name={player.name}
+            followed={follow.followed}
+            pending={follow.pending}
+            onToggle={follow.onToggle}
+          />
+        </td>
+      )}
     </tr>
   );
 }
@@ -96,6 +131,54 @@ export default function RosterView() {
     : teams[0]?.id;
   const activeTeam = teams.find((team) => team.id === teamId);
   const rosterQuery = useRoster(teamId);
+  const followsQuery = usePlayerFollows();
+  const followPlayer = useFollowPlayer();
+  const unfollowPlayer = useUnfollowPlayer();
+
+  // Scoped to the ACTIVE team: bare ESPN athlete ids are only unique per
+  // sport, so matching on the id alone could fill a stranger's star on
+  // another followed team's roster — and clicking that star would delete
+  // the real follow. A follow stores its parent team; require it to match.
+  const followedIds = useMemo(
+    () =>
+      new Set(
+        (followsQuery.data ?? [])
+          .filter((f) => f.team_id === activeTeam?.id)
+          .map((f) => f.athlete_id),
+      ),
+    [followsQuery.data, activeTeam?.id],
+  );
+  // Only the stars whose mutations are in flight disable (mutations carry
+  // their athlete id in `variables`). Follow and unfollow are independent
+  // mutations that can BOTH be pending (star one player, unstar another
+  // before the first settles), so each contributes its id — an either/or
+  // here left the second row enabled for a duplicate fire.
+  const pendingAthleteIds = new Set<string>();
+  if (followPlayer.isPending && followPlayer.variables !== undefined) {
+    pendingAthleteIds.add(followPlayer.variables.athleteId);
+  }
+  if (unfollowPlayer.isPending && unfollowPlayer.variables !== undefined) {
+    pendingAthleteIds.add(unfollowPlayer.variables);
+  }
+
+  const toggleFollow = (player: Player) => {
+    if (activeTeam === undefined) return;
+    const athleteId = bareAthleteId(player.id);
+    if (followedIds.has(athleteId)) {
+      unfollowPlayer.mutate(athleteId);
+    } else {
+      followPlayer.mutate({
+        athleteId,
+        body: {
+          name: player.name,
+          team_id: activeTeam.id,
+          league_id: activeTeam.league_id,
+          position: player.position,
+          photo_url: player.photo_url,
+        },
+      });
+    }
+  };
 
   const teamOptions: SelectOption[] = useMemo(
     () =>
@@ -108,17 +191,18 @@ export default function RosterView() {
     [teams],
   );
 
-  // Map each team to its league's sport so we can tell individual-sport
-  // "teams" (a tennis player / UFC fighter) apart from real squads.
-  const sportByTeamId = useMemo(() => {
-    const sportByLeague: Record<string, Sport> = {};
+  // Map each team to its league so we can tell individual-sport "teams"
+  // (a tennis player / UFC fighter) apart from real squads, and gate the
+  // follow stars on the league's provider.
+  const leagueByTeamId = useMemo(() => {
+    const leaguesById: Record<string, League> = {};
     for (const league of teamsQuery.data?.leagues ?? []) {
-      sportByLeague[league.id] = league.sport;
+      leaguesById[league.id] = league;
     }
-    const map: Record<string, Sport> = {};
+    const map: Record<string, League> = {};
     for (const team of teams) {
-      const sport = sportByLeague[team.league_id];
-      if (sport) map[team.id] = sport;
+      const league = leaguesById[team.league_id];
+      if (league) map[team.id] = league;
     }
     return map;
   }, [teamsQuery.data, teams]);
@@ -149,6 +233,20 @@ export default function RosterView() {
   }
 
   const roster = rosterQuery.data;
+  const league = teamId !== undefined ? leagueByTeamId[teamId] : undefined;
+  const sport = league?.sport;
+  // Follow stars are a supplementary affordance: ESPN team-sport squads
+  // only. Individual sports have no roster players to follow, and the
+  // follow endpoint validates against ESPN-keyed roster rows, so a
+  // TheSportsDB roster (volleyball) would render stars whose PUT can only
+  // 404 — silently. The whole column also hides if the follows list
+  // hasn't loaded / failed.
+  const showFollowStars =
+    activeTeam !== undefined &&
+    league !== undefined &&
+    league.provider === "espn" &&
+    !NO_PLAYER_FOLLOW_SPORTS.has(league.sport) &&
+    followsQuery.data !== undefined;
 
   let body: ReactNode;
   if (rosterQuery.isError) {
@@ -160,7 +258,6 @@ export default function RosterView() {
   } else if (!roster) {
     body = <p className="text-sm text-zinc-500">Loading roster…</p>;
   } else if (roster.players.length === 0) {
-    const sport = teamId !== undefined ? sportByTeamId[teamId] : undefined;
     body =
       sport !== undefined && INDIVIDUAL_SPORTS.has(sport) ? (
         <p className="text-sm text-zinc-500">
@@ -209,11 +306,28 @@ export default function RosterView() {
               <th className={`${HEADER_CELL} text-left`}>Player</th>
               <th className={`${HEADER_CELL} text-left`}>Pos</th>
               <th className={`${HEADER_CELL} text-left`}>Status</th>
+              {showFollowStars && (
+                <th className={`${HEADER_CELL} w-10 text-right`}>
+                  <span className="sr-only">Follow</span>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800">
             {roster.players.map((player) => (
-              <RosterRow key={player.id} player={player} />
+              <RosterRow
+                key={player.id}
+                player={player}
+                follow={
+                  showFollowStars
+                    ? {
+                        followed: followedIds.has(bareAthleteId(player.id)),
+                        pending: pendingAthleteIds.has(bareAthleteId(player.id)),
+                        onToggle: () => toggleFollow(player),
+                      }
+                    : null
+                }
+              />
             ))}
           </tbody>
         </table>

@@ -14,13 +14,80 @@ pin that every gate passed happily. A green suite is not a sighting.
 
 ## ✅ Recently shipped
 
+- **Race leaderboards carry constructors and race times** (2026-07-29) —
+  taking the deferral in the motorsport item below: the per-driver times
+  that live on ESPN's core API only are now fetched, so a finished race
+  board reads a constructor, car number and grid slot next to a race time,
+  a gap ("+15.080", "+1 lap"), laps completed, DNF, or DSQ. Two tiers — one
+  core call per active race every poll, and a bounded, memoized per-car
+  fan-out once at FINAL, so re-polling a finished race costs nothing. No
+  schema change: it rides the leaderboard row's existing display strings.
+  Every core fetch degrades to the plain board on any failure. A second pass
+  the same day added two things at **zero** extra calls. **A live board now
+  renders a running gap** ("+2.418", "+1 lap") when ESPN's scoreboard payload
+  — the one the board is already parsed from — carries one for that car;
+  that slot exists on every racing competitor but has only ever been observed
+  **empty**, so the column may simply stay empty, and the parse is fail-safe
+  so a wrong guess about the populated shape costs that one column and
+  nothing else (see *Loose ends*). And **a real bug is fixed**: the
+  retirement check was a substring test, so a disqualification rendered as a
+  finish — six observed cars, three carrying the full race distance and one a
+  53-second finishing gap for a car that completed zero laps. The three
+  status types (a third one, DSQ, does exist) are now mapped exactly, DSQ
+  renders "DSQ · Disqualified", and a car whose status call fails is either
+  inferred DNF from measured F1-only thresholds (zero false positives over
+  529 classified cars) or labelled "Status unknown" — never implied to have
+  finished, and never inferred outside F1, where a car 8 laps down at a short
+  track is still circulating. The payload shapes come from a live probe of
+  ESPN's core API, but the enriched board has not been looked at in a running
+  browser yet, and **no racing session anywhere has been observed in
+  progress**, so the live-gap rendering is structurally verified only.
+- **Same-day pre-game roster re-sync** (2026-07-29) — closing the
+  same-day-status deferral in the player-follows item below: a followed
+  team whose game starts within four hours has its roster re-checked every
+  15 minutes (status-only, at most once every 45 minutes per team), so a
+  lunchtime scratch alerts the same afternoon instead of waiting for the
+  next 5am sweep, and the ruled-out heads-up before kickoff reads
+  same-day-fresh designations. One roster request per team per window, not
+  a per-player fan-out; it only runs for teams you actually follow a
+  player on. Per-player notification scopes and trade-following remain
+  deferred. Pinned by tests — including mutation checks on the cooldown,
+  the stat-line carry-forward and the cheap-fetch flag — but watching it
+  fire on a real same-day designation change is still outstanding.
+- **Motorsport** (2026-07-28) — F1, NASCAR Cup, and IndyCar land as the
+  tenth sport: race weekends ride the golf leaderboard-`Event` pipeline
+  (Calendar span bars, live "Race · Lap 44" labels, driver follows as
+  athlete-as-team). Per-driver times/laps live on ESPN's core API only and
+  were not fetched at the time — leaderboard rows carried running order
+  and the winner. **They are fetched as of 2026-07-29** (see above), and a
+  live lap label can now read "Race · Lap 44 of 70".
+- **Player follows** (2026-07-28) — star individual players on followed
+  rosters: highlighted rows on the Leaders boards, injury-status change
+  alerts, and a ruled-out heads-up shortly before a game. Per-player
+  notification scopes are still v2; same-day status re-fetch **shipped
+  2026-07-29** (see above).
+- **Where to watch + highlight clips** (2026-07-28) — game cards show a
+  broadcast-network chip, and the box-score modal a Highlights section
+  of ESPN clips (team sports only; expired clips are dropped).
+- **Prometheus `/api/metrics`** (2026-07-28) — shipped after the earlier
+  decline; the how and the verify live in the closed loose end below.
+- **On this day** (2026-07-28) — a Today-view card of each followed
+  team's past games on today's date, over the last five seasons of the
+  archives (`GET /api/history/on-this-day`).
+- **Why-watch signal** (2026-07-28) — a frontend-only card flag ("Tight
+  late" / "Upset watch" / "Toss-up") computed from odds data the cards
+  already fetch.
+- **Backup restore drill** (2026-07-28) — `scripts/verify-backup.sh`
+  restores the newest dump into a throwaway container and sanity-checks
+  the row counts; exercised the same day against a real dump, including
+  its failure paths.
 - **Golf events on the Calendar** (2026-07-27) — multi-day tournaments now
   draw on the Calendar grid as all-day span bars that open their leaderboard
   on click, and ride along in the `.ics` subscription as all-day entries, so
   a subscribed calendar shows a major as a bar across the weekend rather than
-  nothing at all. (Golf only: it is the one sport modeled as a leaderboard
-  `Event` — a tennis match is a two-sided game, so it was already on the
-  grid as an ordinary fixture.) Driven against live PGA Tour data the same
+  nothing at all. (Golf only at the time — racing joined the leaderboard
+  `Event` model on 2026-07-28, see above; a tennis match is a two-sided
+  game, so it was already on the grid as an ordinary fixture.) Driven against live PGA Tour data the same
   day; the remaining unverified leg is a real calendar client, in *Loose
   ends*.
 - **Tournament spans use the server's timezone** (2026-07-27) — the grid
@@ -133,7 +200,10 @@ The desktop app exists; making it *easy to get and trust* is the next step.
   `webcal://` links hand off to the phone's calendar app.
 - **More sports & providers** — the `SportsProvider` adapter design makes new
   sources additive; candidates include more leagues and a second provider for
-  redundancy. (See *Adding a provider* in the README.)
+  redundancy. (See *Adding a provider* in the README.) Motorsport shipped
+  2026-07-28 (F1 / NASCAR Cup / IndyCar via ESPN, riding the leaderboard
+  `Event` pipeline); the item stays open for further sports and for
+  provider redundancy.
   *Verify:* a new provider is done when the existing suite passes against it
   unchanged — the scheduler, services and routes resolve providers by the
   league's `provider` field and must not need a line. Add recorded-JSON
@@ -178,6 +248,77 @@ Most are small; the ones that are not say so.
   `Intermission` ntfy alert should arrive per break, with the score. If the
   spellings differ, they are the only thing that changes; the branch shape
   is right.
+- **Live mid-race gaps on a racing board, seen actually moving** — the free
+  half of this shipped 2026-07-29 and is *unconfirmed against a live race*:
+  a live board now renders a running gap ("+2.418", "+1 lap") out of the
+  site scoreboard's own per-competitor `statistics` slot, at zero extra
+  calls, because that slot is already inside the payload the board is parsed
+  from. What is established is only that the slot **exists** on every racing
+  competitor in every league and session, and that it was an empty `[]` on
+  all 1606 scanned — every one of them a finished or scheduled session,
+  because no racing session was live anywhere in ESPN's five racing leagues
+  on the probe day (F1 summer break, Cup off-weekend, nothing at all for
+  9 days). The populated shape is therefore a *model*: the parser is
+  deliberately liberal about it and fail-safe — a surprise costs that one
+  column, never the row or the board — and both the populated and the absent
+  case are pinned by tests. The expensive half, a bounded per-car live pass,
+  is **deliberately deferred**: it is the only other route that exists (22
+  calls per poll on an F1 race, 39 on a Cup race; no bulk expansion exists,
+  proven byte-identical across every `enable=` / `expand=` / `view=`
+  variant), and it is not even established that anything in a per-car
+  payload *moves* during a race — `behindTime` / `totalTime` are finishing
+  values, the `gapToLeader` category is present-but-empty on all ~210
+  stock-car/IndyCar cars sampled, and `…/competitions/{c}/situation` returns
+  a body containing only `$ref`.
+  *Verify:* two dated probes, each the same 7-URL set fired three times
+  ~15 min apart once the scoreboard shows `state == "in"` (~21 calls each) —
+  **2026-08-08T21:00Z**, NASCAR Xfinity @ Iowa (`nascar-secondary`, event =
+  competition `202608080747`), the soonest observable live session anywhere;
+  and **2026-08-23T13:00Z**, the F1 Dutch GP race (event `600057441`,
+  competition `401839097`), the only series with per-car times at all — with
+  a cheap warm-up on FP1 at 2026-08-21T10:30Z. The set: the site scoreboard
+  (**is `competitions[0].competitors[].statistics` non-empty?** — the
+  decisive question, and free in production — and what is `status.period`?),
+  the core event root (do competitor items gain any inline field beyond
+  `{id,uid,type,order,startOrder,winner,athlete,status,statistics,vehicle}`?),
+  then the competition's `status` (does a `flag` appear outside F1?),
+  `situation` (still `$ref`-only?) and `statistics` (does the aggregate grow
+  past its 6 stats?), plus per-car `statistics` for the leader and one
+  mid-pack car (do `lapsCompleted` / `behindLaps` / `behindTime` /
+  `gapToLeader` populate live?). Decision rule: if the site-scoreboard slot
+  populates, live gaps are **already shipped** at zero marginal cost and only
+  the modeled test fixture — plus `_racing_site_stat_map`'s key set, if the
+  stat names differ from the core vocabulary — needs correcting to what was
+  observed; else if per-car `behindTime` moves live, build the bounded pass
+  (Race session only, `state == "in"` only, one live event, top 8 by `order`
+  plus any followed driver, hard cap 12 cars, further gated on
+  `status.period` having changed since the last poll → ≤12 calls per 180 s
+  poll); else do not build it, and leave the gap column empty until FINAL.
+  Independently: if the F1 probe shows the competition `flag` turning
+  YELLOW/RED live (it reads `CHECKER` post-race, and only F1 publishes it at
+  all), a caution indicator costs 1 call per poll per live F1 event — do not
+  add it before it is observed. Two scheduling traps: `leagues[0].calendar`
+  times are **wrong** (it misreports both the Dutch GP and Cup Indy — use
+  `event.date` / `competitions[].date`), and outside F1 there are no practice
+  or qualifying sessions at all (every NASCAR and IndyCar event carries
+  exactly one competition with `type: null`), so the first observable live
+  session in those series is the race itself. Finally, once a board does show
+  numbers: plausible numbers prove nothing on their own — check that a
+  leader's gap actually changes between two 180 s ticks rather than freezing
+  at first paint, compare one against the broadcast timing screen since a
+  stale gap and a live one look identical, and watch `/api/metrics` for a
+  per-car fan-out that is not actually capped.
+- **"finished 18 (DNF)" is the wrong verb** — a knock-on of the DSQ/DNF
+  rendering above, left alone because it lives in a file that pass did not
+  touch: `scheduler/live.py` builds the final-event alert as
+  `f"{best.name} finished {best.position_label} ({best.score})"`, so a
+  followed driver who retired now reads *"finished 18 (DNF)"* and one who was
+  disqualified *"finished 2 (DSQ)"*. Both are more accurate than the old
+  *"(56 laps)"* / *"(+15.080)"*, so this is a wording nit, not a bug.
+  *Verify:* it is a string, so a unit test on `_final_event` is enough —
+  a followed driver with `score == "DNF"` should not be described as having
+  finished. Reading one real alert for a retired followed driver would also
+  do it, and needs a race weekend with a driver you follow retiring from it.
 - **Golf tournaments on the Calendar, in a real calendar app** — the spans
   were driven against live PGA Tour data on 2026-07-27 (six tournaments
   synced from ESPN, one finished with a 144-row leaderboard) and the grid,
@@ -293,21 +434,16 @@ Most are small; the ones that are not say so.
   tournaments are on the grid, not only past ones — comparing against the
   tour's published field, since a grid showing something looks correct
   either way.
-- **A golf league is fetched down the games path it can never satisfy** —
-  following the PGA Tour with *Follow all* makes every schedule refresh log
-  a run of `Skipping malformed ESPN event for league pga — missing home/away
-  competitors`. Nothing is broken: the events path fetches the tournaments
-  correctly and the warnings are the games parser correctly rejecting a
-  leaderboard payload that has no two sides. But a `LEADERBOARD_SPORTS`
-  league has no games by definition, so the fetch is wasted upstream traffic
-  and the log noise hides real parse failures. The shape of the fix is the
-  one `/api/scorers` just took for soccer: gate the games passes on the
-  league's sport rather than letting the parser reject it downstream.
-  *Verify:* follow PGA Tour with *Follow all*, run a schedule refresh, and
-  confirm the log carries the `refresh_schedules: events pga — N event(s)
-  fetched` line and **no** `Skipping malformed ESPN event` lines for `pga`;
-  a unit test asserting the games fetch is never issued for a leaderboard
-  league pins it without needing the network.
+- ~~**A golf league is fetched down the games path it can never satisfy**~~ —
+  ✅ shipped (2026-07-28, with motorsport): `get_schedule` and
+  `get_competition_schedule` now return `[]` early for `LEADERBOARD_SPORTS`
+  leagues without any fetch, so a *Follow all* PGA Tour (or F1) schedule
+  refresh no longer wastes upstream calls or logs a run of `Skipping
+  malformed ESPN event` noise. Pinned by
+  `tests/test_espn_racing.py::test_provider_games_paths_skip_leaderboard_sports`;
+  the live-log sighting from the old *Verify* line (an events-fetched line
+  and zero skip lines for `pga` on a real refresh) has not been re-run and
+  is worth a glance on the next schedule refresh.
 - **No component-test harness** — every defect found on the map and the
   panels this cycle was a React lifecycle bug (markers freezing at the
   values they were born with, a filter value outliving its options, Escape
@@ -326,18 +462,20 @@ Most are small; the ones that are not say so.
   Same for the calendar filter: unfollow the selected team and assert the
   Select and the grid still agree. A harness that only proves components
   render is not worth the maintenance.
-- **Prometheus-style `/metrics`** — the one Phase-7 item never built.
-  `/api/health` already reports the database probe and every provider's
-  circuit-breaker state; exposing the same numbers as scrapeable metrics
-  would be a small step. **Explicitly declined for now** — a single-user
-  homelab app with one process has nothing to graph that
-  `GET /api/health` does not already answer, and it would add a dependency
-  and a second surface to keep truthful. Revisit if a Grafana dashboard ever
-  wants history rather than a current state.
-  *Verify (if built):* scrape it with a real Prometheus and confirm every
-  series the health endpoint reports has a counterpart and agrees with it —
-  two endpoints telling different stories about the same breaker is worse
-  than one endpoint.
+- **Prometheus-style `/metrics`** — **shipped 2026-07-28** as
+  `GET /api/metrics` (`backend/app/routes/metrics.py`), reversing the
+  earlier decline: hand-rolled text-format 0.0.4 exposition, so the
+  "would add a dependency" half of the objection no longer applies, and
+  every series is read from the SAME sources `/api/health` reads, which
+  answers the other half. Adds what `/api/health` cannot: history —
+  cache hit/miss counters, per-job scheduler run counts and last-run
+  timestamps, background-task gauge. Scrape `127.0.0.1:8001/api/metrics`
+  (or `:3000/api/metrics` through the proxy).
+  *Verify criterion met:* `backend/tests/test_metrics.py` asserts the
+  agreement directly — the same request pair must show the DB probe and
+  breaker state identically in both endpoints (probe down ⇒
+  `sportsdash_database_up 0` and `database: false`; breaker open ⇒
+  state gauge `2` and `circuit: "open"` + `status: "degraded"`).
 - **The 11 `react-hooks/exhaustive-deps` warnings** — pre-existing and
   **deliberately advisory**: `eslint.config.js` sets the rule to `warn` on
   purpose, because several of the effects it flags omit a dependency

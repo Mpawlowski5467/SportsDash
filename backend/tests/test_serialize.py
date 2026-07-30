@@ -39,6 +39,7 @@ def make_row(
     fight_detail: str | None = None,
     fight_round: int | None = None,
     fight_clock: str | None = None,
+    broadcasts: list | None = None,
 ) -> GameORM:
     """A finished bout row, with the fight_* columns under test."""
     return GameORM(
@@ -58,10 +59,14 @@ def make_row(
         fight_detail=fight_detail,
         fight_round=fight_round,
         fight_clock=fight_clock,
+        broadcasts=broadcasts,
     )
 
 
-def make_domain_game(fight_result: domain.FightResult | None = None) -> domain.Game:
+def make_domain_game(
+    fight_result: domain.FightResult | None = None,
+    broadcasts: tuple[str, ...] = (),
+) -> domain.Game:
     """The same bout as a provider-domain object (the history path)."""
     return domain.Game(
         id="espn:bout-1",
@@ -70,6 +75,7 @@ def make_domain_game(fight_result: domain.FightResult | None = None) -> domain.G
         away_name="Kestrel Vane",
         start_time=START,
         fight_result=fight_result,
+        broadcasts=broadcasts,
         state=domain.GameState(
             game_id="espn:bout-1",
             phase=domain.GamePhase.FINAL,
@@ -127,3 +133,22 @@ def test_domain_game_to_out_matches_the_stored_shape() -> None:
     )
     assert from_domain.fight_result == from_row.fight_result
     assert serialize.domain_game_to_out(make_domain_game(), LEAGUE).fight_result is None
+
+
+def test_game_to_out_emits_broadcasts_and_reads_a_pre_migration_null_as_empty() -> None:
+    out = serialize.game_to_out(
+        make_row(broadcasts=["Ironclad Sports Network", "Cagecast"]), LEAGUE
+    )
+    assert out.broadcasts == ["Ironclad Sports Network", "Cagecast"]
+    # Rows written before the additive migration hold NULL, not [].
+    assert serialize.game_to_out(make_row(broadcasts=None), LEAGUE).broadcasts == []
+
+
+def test_domain_game_to_out_broadcasts_match_the_stored_shape() -> None:
+    """Both serializers emit the same list for the same networks."""
+    from_domain = serialize.domain_game_to_out(
+        make_domain_game(broadcasts=("Ironclad Sports Network",)), LEAGUE
+    )
+    from_row = serialize.game_to_out(make_row(broadcasts=["Ironclad Sports Network"]), LEAGUE)
+    assert from_domain.broadcasts == from_row.broadcasts == ["Ironclad Sports Network"]
+    assert serialize.domain_game_to_out(make_domain_game(), LEAGUE).broadcasts == []

@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 
 _client: aioredis.Redis | None = None
 
+# Cumulative read outcomes, read by ``/api/metrics``.  A "hit" is a call
+# that returned a decoded value; everything else — no client configured,
+# GET failure, key absent, invalid JSON — counts as a miss, because
+# best-effort semantics serve every one of those paths as a miss anyway.
+_hits = 0
+_misses = 0
+
+
+def cache_counters() -> tuple[int, int]:
+    """``(hits, misses)`` so far, for the metrics endpoint."""
+    return _hits, _misses
+
 
 def _get_client() -> aioredis.Redis | None:
     """Lazily build the client; None when no redis_url is configured."""
@@ -44,21 +56,28 @@ def _get_client() -> aioredis.Redis | None:
 
 
 async def cache_get_json(key: str) -> Any | None:
+    global _hits, _misses
     client = _get_client()
     if client is None:
+        _misses += 1
         return None
     try:
         raw = await client.get(key)
     except Exception:
         logger.debug("cache: GET %s failed", key, exc_info=True)
+        _misses += 1
         return None
     if raw is None:
+        _misses += 1
         return None
     try:
-        return json.loads(raw)
+        value = json.loads(raw)
     except (TypeError, ValueError):
         logger.debug("cache: invalid JSON under %s", key, exc_info=True)
+        _misses += 1
         return None
+    _hits += 1
+    return value
 
 
 async def cache_set_json(key: str, value: Any, ttl_seconds: int) -> None:

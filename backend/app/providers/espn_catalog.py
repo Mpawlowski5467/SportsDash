@@ -26,6 +26,10 @@ from app.models.domain import INDIVIDUAL_SPORTS, LEADERBOARD_SPORTS, Sport
 logger = logging.getLogger(__name__)
 
 _SITE_BASE = "https://site.api.espn.com/apis/site/v2/sports"
+# Standings host (``/apis/v2/``, NOT ``/apis/site/v2/``) — same base as the
+# provider's ``_STANDINGS_BASE`` (app/providers/espn/common.py).  Racing's
+# driver-standings feed lives here; the site host's ``/standings`` is a stub.
+_STANDINGS_BASE = "https://site.api.espn.com/apis/v2/sports"
 _CACHE_TTL_SECONDS = 3600.0
 
 # Cap on athletes returned for an individual sport so the picker stays usable
@@ -499,6 +503,36 @@ CATALOG: tuple[CatalogLeague, ...] = (
         provider="espn",
         provider_key="golf/pga",
         logo_url="https://a.espncdn.com/i/teamlogos/leagues/500/pgatour.png",
+    ),
+    # Racing is a leaderboard sport like golf: a race weekend is ONE Event
+    # with a field of drivers, and a followed driver is a single-member
+    # "team" (provider_key = the ESPN athlete id).  The route derives
+    # entity_noun "driver" from this sport.  provider_keys and logo_urls
+    # live-verified (July 2026) against each ``racing/{key}/scoreboard``
+    # (the bare ``racing/nascar`` / ``racing/indycar`` keys 400).
+    CatalogLeague(
+        id="f1",
+        name="Formula 1",
+        sport=Sport.RACING,
+        provider="espn",
+        provider_key="racing/f1",
+        logo_url="https://a.espncdn.com/combiner/i?img=/i/teamlogos/leagues/500/f1.png",
+    ),
+    CatalogLeague(
+        id="nascar-cup",
+        name="NASCAR Cup Series",
+        sport=Sport.RACING,
+        provider="espn",
+        provider_key="racing/nascar-premier",
+        logo_url="https://a.espncdn.com/combiner/i?img=/redesign/assets/img/icons/ESPN-icon-NASCAR.png",
+    ),
+    CatalogLeague(
+        id="indycar",
+        name="IndyCar Series",
+        sport=Sport.RACING,
+        provider="espn",
+        provider_key="racing/irl",
+        logo_url="https://a.espncdn.com/combiner/i?img=/i/espn/teamlogos/500/indycar_series.png",
     ),
     # --- Volleyball: served by TheSportsDB (the second provider) ---
     # provider_key is the TheSportsDB league id, verified live via
@@ -999,6 +1033,204 @@ def _parse_golf_field_payload(data: Any, league: CatalogLeague) -> list[CatalogT
     return field
 
 
+# ---------------------------------------------------------------------------
+# Racing: pickable drivers are the driver standings UNIONED with the
+# current scoreboard's field
+# ---------------------------------------------------------------------------
+#
+# The site scoreboard only carries the current race weekend's field — and a
+# scheduled race often ships NO competitors at all (verified live) — so the
+# season driver standings lead: every driver with a championship entry, in
+# rank order.  But the standings alone are not enough either: a substitute
+# or part-time driver racing THIS weekend holds no championship entry
+# (live example: a race winner absent from a 40-entry standings table), so
+# the scoreboard's competitors are appended after the ranked drivers,
+# deduped by athlete id.  The standings feed lives on the ``/apis/v2/``
+# standings host (the site host's ``/standings`` is a stub); F1 exposes a
+# "Driver Standings" child next to the constructor table, NASCAR/IndyCar a
+# single "Standings" child.  Entries carrying an ``athlete`` object are the
+# drivers; the constructor table's entries carry ``team`` and are passed
+# over.  Headshots appear nowhere in the payload, but the shared racing
+# headshot path (``/i/headshots/rpm/players/full/{id}.png``) is constructed
+# directly from the athlete id (verified live across series; a missing
+# backmarker image just 404s to the picker's initials fallback).
+
+
+def _racing_headshot_url(athlete_id: str) -> str:
+    return f"https://a.espncdn.com/i/headshots/rpm/players/full/{athlete_id}.png"
+
+
+def _driver_abbreviation(athlete: dict[str, Any], name: str) -> str:
+    """``athlete.abbreviation`` ("VEG"), else initials from the name ("RV")."""
+    abbreviation = athlete.get("abbreviation")
+    if isinstance(abbreviation, str) and abbreviation.strip():
+        return abbreviation.strip()[:8]
+    initials = "".join(word[0] for word in name.split() if word)
+    return (initials.upper() or name[:3].upper())[:8]
+
+
+def _parse_driver_entry(athlete: dict[str, Any]) -> CatalogTeam | None:
+    """Parse one standings-entry ``athlete`` object; None (+warning) if malformed."""
+    try:
+        athlete_id = str(athlete.get("id") or "").strip()
+        name = athlete.get("displayName")
+        if not athlete_id or not (isinstance(name, str) and name):
+            raise ValueError("missing athlete id or displayName")
+        return CatalogTeam(
+            provider_key=athlete_id,
+            name=name,
+            abbreviation=_driver_abbreviation(athlete, name),
+            logo_url=_racing_headshot_url(athlete_id),
+            color=None,
+        )
+    except Exception:
+        logger.warning("Skipping malformed ESPN driver standings entry", exc_info=True)
+        return None
+
+
+def _parse_driver_standings_payload(data: Any) -> list[CatalogTeam]:
+    """Extract ranked drivers from an ``/apis/v2`` standings payload, deduped.
+
+    Walks every ``children[].standings.entries[]`` block and keeps entries
+    carrying an ``athlete`` object — F1's constructor table (``team``
+    entries) falls through untouched, so no child-name matching is needed.
+    Capped to :data:`_INDIVIDUAL_ROSTER_CAP` like the other athlete pickers.
+    """
+    children: list[Any] = []
+    if isinstance(data, dict):
+        raw = data.get("children")
+        if isinstance(raw, list):
+            children = raw
+
+    drivers: list[CatalogTeam] = []
+    seen: set[str] = set()
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        standings = child.get("standings")
+        entries = standings.get("entries") if isinstance(standings, dict) else None
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            athlete = entry.get("athlete")
+            if not isinstance(athlete, dict):
+                # A constructor-table row (``team``), not a malformed driver.
+                continue
+            driver = _parse_driver_entry(athlete)
+            if driver is None or driver.provider_key in seen:
+                continue
+            seen.add(driver.provider_key)
+            drivers.append(driver)
+            if len(drivers) >= _INDIVIDUAL_ROSTER_CAP:
+                return drivers
+    return drivers
+
+
+def _parse_racing_competitor(competitor: Any) -> CatalogTeam | None:
+    """Parse one racing scoreboard ``competitors[]`` entry; None if malformed."""
+    try:
+        if not isinstance(competitor, dict):
+            raise ValueError("competitor is not an object")
+        # The athlete id lives on the competitor itself (the nested athlete
+        # object has NO id field on the racing scoreboard, verified live).
+        athlete_id = str(competitor.get("id") or "").strip()
+        raw_athlete = competitor.get("athlete")
+        athlete: dict[str, Any] = raw_athlete if isinstance(raw_athlete, dict) else {}
+        name = athlete.get("displayName") or athlete.get("fullName")
+        if not athlete_id or not (isinstance(name, str) and name):
+            raise ValueError("missing athlete id or name")
+        return CatalogTeam(
+            provider_key=athlete_id,
+            name=name,
+            abbreviation=_driver_abbreviation(athlete, name),
+            logo_url=_racing_headshot_url(athlete_id),
+            color=None,
+        )
+    except Exception:
+        logger.warning("Skipping malformed ESPN racing competitor entry", exc_info=True)
+        return None
+
+
+def _parse_racing_field_payload(data: Any) -> list[CatalogTeam]:
+    """Drivers off a racing scoreboard's competitions (the standings' union
+    partner, and the sole source when the standings yield nothing).
+
+    Racing events carry sessions as multiple ``competitions[]`` (F1's
+    FP/Qual/Race weekend) or a single typeless competition (NASCAR/
+    IndyCar), so every competition of every event is walked and the
+    competitors deduped by athlete id.  Capped to
+    :data:`_INDIVIDUAL_ROSTER_CAP`.
+    """
+    events = data.get("events") if isinstance(data, dict) else None
+    field: list[CatalogTeam] = []
+    seen: set[str] = set()
+    for event in events if isinstance(events, list) else []:
+        if not isinstance(event, dict):
+            continue
+        competitions = event.get("competitions")
+        for competition in competitions if isinstance(competitions, list) else []:
+            if not isinstance(competition, dict):
+                continue
+            competitors = competition.get("competitors")
+            for entry in competitors if isinstance(competitors, list) else []:
+                driver = _parse_racing_competitor(entry)
+                if driver is None or driver.provider_key in seen:
+                    continue
+                seen.add(driver.provider_key)
+                field.append(driver)
+                if len(field) >= _INDIVIDUAL_ROSTER_CAP:
+                    return field
+    return field
+
+
+async def _get_racing_drivers(league: CatalogLeague) -> list[CatalogTeam]:
+    """A racing league's pickable drivers: standings unioned with the scoreboard.
+
+    The driver standings are the season-long list, in rank order — but a
+    substitute or part-time driver racing this weekend holds no
+    championship entry, so the current scoreboard's competitors are
+    appended after the ranked drivers (deduped by athlete id, shared
+    :data:`_INDIVIDUAL_ROSTER_CAP`).  Each source covers for the other:
+    an empty or failed standings feed leaves the scoreboard field standing
+    alone, and a scoreboard failure with standings in hand degrades to
+    standings-only.  Both down raises :class:`EspnCatalogError`.
+    """
+    try:
+        data = await _fetch_json(
+            f"{_STANDINGS_BASE}/{league.provider_key}/standings", {}, league.id
+        )
+    except EspnCatalogError:
+        logger.warning(
+            "ESPN driver standings fetch failed for league %s — trying the scoreboard",
+            league.id,
+            exc_info=True,
+        )
+        data = None
+    drivers = _parse_driver_standings_payload(data) if data is not None else []
+    try:
+        data = await _fetch_json(f"{_SITE_BASE}/{league.provider_key}/scoreboard", {}, league.id)
+    except EspnCatalogError:
+        if not drivers:
+            raise
+        logger.warning(
+            "ESPN racing scoreboard fetch failed for league %s — standings-only picker",
+            league.id,
+            exc_info=True,
+        )
+        return drivers
+    seen = {driver.provider_key for driver in drivers}
+    for extra in _parse_racing_field_payload(data):
+        if len(drivers) >= _INDIVIDUAL_ROSTER_CAP:
+            break
+        if extra.provider_key in seen:
+            continue
+        seen.add(extra.provider_key)
+        drivers.append(extra)
+    return drivers
+
+
 # league id -> (monotonic fetch time, teams).  Process-local; the wizard
 # is the only consumer, so a tiny TTL dict beats dragging Redis in.
 _cache: dict[str, tuple[float, list[CatalogTeam]]] = {}
@@ -1033,7 +1265,9 @@ async def get_league_teams(league: CatalogLeague) -> list[CatalogTeam]:
     (tennis, MMA), whose ``/teams`` is empty, fall back to the ``/rankings``
     endpoint and return ranked athletes as single-member "teams"
     (provider_key = athlete id).  Golf (a leaderboard sport) has neither, so
-    its field is read off the current tournament's scoreboard competitors.
+    its field is read off the current tournament's scoreboard competitors;
+    racing unions the season's driver standings with the current
+    scoreboard's field (either source alone when the other is out).
     Raises :class:`EspnCatalogError` on HTTP/decoding failure so the route can
     map it to a 502 — the same contract holds for both providers.
     """
@@ -1049,7 +1283,14 @@ async def get_league_teams(league: CatalogLeague) -> list[CatalogTeam]:
     if cached is not None and now - cached[0] < _CACHE_TTL_SECONDS:
         return list(cached[1])
 
-    if league.sport in LEADERBOARD_SPORTS:
+    if league.sport is Sport.RACING:
+        # Racing: the season's driver standings unioned with the current
+        # scoreboard's field.  Checked before the leaderboard branch —
+        # the golf field parser doesn't fit racing's multi-session
+        # scoreboard shape.
+        teams = await _get_racing_drivers(league)
+        noun = "drivers"
+    elif league.sport in LEADERBOARD_SPORTS:
         # Golf: neither /teams nor /rankings work; the field is the current
         # tournament's scoreboard competitors (checked before the generic
         # individual-sport branch, as golf is in INDIVIDUAL_SPORTS too).

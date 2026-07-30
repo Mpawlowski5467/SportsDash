@@ -63,6 +63,28 @@ async def _followed_athletes(session: AsyncSession, teams: list[TeamORM]) -> dic
     return by_athlete
 
 
+def _stamp_followed(result: StatLeadersOut, followed_ids: set[str]) -> StatLeadersOut:
+    """Set ``followed`` on rows whose player is individually followed.
+
+    Stamped per request, AFTER any cache retrieval — the 900s cache stores
+    rows with the default ``followed=False`` so a new follow flips the
+    flag immediately instead of waiting out the TTL.  Rows may carry the
+    bare ESPN athlete id (the byathlete board) or the provider-prefixed
+    roster id (the roster-derived board); both are matched on the bare id.
+    """
+    if not followed_ids:
+        return result
+    rows = [
+        row.model_copy(update={"followed": True})
+        if row.player_id
+        and (row.player_id.split(":", 1)[1] if ":" in row.player_id else row.player_id)
+        in followed_ids
+        else row
+        for row in result.rows
+    ]
+    return result.model_copy(update={"rows": rows})
+
+
 @router.get("/leaders/{league_id}", response_model=StatLeadersOut)
 async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) -> StatLeadersOut:
     league = await repository.get_league(session, league_id)
@@ -71,13 +93,23 @@ async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) 
 
     sport = Sport(league.sport)
     teams = [team for team in await repository.list_teams(session) if team.league_id == league_id]
+    # Individually-followed players (bare ESPN athlete ids), read fresh on
+    # every request so the flag never rides the cached board.  Scoped to
+    # THIS league: ESPN athlete ids are only unique per sport (the same
+    # bare id can name both an NHL and an MLB athlete), so a follow in
+    # another league must not stamp a same-numbered stranger here.
+    followed_ids = {
+        row.athlete_id
+        for row in await repository.list_player_follows(session)
+        if row.league_id == league_id
+    }
 
     # --- League-wide leaders (NBA/MLB/NHL) from the ESPN athlete stats feed ---
     if league.provider == "espn" and espn_leaders.supports(sport):
         cache_key = f"leaders:{league_id}"
         cached = await cache.cache_get_json(cache_key)
         if cached is not None:
-            return StatLeadersOut(**cached)
+            return _stamp_followed(StatLeadersOut(**cached), followed_ids)
         entries = await espn_leaders.fetch_league_leaders(league.provider_key, sport)
         if entries:
             by_athlete = await _followed_athletes(session, teams)
@@ -109,8 +141,10 @@ async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) 
                 stat_label=entries[0].stat_label,
                 rows=rows,
             )
+            # Cache the UNSTAMPED board (rows default followed=False); the
+            # follow flag is stamped per-request on the way out.
             await cache.cache_set_json(cache_key, result.model_dump(), _CACHE_TTL_SECONDS)
-            return result
+            return _stamp_followed(result, followed_ids)
         # fall through to the roster board if the feed had nothing
 
     # --- Roster-derived board (your followed teams) --------------------------
@@ -145,10 +179,13 @@ async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) 
     rows = [
         row.model_copy(update={"rank": index + 1}) for index, (_, row) in enumerate(scored[:30])
     ]
-    return StatLeadersOut(
-        league_id=league.id,
-        league_name=league.name,
-        sport=league.sport,
-        stat_label=rows[0].stat_label if rows else "",
-        rows=rows,
+    return _stamp_followed(
+        StatLeadersOut(
+            league_id=league.id,
+            league_name=league.name,
+            sport=league.sport,
+            stat_label=rows[0].stat_label if rows else "",
+            rows=rows,
+        ),
+        followed_ids,
     )

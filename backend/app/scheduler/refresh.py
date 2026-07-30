@@ -8,30 +8,35 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 
+from app.config import get_settings
 from app.db import session_scope
 from app.models import domain
-from app.models.domain import Sport
+from app.models.domain import INDIVIDUAL_SPORTS, EventType, GameEvent, Sport
+from app.models.orm import PlayerFollowORM, PlayerORM
 from app.services import (
     geocode,
     news,
+    notify,
+    notify_prefs,
     player_photos,
     repository,
     stadiums,
     wiki,
 )
-from app.timeutil import utcnow
+from app.services.events import player_status_label
+from app.timeutil import ensure_utc, utcnow
 
 from app.scheduler.common import (
-    _golfer_id_map,
-    _is_golf,
+    _athlete_id_map,
+    _is_leaderboard,
     _league_from_row,
     _load_leagues_and_teams,
     _load_team_competitions,
     _provider_for,
-    _tag_followed_golfers,
+    _tag_followed_athletes,
     _team_from_row,
 )
 from app.scheduler.stadium_cache import (
@@ -162,10 +167,11 @@ async def refresh_schedules() -> None:
                     "refresh_schedules: failed for competition %r — skipping", league.id
                 )
 
-        # Pass 4: leaderboard events (golf).  A followed golfer is a
-        # single-member golf team and a golf follow_all league pulls the
-        # whole field; either way we fetch the tour's Events and tag the
-        # leaderboard rows that belong to a followed golfer.
+        # Pass 4: leaderboard events (golf, racing).  A followed golfer or
+        # driver is a single-member team and a leaderboard follow_all league
+        # pulls the whole field; either way we fetch the tour's/series'
+        # Events and tag the leaderboard rows that belong to a followed
+        # athlete.
         await _refresh_events(leagues, teams, start, end)
     except Exception:
         logger.exception("refresh_schedules failed")
@@ -177,32 +183,33 @@ async def _refresh_events(
     start: date,
     end: date,
 ) -> None:
-    """Fetch leaderboard events for followed golfers + golf follow_all leagues.
+    """Fetch leaderboard events for followed athletes + leaderboard follow_all leagues.
 
-    Each source is fetched once per golf league (a league's Events are the
-    same regardless of which followed golfer triggered the fetch), the
-    leaderboard rows are re-tagged ESPN-id -> internal-id, and the events
-    are upserted.  Per-league failures are isolated so one bad tour can't
-    abort the rest.
+    Each source is fetched once per leaderboard league (a league's Events
+    are the same regardless of which followed golfer/driver triggered the
+    fetch), the leaderboard rows are re-tagged ESPN-id -> internal-id, and
+    the events are upserted.  Per-league failures are isolated so one bad
+    tour can't abort the rest.
     """
-    espn_to_internal = _golfer_id_map(teams, leagues)
+    espn_to_internal = _athlete_id_map(teams, leagues)
 
-    # Golf leagues to pull: every league with at least one followed golfer,
-    # plus every golf follow_all league.  Deduplicated by league id so a
-    # league with several followed golfers is fetched only once.
-    golf_league_ids = {
+    # Leaderboard leagues to pull: every league with at least one followed
+    # athlete, plus every leaderboard follow_all league.  Deduplicated by
+    # league id so a league with several followed athletes is fetched only
+    # once.
+    leaderboard_league_ids = {
         team.league_id
         for team in teams
-        if (lg := leagues.get(team.league_id)) is not None and _is_golf(lg)
+        if (lg := leagues.get(team.league_id)) is not None and _is_leaderboard(lg)
     }
     async with session_scope() as session:
         follow_all_rows = await repository.list_follow_all_leagues(session)
     for row in follow_all_rows:
         league = leagues.get(row.id)
-        if league is not None and _is_golf(league):
-            golf_league_ids.add(league.id)
+        if league is not None and _is_leaderboard(league):
+            leaderboard_league_ids.add(league.id)
 
-    for league_id in sorted(golf_league_ids):
+    for league_id in sorted(leaderboard_league_ids):
         league = leagues.get(league_id)
         if league is None:
             continue
@@ -211,7 +218,7 @@ async def _refresh_events(
             continue
         try:
             events = await provider.get_events(league, start, end)
-            tagged = [_tag_followed_golfers(event, espn_to_internal) for event in events]
+            tagged = [_tag_followed_athletes(event, espn_to_internal) for event in events]
             async with session_scope() as session:
                 touched = await repository.upsert_events(session, tagged)
             logger.info(
@@ -300,9 +307,216 @@ async def _attach_player_photos(
     return replace(roster, players=players)
 
 
+def _bare_athlete_id(player_id: str) -> str:
+    """Strip the ``"espn:"`` provider prefix off a stored roster player id."""
+    return player_id.split(":", 1)[1] if ":" in player_id else player_id
+
+
+@dataclass(frozen=True)
+class _StatusUpdate:
+    """One followed athlete's status movement, from a roster-sync diff.
+
+    ``event`` is ``None`` for a silent baseline seed (the follow has no
+    baseline yet); otherwise the alert to send.  Either way the follow's
+    ``last_notified_status`` advances to ``status`` — for an alert, only
+    on confirmed delivery.
+    """
+
+    athlete_id: str
+    status: str
+    event: GameEvent | None
+
+
+def _player_status_updates(
+    team_name: str,
+    baselines: dict[str, str | None],
+    roster: domain.Roster,
+) -> list[_StatusUpdate]:
+    """Status movements for followed athletes, from a roster-sync diff.
+
+    ``baselines`` maps bare athlete id -> the follow's
+    ``last_notified_status``.  The fetched roster is diffed against that
+    per-follow baseline (never against the roster table, which
+    ``replace_roster`` has already overwritten by delivery time), and the
+    baseline is the dedupe: a repeat sync sees no difference, while a
+    re-injury after a delivered recovery alert differs again and
+    re-fires.  A follow with no baseline yet (``None`` — a fresh follow
+    seeded outside the route, or a pre-baseline row) seeds silently —
+    otherwise every new follow would fire a blast.
+    """
+    updates: list[_StatusUpdate] = []
+    for player in roster.players:
+        bare = _bare_athlete_id(player.id)
+        if bare not in baselines:
+            continue
+        baseline = baselines[bare]
+        new_status = player.status.value
+        if new_status == baseline:
+            continue
+        if baseline is None:
+            updates.append(_StatusUpdate(athlete_id=bare, status=new_status, event=None))
+            continue
+        message = f"{player.name} is {player_status_label(new_status)}"
+        if player.status_detail:
+            message = f"{message} — {player.status_detail}"
+        updates.append(
+            _StatusUpdate(
+                athlete_id=bare,
+                status=new_status,
+                event=GameEvent(
+                    type=EventType.PLAYER_STATUS,
+                    game_id=f"player:{bare}",
+                    title=team_name,
+                    message=message,
+                    dedupe_key=f"player:{bare}:status:{new_status}",
+                ),
+            )
+        )
+    return updates
+
+
+async def _notify_player_status(team_id: str, league_id: str, updates: list[_StatusUpdate]) -> None:
+    """Send roster-diff player-status alerts; best-effort, never raises.
+
+    v1 gating: the alert rides the parent team's ``team:{id}`` scope (no
+    per-player scopes yet).  The per-follow ``last_notified_status``
+    baseline IS the dedupe — no :class:`NotificationSentORM` writes here
+    — and it advances (each committed on its own) only on confirmed
+    delivery, so a failed ntfy send leaves the baseline behind and the
+    same diff re-fires on the next sync.  A muted team doesn't advance it
+    either: un-muting later still alerts on the next sync if the status
+    still differs.  Baseline-less follows seed silently.
+    """
+    if not updates:
+        return
+    try:
+        async with session_scope() as session:
+            prefs = await repository.prefs_by_scope(session)
+            for update in updates:
+                if update.event is not None:
+                    if not notify_prefs.decide(
+                        prefs, EventType.PLAYER_STATUS.value, [team_id], league_id
+                    ):
+                        continue
+                    if not await notify.send_event(update.event):
+                        logger.warning(
+                            "roster sync: notification %r not delivered — will retry next sync",
+                            update.event.dedupe_key,
+                        )
+                        continue
+                row = await session.get(PlayerFollowORM, update.athlete_id)
+                if row is not None:
+                    row.last_notified_status = update.status
+                    await session.commit()
+    except Exception:
+        logger.exception("roster sync: player-status notify failed for %r", team_id)
+
+
+def _carry_forward_enrichment(stored: list[PlayerORM], fetched: domain.Roster) -> domain.Roster:
+    """Keep stored stat lines / headshots a cheap fetch didn't ask for.
+
+    ``replace_roster`` deletes and reinserts every player column, so a fetch
+    that skipped the per-athlete stat-line pass (and the soccer photo
+    backfill) would BLANK ``stat_line`` / ``career_stat_line`` /
+    ``photo_url`` for the whole squad until the next daily sync — emptying
+    the roster view's stat columns and the roster-derived leaders board.
+    Each fetched player therefore takes the stored value for any of those
+    three the fetch left empty, keyed on the roster player id; a player the
+    stored roster doesn't have (a call-up, a trade) simply keeps its own,
+    and the status columns always come from the fetch (they are the point of
+    it).
+    """
+    if not stored:
+        return fetched
+    by_id = {row.id: row for row in stored}
+
+    def _merge(player: domain.Player) -> domain.Player:
+        row = by_id.get(player.id)
+        if row is None:
+            return player
+        return replace(
+            player,
+            stat_line=player.stat_line if player.stat_line is not None else row.stat_line,
+            career_stat_line=(
+                player.career_stat_line
+                if player.career_stat_line is not None
+                else row.career_stat_line
+            ),
+            photo_url=player.photo_url or row.photo_url,
+        )
+
+    return replace(fetched, players=tuple(_merge(player) for player in fetched.players))
+
+
+async def _sync_team_roster(
+    league: domain.League,
+    team: domain.Team,
+    followed: dict[str, str | None],
+    *,
+    with_stat_lines: bool = True,
+    backfill_photos: bool = True,
+) -> None:
+    """Fetch, store and status-diff ONE team's roster.  Never raises.
+
+    Shared by the daily sweep (both enrichments on) and the same-day
+    pre-game re-sync (both off — see :func:`refresh_pregame_rosters` for why
+    neither is affordable at that cadence).  ``followed`` maps bare athlete
+    id -> ``last_notified_status`` baseline for this team's followed players;
+    empty means there is nothing to diff.
+
+    Storing always goes through ``replace_roster`` — one roster writer, so a
+    call-up or a trade is still picked up and ``roster_updated_at`` keeps its
+    single writer and its meaning — with whatever the cheap fetch skipped
+    carried forward from the stored rows first.
+    """
+    provider = _provider_for(league)
+    if provider is None:
+        return
+    try:
+        roster = await provider.get_roster(league, team, with_stat_lines=with_stat_lines)
+        # Soccer-only photo fallback: ESPN gives soccer clubs headshots for
+        # ~2 of 38 players, so backfill the rest from TheSportsDB (capped +
+        # cached) before storing.
+        if backfill_photos and league.sport is Sport.SOCCER:
+            roster = await _attach_player_photos(roster, team, league.sport.value)
+        async with session_scope() as session:
+            if not (with_stat_lines and backfill_photos):
+                roster = _carry_forward_enrichment(
+                    await repository.get_roster(session, roster.team_id), roster
+                )
+            await repository.replace_roster(session, roster)
+        logger.info("roster sync: %s — %d player(s)", team.id, len(roster.players))
+        # Diff the FETCHED roster against each follow's own last-notified
+        # baseline — never against the roster table, which the replace above
+        # has already overwritten.  The baseline only advances on confirmed
+        # delivery, so nothing is lost between the replace and the send.
+        if followed:
+            updates = _player_status_updates(team.name, followed, roster)
+            await _notify_player_status(team.id, league.id, updates)
+    except Exception:
+        logger.exception("roster sync: failed for team %r — skipping", team.id)
+
+
+async def _followed_players_by_team() -> dict[str, dict[str, str | None]]:
+    """Followed players as ``{team_id: {bare athlete id: baseline}}``.
+
+    Read ONCE per job run (not per team); the baseline is each follow's
+    ``last_notified_status``, which is both the status-diff input and its
+    dedupe.
+    """
+    followed_by_team: dict[str, dict[str, str | None]] = {}
+    async with session_scope() as session:
+        for follow in await repository.list_player_follows(session):
+            followed_by_team.setdefault(follow.team_id, {})[follow.athlete_id] = (
+                follow.last_notified_status
+            )
+    return followed_by_team
+
+
 async def refresh_rosters() -> None:
     try:
         leagues, teams = await _load_leagues_and_teams()
+        followed_by_team = await _followed_players_by_team()
         for team in teams:
             league = leagues.get(team.league_id)
             if league is None:
@@ -310,23 +524,97 @@ async def refresh_rosters() -> None:
                     "Team %r references unknown league %r — skipping", team.id, team.league_id
                 )
                 continue
-            provider = _provider_for(league)
-            if provider is None:
-                continue
-            try:
-                roster = await provider.get_roster(league, team)
-                # Soccer-only photo fallback: ESPN gives soccer clubs
-                # headshots for ~2 of 38 players, so backfill the rest from
-                # TheSportsDB (capped + cached) before storing.
-                if league.sport is Sport.SOCCER:
-                    roster = await _attach_player_photos(roster, team, league.sport.value)
-                async with session_scope() as session:
-                    await repository.replace_roster(session, roster)
-                logger.info("refresh_rosters: %s — %d player(s)", team.id, len(roster.players))
-            except Exception:
-                logger.exception("refresh_rosters: failed for team %r — skipping", team.id)
+            await _sync_team_roster(league, team, followed_by_team.get(team.id, {}))
     except Exception:
         logger.exception("refresh_rosters failed")
+
+
+async def refresh_pregame_rosters() -> None:
+    """Status-only roster re-sync for followed teams whose game starts soon.
+
+    Injury and scratch designations are only final in the hours before
+    kickoff, while the daily roster sync can be a whole day stale — so a
+    player ruled out at noon used to be invisible until the next 5am sweep.
+    This job re-fetches ONLY the roster payload (statuses ride on it) for
+    teams that have a followed player and an imminent game, then runs the
+    very same ``last_notified_status`` diff the daily sync runs, so the
+    scratch alerts within a tick.  It also leaves ``live_tick``'s
+    starting-soon "ruled out" pass reading same-day-fresh statuses.
+
+    Cost is why this is its own job and not part of an existing one: the
+    daily sync's per-athlete stat-line pass costs one request per player,
+    which at this cadence would be hundreds of calls a day.  Three gates,
+    cheapest first — no player follows at all means zero DB scans and zero
+    provider calls; then only teams with a game inside the lookahead; then a
+    per-team cooldown read off ``TeamORM.roster_updated_at`` (stamped by
+    ``replace_roster``, so a sync cools itself down).  What survives costs
+    exactly ONE roster call per team per cooldown window, and the stat lines
+    the fetch skips are carried forward rather than re-fetched.
+
+    Per-team failures are isolated inside :func:`_sync_team_roster` and the
+    job never raises.
+    """
+    settings = get_settings()
+    if not settings.pregame_roster_refresh_enabled:
+        return
+    try:
+        now = utcnow()
+        followed_by_team = await _followed_players_by_team()
+        if not followed_by_team:
+            return
+        async with session_scope() as session:
+            soon = await repository.team_ids_with_games_starting_within(
+                session, now, timedelta(hours=settings.pregame_roster_lookahead_hours)
+            )
+            candidates = sorted(soon & followed_by_team.keys())
+            if not candidates:
+                return
+            # Cooldown snapshot, taken while the session is open: sqlite
+            # hands the timestamp back NAIVE, so it goes through ensure_utc
+            # before any arithmetic.  Each team syncs at most once per run,
+            # so one up-front read is enough.
+            last_synced: dict[str, datetime | None] = {}
+            for team_id in candidates:
+                row = await repository.get_team(session, team_id)
+                last_synced[team_id] = (
+                    ensure_utc(row.roster_updated_at)
+                    if row is not None and row.roster_updated_at is not None
+                    else None
+                )
+
+        leagues, teams = await _load_leagues_and_teams()
+        by_id = {team.id: team for team in teams}
+        cooldown = timedelta(minutes=settings.pregame_roster_cooldown_minutes)
+        synced = 0
+        for team_id in candidates:
+            team = by_id.get(team_id)
+            league = leagues.get(team.league_id) if team is not None else None
+            if team is None or league is None:
+                continue
+            if league.sport in INDIVIDUAL_SPORTS:
+                # A followed athlete is a single-member "team" with no
+                # roster: the fetch would come back empty and the store
+                # would only delete the rows and restamp the team.
+                continue
+            last = last_synced.get(team_id)
+            if last is not None and now - last < cooldown:
+                continue
+            await _sync_team_roster(
+                league,
+                team,
+                followed_by_team[team_id],
+                with_stat_lines=False,
+                backfill_photos=False,
+            )
+            synced += 1
+        if synced:
+            logger.info(
+                "refresh_pregame_rosters: re-synced %d of %d team(s) with an imminent game",
+                synced,
+                len(candidates),
+            )
+    except Exception:
+        logger.exception("refresh_pregame_rosters failed")
 
 
 async def refresh_news() -> None:

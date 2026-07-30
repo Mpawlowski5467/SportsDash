@@ -43,8 +43,8 @@ def _events_for_scope(pref: NotificationPrefORM | None) -> dict[str, bool]:
     """Resolved per-event booleans for a single scope's editor row.
 
     Every notifiable type is enabled unless this scope explicitly stored
-    it ``False`` — so the UI always shows the real state of all five
-    types, whether or not a row exists.
+    it ``False`` — so the UI always shows the real state of every
+    type, whether or not a row exists.
     """
     stored = pref.events if pref is not None else {}
     return {

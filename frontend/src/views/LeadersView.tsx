@@ -140,9 +140,13 @@ export default function LeadersView() {
               key={`${row.team_id}-${row.player_id}`}
               className={
                 "sd-stagger-item flex items-center gap-3 border-l-2 py-2 pl-2 " +
-                (row.highlighted
-                  ? "border-amber-500 bg-amber-500/10"
-                  : "border-transparent")
+                // A player YOU follow outranks the team-level highlight:
+                // brighter border + wash, plus the star before the name.
+                (row.followed
+                  ? "border-amber-400 bg-amber-500/15"
+                  : row.highlighted
+                    ? "border-amber-500 bg-amber-500/10"
+                    : "border-transparent")
               }
             >
               <span className="w-6 shrink-0 text-right text-sm tabular-nums text-zinc-500">
@@ -158,9 +162,24 @@ export default function LeadersView() {
                 <p
                   className={
                     "truncate text-sm font-medium " +
-                    (row.highlighted ? "text-amber-200" : "text-zinc-100")
+                    (row.followed || row.highlighted
+                      ? "text-amber-200"
+                      : "text-zinc-100")
                   }
                 >
+                  {row.followed && (
+                    <>
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        aria-hidden="true"
+                        className="mr-1 inline-block h-3.5 w-3.5 -translate-y-px text-amber-400"
+                      >
+                        <path d="m12 2.6 2.95 5.9 6.55.95-4.75 4.6 1.12 6.5L12 17.5l-5.87 3.05 1.12-6.5-4.75-4.6 6.55-.95z" />
+                      </svg>
+                      <span className="sr-only">Followed player: </span>
+                    </>
+                  )}
                   {row.name}
                 </p>
                 <p className="truncate text-xs text-zinc-500">

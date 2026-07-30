@@ -1,62 +1,9 @@
 import { formatMoneyline } from "../lib/odds";
-import { abbrev } from "../lib/labels";
+import { detectSignal, type UpsetSignal } from "../lib/whyWatch";
 import { useMemo } from "react";
 
 import { useGameOdds } from "../hooks";
-import type { Game, GameOdds } from "../types";
-
-/**
- * A flagged "upset signal": a game where the betting market's underdog (the
- * side with the higher / more-positive moneyline) is also the model's favorite
- * (its win probability is above 50%). The two views of the same game disagree,
- * which is exactly the contrarian spot a previews browser wants surfaced.
- */
-interface UpsetSignal {
-  gameId: string;
-  /** The market underdog the model likes — its short code, win %, and line. */
-  underdogAbbr: string;
-  winPct: number;
-  moneyline: number;
-}
-
-/** Up-to-three-char abbreviation fallback, mirroring the modal helper. */
-/** American odds with an explicit sign (+144 / -175). */
-/**
- * Decide whether a game is an upset signal. Needs BOTH win probabilities AND
- * both moneylines: the market underdog is the side with the higher moneyline
- * (in American odds, more positive = longer odds = underdog), and it's flagged
- * only when that same side is the model favorite (its win % > 50). Returns null
- * when the data is incomplete or the two views agree.
- */
-function detectSignal(game: Game, odds: GameOdds): UpsetSignal | null {
-  const { home_win_pct, away_win_pct, home_moneyline, away_moneyline } = odds;
-  if (
-    home_win_pct === null ||
-    away_win_pct === null ||
-    home_moneyline === null ||
-    away_moneyline === null
-  ) {
-    return null;
-  }
-
-  // Market underdog = the side priced with the longer (more positive) line.
-  const homeIsUnderdog = home_moneyline > away_moneyline;
-  const underdogSide = homeIsUnderdog ? game.home : game.away;
-  const underdogWinPct = homeIsUnderdog ? home_win_pct : away_win_pct;
-  const underdogMoneyline = homeIsUnderdog ? home_moneyline : away_moneyline;
-
-  // Only a signal when the model favors the side the market fades.
-  if (underdogWinPct <= 50) {
-    return null;
-  }
-
-  return {
-    gameId: game.id,
-    underdogAbbr: underdogSide.abbreviation ?? abbrev(underdogSide.name),
-    winPct: Math.round(underdogWinPct),
-    moneyline: underdogMoneyline,
-  };
-}
+import type { Game } from "../types";
 
 /**
  * A compact strip across the top of the matchup previews that flags upcoming

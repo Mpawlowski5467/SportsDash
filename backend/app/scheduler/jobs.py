@@ -1,7 +1,7 @@
 """Scheduled background jobs — the package facade.
 
 The implementation lives in sibling modules (split from the original
-single-file jobs.py): ``common`` (constants/loaders/golf helpers),
+single-file jobs.py): ``common`` (constants/loaders/leaderboard helpers),
 ``refresh`` (daily refresh jobs), ``stadium_cache`` (map-view venue
 cache), and ``live`` (live/event polling + notifications). This module
 keeps the original import surface: the route-facing ``kick_*``
@@ -33,7 +33,7 @@ from app import background
 # Kept importable on the facade: tests patch service behavior via
 # ``jobs.stadiums`` / ``jobs.geocode`` / ``jobs.notify`` / ``jobs.player_photos``
 # (module objects are shared, so a patch here is a patch everywhere).
-from app.services import geocode, notify, player_photos, stadiums  # noqa: F401
+from app.services import geocode, metrics_state, notify, player_photos, stadiums  # noqa: F401
 
 from app.scheduler.common import (  # noqa: F401 — re-exported package surface
     EVENTS_POLL_SECONDS,
@@ -51,6 +51,7 @@ from app.scheduler.refresh import (  # noqa: F401
     daily_refresh,
     refresh_locations,
     refresh_news,
+    refresh_pregame_rosters,
     refresh_rosters,
     refresh_schedules,
     refresh_standings,
@@ -73,11 +74,16 @@ logger = logging.getLogger(__name__)
 
 
 def setup_scheduler() -> AsyncIOScheduler:
-    """Build the scheduler with all jobs registered.  Caller starts it."""
+    """Build the scheduler with all jobs registered.  Caller starts it.
+
+    Each job coroutine is wrapped with ``metrics_state.instrumented`` so
+    runs tick the ``/api/metrics`` job registry — the scheduler instance
+    itself is a lifespan local the metrics route can't reach.
+    """
     settings = get_settings()
     scheduler = AsyncIOScheduler(timezone=settings.tzinfo)
     scheduler.add_job(
-        daily_refresh,
+        metrics_state.instrumented("daily_refresh", daily_refresh),
         CronTrigger(hour=settings.daily_refresh_hour, minute=0, timezone=settings.tzinfo),
         id="daily_refresh",
         name="Daily schedules/standings/rosters/news refresh",
@@ -88,7 +94,7 @@ def setup_scheduler() -> AsyncIOScheduler:
         coalesce=True,
     )
     scheduler.add_job(
-        refresh_news,
+        metrics_state.instrumented("refresh_news", refresh_news),
         IntervalTrigger(minutes=settings.news_refresh_minutes),
         id="refresh_news",
         name="RSS news refresh",
@@ -99,7 +105,19 @@ def setup_scheduler() -> AsyncIOScheduler:
         coalesce=True,
     )
     scheduler.add_job(
-        live_tick,
+        metrics_state.instrumented("refresh_pregame_rosters", refresh_pregame_rosters),
+        IntervalTrigger(minutes=settings.pregame_roster_refresh_minutes),
+        id="refresh_pregame_rosters",
+        name="Pre-game roster status re-sync",
+        # Gated on player follows, an imminent game and a per-team cooldown,
+        # so most runs make no provider call at all; one instance is plenty
+        # and two would race the same roster's replace.
+        max_instances=1,
+        misfire_grace_time=300,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        metrics_state.instrumented("live_tick", live_tick),
         IntervalTrigger(seconds=settings.live_poll_seconds),
         id="live_tick",
         name="Live score poll",
@@ -107,10 +125,10 @@ def setup_scheduler() -> AsyncIOScheduler:
         coalesce=True,
     )
     scheduler.add_job(
-        events_tick,
+        metrics_state.instrumented("events_tick", events_tick),
         IntervalTrigger(seconds=EVENTS_POLL_SECONDS),
         id="events_tick",
-        name="Leaderboard (golf) poll",
+        name="Leaderboard (golf/racing) poll",
         max_instances=1,
         coalesce=True,
     )
