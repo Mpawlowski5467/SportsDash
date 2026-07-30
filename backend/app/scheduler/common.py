@@ -1,4 +1,4 @@
-"""Shared scheduler plumbing: tuning constants, ORM→domain loaders, and golf helpers.
+"""Shared scheduler plumbing: tuning constants, ORM→domain loaders, and leaderboard helpers.
 
 Split out of the original single-file jobs.py; see jobs.py (the facade).
 """
@@ -14,7 +14,7 @@ from datetime import timedelta
 
 from app.db import session_scope
 from app.models import convert, domain
-from app.models.domain import Sport
+from app.models.domain import LEADERBOARD_SPORTS
 from app.providers import registry
 from app.services import (
     repository,
@@ -118,38 +118,39 @@ def _provider_for(league: domain.League):
 
 
 # ---------------------------------------------------------------------------
-# Leaderboard (golf) helpers
+# Leaderboard (golf, racing) helpers
 # ---------------------------------------------------------------------------
 
 
-def _is_golf(league: domain.League) -> bool:
-    return league.sport is Sport.GOLF
+def _is_leaderboard(league: domain.League) -> bool:
+    return league.sport in LEADERBOARD_SPORTS
 
 
-def _golfer_id_map(teams: list[domain.Team], leagues: dict[str, domain.League]) -> dict[str, str]:
-    """Map ESPN athlete id -> internal team id for every followed golfer.
+def _athlete_id_map(teams: list[domain.Team], leagues: dict[str, domain.League]) -> dict[str, str]:
+    """Map ESPN athlete id -> internal team id for every followed golfer/driver.
 
-    Each followed golfer is a single-member golf ``TeamORM`` whose
+    Each followed leaderboard athlete is a single-member ``TeamORM`` whose
     ``provider_key`` is the ESPN athlete id, so a leaderboard row's
     ESPN id can be rewritten to the internal id when it belongs to a
-    followed golfer.  Only golf-league teams contribute, so a non-golf
-    team that happens to share a provider_key string can't mis-tag.
+    followed athlete.  Only leaderboard-league teams contribute, so a
+    game-sport team that happens to share a provider_key string can't
+    mis-tag.
     """
     mapping: dict[str, str] = {}
     for team in teams:
         league = leagues.get(team.league_id)
-        if league is not None and _is_golf(league):
+        if league is not None and _is_leaderboard(league):
             mapping[team.provider_key] = team.id
     return mapping
 
 
-def _tag_followed_golfers(event: domain.Event, espn_to_internal: dict[str, str]) -> domain.Event:
+def _tag_followed_athletes(event: domain.Event, espn_to_internal: dict[str, str]) -> domain.Event:
     """Rewrite each leaderboard row's ``player_id`` to the internal id.
 
     The provider carries the ESPN athlete id transiently in
     ``LeaderRow.player_id`` (it can't know who is followed).  Here we
-    rewrite it to the followed golfer's internal team id, or ``None``
-    when the athlete isn't followed, before persisting.
+    rewrite it to the followed golfer's/driver's internal team id, or
+    ``None`` when the athlete isn't followed, before persisting.
     """
     tagged_rows = tuple(
         replace(row, player_id=espn_to_internal.get(row.player_id))

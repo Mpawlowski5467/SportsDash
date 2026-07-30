@@ -28,13 +28,14 @@ from app.routes import router as api_router
 from app.scheduler import jobs
 from app.services import notify_prefs, repository
 
-# The five notifiable event types, in canonical order — mirrors the spec.
+# The six notifiable event types, in canonical order — mirrors the spec.
 EVENT_TYPES = [
     "starting_soon",
     "game_start",
     "period_start",
     "intermission",
     "final",
+    "player_status",
 ]
 
 # Fictional league + teams seeded directly into the DB for the GET/PUT
@@ -246,13 +247,14 @@ async def test_put_disable_one_event_for_global(
     assert resp.status_code == 200
     by_scope = {pref["scope"]: pref for pref in resp.json()["prefs"]}
 
-    # Only period_start is off for global; the other four stay on.
+    # Only period_start is off for global; the other five stay on.
     assert by_scope["global"]["events"] == {
         "starting_soon": True,
         "game_start": True,
         "period_start": False,
         "intermission": True,
         "final": True,
+        "player_status": True,
     }
     assert by_scope["global"]["muted"] is False
     # Team scopes are unaffected and still all-on.
@@ -318,6 +320,7 @@ async def test_follow_all_seeds_headline_only_league_pref(
             "period_start": False,
             "intermission": False,
             "final": True,
+            "player_status": False,
         }
 
     # The GET surfaces that resolved state for the league scope; the global
@@ -330,6 +333,7 @@ async def test_follow_all_seeds_headline_only_league_pref(
         "period_start": False,
         "intermission": False,
         "final": True,
+        "player_status": False,
     }
     assert by_scope["league:ucl"]["muted"] is False
     assert by_scope["global"]["events"] == {event_type: True for event_type in EVENT_TYPES}
@@ -373,4 +377,5 @@ def test_event_type_order_matches_shared_constant() -> None:
         "period_start": False,
         "intermission": False,
         "final": True,
+        "player_status": False,
     }

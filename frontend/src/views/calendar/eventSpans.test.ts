@@ -102,10 +102,14 @@ describe("eventSpan", () => {
   });
 
   it("marks the title with a sport glyph when there is one", () => {
-    // Golf is the only leaderboard sport, so it is the only glyph that can
-    // resolve from real data; every other sport takes the bare-name branch.
+    // Golf and racing are the leaderboard sports, so theirs are the only
+    // glyphs that can resolve from real data; every other sport takes the
+    // bare-name branch.
     expect(eventSpan(makeEvent({ sport: "golf" })).title).toBe(
       "⛳ The Gilded Open",
+    );
+    expect(eventSpan(makeEvent({ sport: "racing" })).title).toBe(
+      "🏁 The Gilded Open",
     );
     expect(eventSpan(makeEvent({ sport: "soccer" })).title).toBe(
       "The Gilded Open",

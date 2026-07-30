@@ -6,6 +6,7 @@ import { useId } from "react";
 import { useGameDetail } from "../hooks";
 import { formatDateTime } from "../lib/time";
 import type {
+  Clip,
   FightResult,
   Game,
   GameLineup,
@@ -133,7 +134,8 @@ function hasSummaryContent(summary: GameSummary): boolean {
     summary.home_total !== null ||
     summary.away_total !== null ||
     summary.win_probability.length > 1 ||
-    summary.plays.length > 0
+    summary.plays.length > 0 ||
+    summary.clips.length > 0
   );
 }
 
@@ -151,15 +153,21 @@ function Matchup({ game, titleId }: { game: Game; titleId: string }) {
         <StatusBadge game={game} />
         <span className="truncate">{formatDateTime(game.start_time)}</span>
       </div>
+      {game.broadcasts.length > 0 && (
+        <div className="truncate text-xs text-zinc-500">
+          {game.broadcasts.join(" · ")}
+        </div>
+      )}
     </div>
   );
 }
 
 /**
- * The modal body: shows whatever the game has — a box score (live/final), the
- * projected lineups (any phase, when rosters exist), and a venue forecast
- * (scheduled outdoor games), in that order. Falls back to a phase-appropriate
- * empty state when the game carries none of them.
+ * The modal body: shows whatever the game has — a box score (live/final),
+ * highlight clips (when the provider ships them), the projected lineups (any
+ * phase, when rosters exist), and a venue forecast (scheduled outdoor games),
+ * in that order. Falls back to a phase-appropriate empty state when the game
+ * carries none of them.
  */
 function DetailBody({
   summary,
@@ -205,6 +213,9 @@ function DetailBody({
       {fight !== null && <FightResultSection result={fight} />}
       {hasOdds && game !== undefined && <OddsSection odds={odds} game={game} />}
       {hasSummary && <SummaryBody summary={summary} game={game} />}
+      {summary !== null && summary.clips.length > 0 && (
+        <HighlightsSection clips={summary.clips} />
+      )}
       {hasLineup && game !== undefined && (
         <LineupView lineup={lineup} game={game} />
       )}
@@ -270,6 +281,73 @@ function WeatherSection({
           Box score and stats appear once the game kicks off.
         </p>
       )}
+    </div>
+  );
+}
+
+/** `73` -> `"1:13"` — clip length as m:ss. */
+function clipDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * Highlight clips, when the provider ships them. Each row is one anchor out
+ * to the provider's clip page (same convention as the news reader: explicit
+ * external link, new tab) — thumbnail, headline and length in-app first.
+ */
+function HighlightsSection({ clips }: { clips: Clip[] }) {
+  return (
+    <div>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        Highlights
+      </h3>
+      <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-800/30">
+        <ul className="divide-y divide-zinc-800">
+          {clips.map((clip, index) => (
+            <li key={`${clip.url}-${index}`}>
+              <a
+                href={clip.url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-3 px-3 py-2.5 transition hover:bg-zinc-800/60"
+              >
+                {clip.thumbnail_url !== null && (
+                  <img
+                    src={clip.thumbnail_url}
+                    alt=""
+                    loading="lazy"
+                    className="aspect-video w-24 shrink-0 rounded object-cover"
+                  />
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-zinc-200">
+                    {clip.headline}
+                  </span>
+                  {clip.duration_seconds !== null && (
+                    <span className="mt-0.5 block text-xs tabular-nums text-zinc-500">
+                      {clipDuration(clip.duration_seconds)}
+                    </span>
+                  )}
+                </span>
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-4 w-4 shrink-0 text-zinc-500"
+                  aria-hidden="true"
+                >
+                  <path d="M7 13L13 7M8 7h5v5" />
+                </svg>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-"""Live polling: game-state ticks with notifications and missed-final resend, live standings kicks, and leaderboard (golf) event ticks.
+"""Live polling: game-state ticks with notifications and missed-final resend, live standings kicks, and leaderboard (golf/racing) event ticks.
 
 Split out of the original single-file jobs.py; see jobs.py (the facade).
 """
@@ -16,22 +16,22 @@ from app.db import session_scope
 from app import background
 from app.models import domain
 from app.models.domain import EventType, GameEvent, GamePhase, GameState
-from app.models.orm import EventORM, GameORM, NotificationPrefORM
+from app.models.orm import EventORM, GameORM, NotificationPrefORM, PlayerORM
 from app.services import (
     notify,
     notify_prefs,
     repository,
 )
-from app.services.events import diff_states, starting_soon_event
+from app.services.events import diff_states, player_status_label, starting_soon_event
 from app.timeutil import ensure_utc, utcnow
 
 from app.scheduler.common import (
     _EVENTS_LOOKAHEAD,
-    _golfer_id_map,
+    _athlete_id_map,
     _league_from_row,
     _load_leagues_and_teams,
     _provider_for,
-    _tag_followed_golfers,
+    _tag_followed_athletes,
 )
 from app.scheduler.refresh import refresh_standings_for_league
 
@@ -218,21 +218,26 @@ async def live_tick() -> None:
             if not rows:
                 return
 
-            # 2. Starting-soon notifications for scheduled games inside the window.
+            # 2. Starting-soon notifications for scheduled games inside the
+            # window, plus a "ruled out" heads-up for followed players on
+            # either side whose stored roster status is not active.
             soon_window = timedelta(minutes=settings.starting_soon_minutes)
+            # Player follows, loaded lazily (once per tick, only when a game
+            # is actually inside the window): team id -> [athlete_id, ...].
+            follows_by_team: dict[str, list[str]] | None = None
             for row in rows:
                 if row.phase != GamePhase.SCHEDULED.value:
                     continue
                 start_utc = ensure_utc(row.start_time)
                 delta = start_utc - now
-                if timedelta(0) <= delta <= soon_window:
-                    if not notify_prefs.decide(
-                        prefs,
-                        EventType.STARTING_SOON.value,
-                        _row_team_ids(row),
-                        row.league_id,
-                    ):
-                        continue
+                if not (timedelta(0) <= delta <= soon_window):
+                    continue
+                if notify_prefs.decide(
+                    prefs,
+                    EventType.STARTING_SOON.value,
+                    _row_team_ids(row),
+                    row.league_id,
+                ):
                     event = starting_soon_event(
                         start_utc,
                         row.id,
@@ -241,6 +246,35 @@ async def live_tick() -> None:
                         minutes_out=int(delta.total_seconds() // 60),
                     )
                     await _notify_once(session, event)
+                # One event per already-ruled-out followed player.  Status
+                # freshness is the last roster sync's; gated (v1) on the
+                # player's parent-team scope and deduped per game+athlete
+                # through the same _notify_once ledger idiom.
+                if follows_by_team is None:
+                    follows_by_team = defaultdict(list)
+                    for follow in await repository.list_player_follows(session):
+                        follows_by_team[follow.team_id].append(follow.athlete_id)
+                for team_id in _row_team_ids(row):
+                    for athlete_id in follows_by_team.get(team_id, ()):
+                        player = await session.get(PlayerORM, (team_id, f"espn:{athlete_id}"))
+                        if player is None or player.status == domain.PlayerStatus.ACTIVE.value:
+                            continue
+                        if not notify_prefs.decide(
+                            prefs, EventType.PLAYER_STATUS.value, [team_id], row.league_id
+                        ):
+                            continue
+                        status_text = player.status_detail or player_status_label(player.status)
+                        matchup = f"{row.away_name} @ {row.home_name}"
+                        await _notify_once(
+                            session,
+                            GameEvent(
+                                type=EventType.PLAYER_STATUS,
+                                game_id=row.id,
+                                title=matchup,
+                                message=f"{player.name} ({status_text}) — {matchup} starts soon",
+                                dedupe_key=f"{row.id}:player-out:{athlete_id}",
+                            ),
+                        )
             await session.commit()
 
             # 3. Group rows by league; one scoreboard call per league.  Both
@@ -350,14 +384,14 @@ def _event_provider_key(event_id: str) -> str:
 
 
 def _final_event(event: domain.Event) -> GameEvent | None:
-    """Build the tournament-FINAL notification for a followed golfer.
+    """Build the event-FINAL notification for a followed golfer/driver.
 
     Fires once per finished event the user follows, leading with the
-    followed golfer's finishing position (the most specific information a
-    leaderboard offers).  Returns ``None`` when no followed golfer is in
+    followed athlete's finishing position (the most specific information a
+    leaderboard offers).  Returns ``None`` when no followed athlete is in
     the field — re-tagging has already rewritten ``player_id`` to the
     internal id (or ``None``) so a followed row is just one with a
-    ``player_id`` set.  When several followed golfers played the same
+    ``player_id`` set.  When several followed athletes played the same
     event, the best-placed one leads the headline.
     """
     followed = [row for row in event.leaderboard if row.player_id is not None]
@@ -441,17 +475,18 @@ async def _resend_missed_event_finals(session, prefs, now) -> None:
 
 
 async def events_tick() -> None:
-    """One leaderboard poll: refresh in-progress golf events, notify on FINAL.
+    """One leaderboard poll: refresh live/imminent events, notify on FINAL.
 
     Cheap-gated like ``live_tick``: ``active_events`` is a single indexed
     query that is usually empty, so the job costs nothing when no followed
-    golfer is mid-tournament.  For each active event we fetch the current
-    state, re-tag followed golfers' rows (ESPN id -> internal id), persist
-    the refreshed board, and — on transition to FINAL — fire one
-    notification carrying the followed golfer's finishing position
-    (dedupe ``"{event_id}:final"``, honoring notification preferences).
-    Per-event failures are isolated and committed incrementally so one bad
-    event can neither abort the rest nor re-send a handled notification.
+    golfer/driver is at (or about to be at) an event.  For each active
+    event we fetch the current state, re-tag followed athletes' rows
+    (ESPN id -> internal id), persist the refreshed board, and — on
+    transition to FINAL — fire one notification carrying the followed
+    athlete's finishing position (dedupe ``"{event_id}:final"``, honoring
+    notification preferences).  Per-event failures are isolated and
+    committed incrementally so one bad event can neither abort the rest
+    nor re-send a handled notification.
     """
     try:
         now = utcnow()
@@ -462,25 +497,29 @@ async def events_tick() -> None:
             # as state, never marked notified, then dropped from active_events.
             await _resend_missed_event_finals(session, prefs, now)
 
-            # 1. Cheap gate: in-progress (or about-to-start) events only.  Only
-            # the ids are carried into the loop — the per-event recovery below
-            # rolls the session back, expiring the rows themselves (see
-            # "Session-independent snapshots").
+            # 1. Cheap gate: in-progress events PLUS scheduled ones starting
+            # within the lookahead.  The scheduled rows matter — this poll is
+            # what observes their SCHEDULED -> IN_PROGRESS flip (a single-day
+            # race would otherwise wait for the once-daily refresh and its
+            # final would arrive next morning); polling a still-pre event just
+            # re-upserts SCHEDULED.  Only the ids are carried into the loop —
+            # the per-event recovery below rolls the session back, expiring
+            # the rows themselves (see "Session-independent snapshots").
             active = [
                 (row.id, row.league_id)
                 for row in await repository.active_events(session, now, _EVENTS_LOOKAHEAD)
-                if row.phase == GamePhase.IN_PROGRESS.value
             ]
             if not active:
                 return
 
             leagues, teams = await _load_leagues_and_teams()
-            espn_to_internal = _golfer_id_map(teams, leagues)
+            espn_to_internal = _athlete_id_map(teams, leagues)
 
             # Leagues whose event(s) transitioned to FINAL this tick — one
             # coalesced standings refresh is kicked at the end (same live
-            # trigger as ``live_tick``).  The gate above only kept IN_PROGRESS
-            # rows, so a fresh FINAL state is by definition a transition.
+            # trigger as ``live_tick``).  ``active_events`` never returns
+            # FINAL rows, so a fresh FINAL state is by definition a
+            # transition.
             finalized_leagues: dict[str, domain.League] = {}
 
             for event_id, event_league_id in active:
@@ -507,7 +546,7 @@ async def events_tick() -> None:
                     continue
 
                 try:
-                    tagged = _tag_followed_golfers(fresh, espn_to_internal)
+                    tagged = _tag_followed_athletes(fresh, espn_to_internal)
                     await repository.upsert_events(session, [tagged])
                     # The tournament just wrapped: notify each follower once
                     # with their finishing position.

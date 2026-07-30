@@ -1,10 +1,16 @@
-import { parseLocalDateKey } from "../lib/time";
+import { localKeyFromDate, parseLocalDateKey } from "../lib/time";
 import { useMemo, useState } from "react";
-import { useGameOdds, useTeams, useToday } from "../hooks";
-import GameCard from "../components/GameCard";
+import { useGameOdds, useOnThisDay, useTeams, useToday } from "../hooks";
+import GameCard, { NEUTRAL_FALLBACK_COLOR } from "../components/GameCard";
 import EventLeaderboardModal from "../components/EventLeaderboardModal";
 import StaleBanner from "../components/StaleBanner";
-import type { League, SportEvent } from "../types";
+import {
+  anniversaryYear,
+  isOnThisDayCurrent,
+  scoreline,
+  winningSide,
+} from "./today/onThisDay";
+import type { Game, League, OnThisDayTeam, SportEvent } from "../types";
 
 /**
  * Parse a "YYYY-MM-DD" key as a LOCAL calendar date. `new Date("YYYY-MM-DD")`
@@ -21,9 +27,13 @@ function eventScoreClass(score: string): string {
 
 /**
  * Compact leaderboard-event card for the Today landing screen: tournament
- * name, current round, the top three, plus any followed golfer's line when
- * they're outside the top three. Followed golfers are accented by their
- * team color (a followed golfer is a single-member team).
+ * name, current round, the top three, plus any followed athlete's line when
+ * they're outside the top three. Followedness comes from the backend
+ * contract — a non-null `player_id` IS a followed athlete (the scheduler
+ * rewrites the row's id to the followed-team id, else null). The athlete's
+ * team color is purely an accent: driver catalog rows carry no color, so a
+ * missing entry falls back to the neutral chip gray rather than making the
+ * row read as unfollowed.
  */
 function EventCard({
   event,
@@ -36,20 +46,18 @@ function EventCard({
 }) {
   const top3 = event.leaderboard.slice(0, 3);
   const top3Ids = new Set(top3.map((row) => row.player_id));
-  // Followed golfers not already shown in the top three.
+  // Followed athletes not already shown in the top three.
   const followedExtra = event.leaderboard.filter(
-    (row) =>
-      row.player_id !== null &&
-      teamColors[row.player_id] &&
-      !top3Ids.has(row.player_id),
+    (row) => row.player_id !== null && !top3Ids.has(row.player_id),
   );
 
-  // First followed golfer's color accents the card border.
+  // First followed athlete's color accents the card border.
   const accent =
-    event.leaderboard.find(
-      (row) => row.player_id !== null && teamColors[row.player_id],
-    )?.player_id ?? null;
-  const accentColor = accent !== null ? teamColors[accent] : undefined;
+    event.leaderboard.find((row) => row.player_id !== null)?.player_id ?? null;
+  const accentColor =
+    accent !== null
+      ? (teamColors[accent] ?? NEUTRAL_FALLBACK_COLOR)
+      : undefined;
 
   const live = event.phase === "in_progress";
   const roundText =
@@ -59,7 +67,10 @@ function EventCard({
     row: SportEvent["leaderboard"][number],
     key: string | number,
   ) => {
-    const color = row.player_id !== null ? teamColors[row.player_id] : undefined;
+    const color =
+      row.player_id !== null
+        ? (teamColors[row.player_id] ?? NEUTRAL_FALLBACK_COLOR)
+        : undefined;
     const followed = color !== undefined;
     return (
       <div key={key} className="flex items-center gap-2 text-sm">
@@ -141,6 +152,44 @@ function EventCard({
   );
 }
 
+/**
+ * One historical final for the "On this day" section: a year chip and an
+ * away-first scoreline with the winner bolded. Deliberately NOT interactive —
+ * history games are assembled on demand and never stored, so there is no
+ * /games/{id} detail behind them to open.
+ */
+function OnThisDayRow({ game }: { game: Game }) {
+  const winner = winningSide(game);
+  const nameClass = (side: "home" | "away") =>
+    winner === side ? "font-semibold text-zinc-100" : "text-zinc-300";
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-medium tabular-nums text-zinc-400">
+        {anniversaryYear(game)}
+      </span>
+      <span className="min-w-0 flex-1 truncate">
+        <span className={nameClass("away")}>{game.away.name}</span>{" "}
+        <span className="tabular-nums text-zinc-400">{scoreline(game)}</span>{" "}
+        <span className={nameClass("home")}>{game.home.name}</span>
+      </span>
+    </div>
+  );
+}
+
+/** One followed team's anniversary block: a name label, then its finals. */
+function OnThisDayTeamBlock({ team }: { team: OnThisDayTeam }) {
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5">
+      <p className="text-sm font-semibold text-zinc-100">{team.team_name}</p>
+      <div className="mt-1.5 space-y-1">
+        {team.games.map((game) => (
+          <OnThisDayRow key={game.id} game={game} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SkeletonGrid() {
   return (
     <div className="animate-pulse space-y-4">
@@ -176,6 +225,10 @@ function SkeletonGrid() {
 export default function TodayView() {
   const todayQuery = useToday();
   const teamsQuery = useTeams();
+  // Supplementary "On this day" history; its section self-hides on error /
+  // while pending, so it never gates the main slate. (Hooks run before the
+  // early returns below — the view's standing rule.)
+  const onThisDayQuery = useOnThisDay();
 
   // The leaderboard-event id whose modal is open, or null. Golf has no
   // dedicated tab anymore — its leaderboards are reached by clicking an
@@ -258,6 +311,18 @@ export default function TodayView() {
   const upcomingCount = games.filter((g) => g.phase === "scheduled").length;
   const finalCount = games.filter((g) => g.phase === "final").length;
 
+  // "On this day" hides entirely unless it loaded with content FOR THIS
+  // local day: an error, a pending fetch, an anniversary-free date, or a
+  // payload stamped with a different day (a fetch straddling midnight, or
+  // the query-cache GC window keeping yesterday's entry warm) must never
+  // clutter the slate. Derived with the same helper the query key uses.
+  const onThisDayTeams =
+    !onThisDayQuery.isError &&
+    onThisDayQuery.data !== undefined &&
+    isOnThisDayCurrent(onThisDayQuery.data.date, localKeyFromDate(new Date()))
+      ? onThisDayQuery.data.teams
+      : [];
+
   // The open event resolved from live data, so a background refetch that drops
   // the tournament closes the modal instead of stranding stale rows.
   const openEvent =
@@ -337,6 +402,21 @@ export default function TodayView() {
             </div>
           </section>
         )
+      )}
+
+      {/* Sits OUTSIDE the games/empty-state conditional above, so the
+          anniversaries render on quiet days too. */}
+      {onThisDayTeams.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            On this day
+          </h2>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {onThisDayTeams.map((team) => (
+              <OnThisDayTeamBlock key={team.team_id} team={team} />
+            ))}
+          </div>
+        </section>
       )}
 
       {openEvent !== null && (

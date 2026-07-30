@@ -14,7 +14,9 @@ is pure parsers except ``provider``):
 - ``common``        — shared constants, coercion, status/period normalization
 - ``games``         — team-sport scoreboard/schedule parsing
 - ``individual``    — tennis / MMA (athlete-as-team payload quirks)
-- ``golf``          — leaderboard events (tournaments)
+- ``golf``          — leaderboard events (golf tournaments)
+- ``racing``        — leaderboard events (race weekends) + core-API board
+                      enrichment (constructor / grid / race time)
 - ``summary``       — schedule chunking, box score / plays / win-prob / odds
 - ``standings``     — standings, seasons, tennis rankings
 - ``roster``        — rosters, injuries, stat-line formatting
@@ -47,6 +49,22 @@ from app.providers.espn.individual import (
 )
 from app.providers.espn.news_location import _parse_news, _parse_team_location
 from app.providers.espn.provider import EspnProvider
+from app.providers.espn.racing import (
+    _ENRICH_MAX_CARS,
+    _ENRICH_MAX_EVENTS,
+    _apply_racing_facts,
+    _parse_racing_car_status,
+    _parse_racing_event,
+    _parse_racing_scoreboard,
+    _parse_racing_stats,
+    _racing_enrich_targets,
+    _racing_facts,
+    _racing_field,
+    _racing_lap_label,
+    _racing_leaderboard,
+    _racing_race_distance,
+    _racing_round_label,
+)
 from app.providers.espn.roster import (
     _career_line_from_overview,
     _format_stat_line,
@@ -72,7 +90,10 @@ from app.providers.espn.summary import (
 
 __all__ = [
     "EspnProvider",
+    "_ENRICH_MAX_CARS",
+    "_ENRICH_MAX_EVENTS",
     "_FIGHT_RESULT_MAX_BOUTS",
+    "_apply_racing_facts",
     "_career_line_from_overview",
     "_chunk_date_range",
     "_classify_fight_method",
@@ -98,6 +119,10 @@ __all__ = [
     "_parse_pickcenter",
     "_parse_plays",
     "_parse_predictor",
+    "_parse_racing_car_status",
+    "_parse_racing_event",
+    "_parse_racing_scoreboard",
+    "_parse_racing_stats",
     "_parse_roster",
     "_parse_schedule",
     "_parse_scoreboard",
@@ -108,5 +133,12 @@ __all__ = [
     "_parse_tennis_rankings",
     "_parse_win_probability",
     "_play_period_label",
+    "_racing_enrich_targets",
+    "_racing_facts",
+    "_racing_field",
+    "_racing_lap_label",
+    "_racing_leaderboard",
+    "_racing_race_distance",
+    "_racing_round_label",
     "_stat_line_from_overview",
 ]

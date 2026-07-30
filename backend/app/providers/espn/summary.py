@@ -10,7 +10,9 @@ from datetime import date, timedelta
 from typing import Any, Iterable
 
 
+from app import timeutil
 from app.models.domain import (
+    Clip,
     Game,
     GameOdds,
     GamePlay,
@@ -30,6 +32,7 @@ from app.providers.espn.common import (
     _coerce_int,
     _find_side,
     _hockey_label,
+    _parse_espn_datetime,
     _quarter_label,
 )
 from app.providers.espn.individual import _athlete_name
@@ -680,6 +683,63 @@ def _odds_has_signal(odds: GameOdds) -> bool:
     )
 
 
+_CLIPS_MAX = 12
+
+
+def _parse_clips(data: Any) -> list[Clip]:
+    """Highlight clips from a summary payload's top-level ``videos[]``.
+
+    A clip is only worth keeping with a headline and a web link (the raw
+    media URLs are unreliable), and clips whose
+    ``timeRestrictions.expirationDate`` has already passed are dropped —
+    the provider pulls them, so linking one would 404.  An absent or
+    unparseable expiry keeps the clip.  Capped so a per-play-clip feed
+    stays a highlight reel; malformed entries are skipped, never fatal.
+    """
+    if not isinstance(data, dict):
+        return []
+    videos = data.get("videos")
+    if not isinstance(videos, list):
+        return []
+    clips: list[Clip] = []
+    for video in videos:
+        try:
+            if not isinstance(video, dict):
+                continue
+            headline = video.get("headline")
+            if not (isinstance(headline, str) and headline):
+                continue
+            links = video.get("links")
+            web = links.get("web") if isinstance(links, dict) else None
+            url = web.get("href") if isinstance(web, dict) else None
+            if not (isinstance(url, str) and url):
+                continue
+            restrictions = video.get("timeRestrictions")
+            if isinstance(restrictions, dict):
+                expires = _parse_espn_datetime(restrictions.get("expirationDate"))
+                if expires is not None and expires <= timeutil.utcnow():
+                    continue
+            description = video.get("description")
+            thumbnail = video.get("thumbnail")
+            clips.append(
+                Clip(
+                    headline=headline,
+                    url=url,
+                    description=description
+                    if isinstance(description, str) and description
+                    else None,
+                    duration_seconds=_coerce_int(video.get("duration")),
+                    thumbnail_url=thumbnail if isinstance(thumbnail, str) and thumbnail else None,
+                )
+            )
+        except Exception:
+            logger.warning("Skipping malformed ESPN video clip", exc_info=True)
+            continue
+        if len(clips) >= _CLIPS_MAX:
+            break
+    return clips
+
+
 def _parse_game_summary(data: Any, league: League, provider_game_key: str) -> GameSummary | None:
     """Build a :class:`GameSummary` from a fetched ESPN summary payload.
 
@@ -724,6 +784,7 @@ def _parse_game_summary(data: Any, league: League, provider_game_key: str) -> Ga
             away_total=_coerce_int(away.get("score")),
             win_probability=_parse_win_probability(data),
             plays=tuple(_parse_plays(data, league.sport)),
+            clips=tuple(_parse_clips(data)),
         )
     except Exception:
         logger.warning(

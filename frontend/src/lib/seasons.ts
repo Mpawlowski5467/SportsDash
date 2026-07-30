@@ -3,10 +3,11 @@ import type { SelectOption } from "../components/Select";
 
 /**
  * Season-archive support: espn team sports only. Tennis "standings" are
- * a rolling tour ranking, MMA has no table, golf is a leaderboard sport,
- * and TheSportsDB (volleyball) has no season archive endpoints.
+ * a rolling tour ranking, MMA has no table, golf and racing are
+ * leaderboard sports, and TheSportsDB (volleyball) has no season archive
+ * endpoints.
  */
-const NO_ARCHIVE_SPORTS = new Set(["tennis", "mma", "golf"]);
+const NO_ARCHIVE_SPORTS = new Set(["tennis", "mma", "golf", "racing"]);
 
 export function supportsArchives(league: League | undefined): boolean {
   return (

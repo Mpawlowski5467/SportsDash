@@ -30,6 +30,7 @@ from app.models.orm import (
     NewsORM,
     NotificationPrefORM,
     NotificationSentORM,
+    PlayerFollowORM,
     PlayerORM,
     StadiumORM,
     StandingsArchiveORM,
@@ -350,6 +351,7 @@ async def upsert_games(session: AsyncSession, games: Sequence[domain.Game]) -> i
                 fight_clock=(
                     _clip(game.fight_result.clock, 16) if game.fight_result is not None else None
                 ),
+                broadcasts=list(game.broadcasts),
             )
             if game.state is not None:
                 _apply_state_columns(row, game.state)
@@ -376,6 +378,12 @@ async def upsert_games(session: AsyncSession, games: Sequence[domain.Game]) -> i
             row.home_color = _clip(game.home_color, 16)
         if game.away_color:
             row.away_color = _clip(game.away_color, 16)
+        # Broadcasts follow the crest/color rule: refresh with the schedule,
+        # but an empty incoming list (a pass that didn't carry them) never
+        # wipes a stored one.  Always REASSIGN a fresh list — SQLAlchemy
+        # does not change-track in-place mutation of a JSON column.
+        if game.broadcasts:
+            row.broadcasts = list(game.broadcasts)
 
         # A method of victory only ever arrives with the final result, and a
         # later refresh may not carry it — never let an incoming None wipe a
@@ -720,6 +728,32 @@ async def league_has_games_in_window(
     return result.first() is not None
 
 
+async def team_ids_with_games_starting_within(
+    session: AsyncSession,
+    now_utc: datetime,
+    lookahead: timedelta,
+) -> set[str]:
+    """Team ids with a SCHEDULED game starting in ``[now, now + lookahead)``.
+
+    The scope query for the same-day pre-game roster re-sync: both sides of
+    every imminent fixture, with the null side (a competition fixture whose
+    team isn't followed) dropped.  Deliberately returns plain ids rather than
+    rows — the caller fetches providers between DB scopes, and a detached
+    ``GameORM`` would lazy-load from a sync context the moment it was touched
+    afterwards (MissingGreenlet).  Unlike
+    :func:`games_needing_live_poll` nothing already started is included: a
+    roster fetched after kickoff is too late to be worth a call.
+    """
+    horizon = now_utc + lookahead
+    stmt = select(GameORM.home_team_id, GameORM.away_team_id).where(
+        GameORM.phase == _SCHEDULED_PHASE,
+        GameORM.start_time >= now_utc,
+        GameORM.start_time < horizon,
+    )
+    result = await session.execute(stmt)
+    return {team_id for row in result for team_id in row if team_id is not None}
+
+
 async def games_needing_live_poll(
     session: AsyncSession,
     now_utc: datetime,
@@ -823,14 +857,18 @@ async def event_finals_missing_notification(
 
 
 async def prune_stale_games(session: AsyncSession, now_utc: datetime) -> int:
-    """Drop ghost rows no provider will ever update again.
+    """Drop ghost game/event rows no provider will ever update again.
 
     A 'scheduled' game whose start passed days ago, or an 'in_progress'
     game from days ago, would have been finalized (or reinstated) by the
     daily schedule refresh if any provider still knew about it — see
     :func:`_should_apply_schedule_state`.  What remains is detritus from
     vanished fixtures; without pruning it lingers in the calendar and
-    today views forever.  Returns the number of rows deleted.
+    today views forever.  Leaderboard events get the mirror rule: an
+    'in_progress' event whose weekend has left both the dateless current
+    scoreboard and the daily fetch window can never be finalized again,
+    so ``events_tick`` would otherwise poll it forever.  Returns the
+    number of rows deleted.
     """
     stmt = delete(GameORM).where(
         or_(
@@ -844,7 +882,15 @@ async def prune_stale_games(session: AsyncSession, now_utc: datetime) -> int:
     deleted = result.rowcount or 0
     if deleted:
         logger.info("prune_stale_games: removed %d ghost game row(s)", deleted)
-    return deleted
+    event_stmt = delete(EventORM).where(
+        (EventORM.phase == _IN_PROGRESS_PHASE)
+        & (func.coalesce(EventORM.end_time, EventORM.start_time) < now_utc - timedelta(days=2))
+    )
+    event_result = await session.execute(event_stmt)
+    stale_events = event_result.rowcount or 0
+    if stale_events:
+        logger.info("prune_stale_games: removed %d ghost event row(s)", stale_events)
+    return deleted + stale_events
 
 
 # ---------------------------------------------------------------------------
@@ -986,6 +1032,62 @@ async def get_roster(session: AsyncSession, team_id: str) -> list[PlayerORM]:
 
 
 # ---------------------------------------------------------------------------
+# Player follows
+# ---------------------------------------------------------------------------
+
+
+async def list_player_follows(session: AsyncSession) -> list[PlayerFollowORM]:
+    """Every followed player, ordered by name (athlete id as tiebreaker)."""
+    stmt = select(PlayerFollowORM).order_by(
+        PlayerFollowORM.name.asc(), PlayerFollowORM.athlete_id.asc()
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def follow_player(
+    session: AsyncSession,
+    *,
+    athlete_id: str,
+    name: str,
+    team_id: str,
+    league_id: str,
+    position: str | None = None,
+    photo_url: str | None = None,
+    last_notified_status: str | None = None,
+) -> PlayerFollowORM:
+    """Insert-or-update one player follow (SELECT-then-upsert); returns the row.
+
+    Re-following an already-followed athlete refreshes the display fields
+    (name/team/position/photo) but keeps the original ``followed_at``.
+    ``last_notified_status`` (re)seeds the roster-diff alert baseline —
+    the route passes the roster row's current status so a follow never
+    alerts about a designation the user could already see; ``None``
+    leaves seeding to the next roster sync (a silent first sighting).
+    """
+    row = await session.get(PlayerFollowORM, athlete_id)
+    if row is None:
+        row = PlayerFollowORM(athlete_id=athlete_id, followed_at=utcnow())
+        session.add(row)
+    row.name = _clip(name, 128) or ""
+    row.team_id = _clip(team_id, 64) or ""
+    row.league_id = _clip(league_id, 64) or ""
+    row.position = _clip(position, 32)
+    row.photo_url = _clip(photo_url, 512)
+    row.last_notified_status = _clip(last_notified_status, 24)
+    return row
+
+
+async def unfollow_player(session: AsyncSession, athlete_id: str) -> bool:
+    """Delete one player follow; False when the athlete wasn't followed."""
+    row = await session.get(PlayerFollowORM, athlete_id)
+    if row is None:
+        return False
+    await session.delete(row)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # News
 # ---------------------------------------------------------------------------
 
@@ -1092,6 +1194,11 @@ async def replace_followed(
     for table in (
         NotificationSentORM,
         NotificationPrefORM,
+        # Player follows are wiped with the rest: they point at teams that
+        # may no longer be followed, and are re-picked after a wizard
+        # re-run (no FKs, so its position in this children-first list is
+        # arbitrary — it sits with the other child tables for clarity).
+        PlayerFollowORM,
         TeamCompetitionORM,
         NewsORM,
         PlayerORM,

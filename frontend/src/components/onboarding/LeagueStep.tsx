@@ -13,6 +13,7 @@ const SPORT_ORDER: Sport[] = [
   "tennis",
   "mma",
   "golf",
+  "racing",
   "volleyball",
 ];
 
@@ -26,6 +27,7 @@ const SPORT_LABELS: Record<Sport, string> = {
   mma: "MMA",
   golf: "Golf",
   volleyball: "Volleyball",
+  racing: "Racing",
 };
 
 /** Heading for a sport — capitalize unknown values so future sports still render. */

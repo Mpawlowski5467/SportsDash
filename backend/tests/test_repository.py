@@ -84,6 +84,7 @@ def make_game(
     venue: str | None = "Ashport Fieldhouse",
     state: domain.GameState | None = None,
     fight_result: domain.FightResult | None = None,
+    broadcasts: tuple[str, ...] = (),
 ) -> domain.Game:
     return domain.Game(
         id=game_id,
@@ -97,6 +98,7 @@ def make_game(
         away_abbreviation="RIV",
         venue=venue,
         fight_result=fight_result,
+        broadcasts=broadcasts,
         state=state,
     )
 
@@ -305,6 +307,54 @@ async def test_upsert_games_merges_team_ids(seeded: AsyncSession) -> None:
     assert row is not None
     assert row.home_team_id == TEAM_COMETS
     assert row.away_team_id == TEAM_STAGS
+
+
+async def test_upsert_games_stores_and_never_wipes_broadcasts(seeded: AsyncSession) -> None:
+    """Broadcast networks persist, and an empty incoming list can't erase them.
+
+    Broadcasts follow the crest/color rule: only the scoreboard/schedule
+    pass carries them, so a refresh that doesn't (a state-only pass, a
+    feed that omits the arrays) must leave the stored networks alone —
+    while a pass that does know them overwrites the whole list.
+    """
+    session = seeded
+    start = datetime(2026, 6, 26, 23, 0, tzinfo=timezone.utc)
+    await repository.upsert_games(
+        session,
+        [
+            make_game(
+                "mock:g-tv",
+                start_time=start,
+                home_team_id=TEAM_COMETS,
+                broadcasts=("Pinnacle Sports Network", "Ashport Cable 9"),
+            )
+        ],
+    )
+    await session.flush()
+    session.expire_all()
+
+    row = await repository.get_game(session, "mock:g-tv")
+    assert row is not None
+    assert row.broadcasts == ["Pinnacle Sports Network", "Ashport Cable 9"]
+
+    # A refresh with no broadcast data leaves the stored list alone.
+    await repository.upsert_games(session, [make_game("mock:g-tv", start_time=start)])
+    await session.flush()
+    session.expire_all()
+    row = await repository.get_game(session, "mock:g-tv")
+    assert row is not None
+    assert row.broadcasts == ["Pinnacle Sports Network", "Ashport Cable 9"]
+
+    # A refresh that knows the networks replaces the list wholesale.
+    await repository.upsert_games(
+        session,
+        [make_game("mock:g-tv", start_time=start, broadcasts=("Pinnacle Sports Network",))],
+    )
+    await session.flush()
+    session.expire_all()
+    row = await repository.get_game(session, "mock:g-tv")
+    assert row is not None
+    assert row.broadcasts == ["Pinnacle Sports Network"]
 
 
 async def test_upsert_games_stores_and_never_wipes_a_fight_result(
@@ -1180,6 +1230,72 @@ async def test_prune_stale_games(seeded: AsyncSession) -> None:
     # History and upcoming/recent games are untouched.
     assert await repository.get_game(seeded, "mock:fresh-sched") is not None
     assert await repository.get_game(seeded, "mock:old-final") is not None
+
+
+def _make_event(
+    event_id: str,
+    *,
+    phase: domain.GamePhase,
+    start_time: datetime,
+    end_time: datetime | None = None,
+) -> domain.Event:
+    return domain.Event(
+        id=event_id,
+        league_id=LEAGUE_ID,
+        name=event_id.replace("-", " ").title(),
+        start_time=start_time,
+        end_time=end_time,
+        phase=phase,
+    )
+
+
+async def test_prune_stale_games_sweeps_stuck_events_too(seeded: AsyncSession) -> None:
+    """An in_progress event whose weekend has left every fetch window would
+    otherwise be polled by events_tick forever; the games rule is mirrored on
+    coalesce(end_time, start_time)."""
+    now = utcnow()
+    await repository.upsert_events(
+        seeded,
+        [
+            # Ended (per its own scheduled end) three days ago, still
+            # in_progress: unrepairable — pruned.
+            _make_event(
+                "mock:ghost-event",
+                phase=domain.GamePhase.IN_PROGRESS,
+                start_time=now - timedelta(days=5),
+                end_time=now - timedelta(days=3),
+            ),
+            # No end_time at all: start_time is the coalesce fallback — pruned.
+            _make_event(
+                "mock:ghost-dateless",
+                phase=domain.GamePhase.IN_PROGRESS,
+                start_time=now - timedelta(days=3),
+            ),
+            # Mid-weekend right now: end_time still ahead — kept.
+            _make_event(
+                "mock:live-event",
+                phase=domain.GamePhase.IN_PROGRESS,
+                start_time=now - timedelta(days=1),
+                end_time=now + timedelta(days=1),
+            ),
+            # Finished events are history, however old — kept.
+            _make_event(
+                "mock:old-final-event",
+                phase=domain.GamePhase.FINAL,
+                start_time=now - timedelta(days=10),
+                end_time=now - timedelta(days=9),
+            ),
+        ],
+    )
+    await seeded.flush()
+
+    deleted = await repository.prune_stale_games(seeded, now)
+
+    assert deleted == 2
+    assert await repository.get_event(seeded, "mock:ghost-event") is None
+    assert await repository.get_event(seeded, "mock:ghost-dateless") is None
+    assert await repository.get_event(seeded, "mock:live-event") is not None
+    assert await repository.get_event(seeded, "mock:old-final-event") is not None
 
 
 async def test_state_strings_clipped_to_column_widths(seeded: AsyncSession) -> None:

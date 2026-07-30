@@ -13,7 +13,7 @@ import {
 } from "@tanstack/react-query";
 
 import { api } from "./api";
-import { localDateKey } from "./lib/time";
+import { localDateKey, localKeyFromDate } from "./lib/time";
 import type {
   Bracket,
   CatalogLeaguesResponse,
@@ -28,6 +28,9 @@ import type {
   NewsRefreshResult,
   NewsScope,
   NotificationPrefsResponse,
+  OnThisDay,
+  PlayerFollow,
+  PlayerFollowIn,
   Roster,
   Nation,
   Scorers,
@@ -288,6 +291,29 @@ export function useSeasonResults(
   });
 }
 
+/**
+ * Followed teams' historical games on today's month-day. Keyed by the
+ * viewer's LOCAL calendar day: the kiosk stays mounted for days, and the
+ * Today poll re-renders the view (and so this hook), so the key flips at
+ * midnight and mounts a fresh query instead of pinning yesterday's
+ * anniversaries forever. The payload only changes when the day rolls over
+ * (the backend caches it for 24h), so a 6h stale window keeps it to a few
+ * fetches a day and never on focus; errors aren't retried — the Today view
+ * simply hides the section — but the matching 6h refetchInterval lets a
+ * failed boot-time fetch recover instead of hiding it until reload.
+ */
+export function useOnThisDay(): UseQueryResult<OnThisDay> {
+  const dayKey = localKeyFromDate(new Date());
+  return useQuery({
+    queryKey: ["on-this-day", dayKey],
+    queryFn: () => api.onThisDay(),
+    staleTime: 6 * 60 * 60_000,
+    refetchInterval: 6 * 60 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
 export function useLeaders(
   leagueId: string | undefined,
 ): UseQueryResult<StatLeaders> {
@@ -445,5 +471,50 @@ export function useNotificationPrefs(): UseQueryResult<NotificationPrefsResponse
     queryKey: ["notification-prefs"],
     queryFn: () => api.notificationPrefs(),
     staleTime: FIVE_MINUTES,
+  });
+}
+
+/**
+ * Individually-followed players (keyed by bare ESPN athlete id). Follows
+ * only change through the mutations below — which invalidate this key — so
+ * a 5-minute stale window keeps the star toggles cheap without going stale.
+ */
+export function usePlayerFollows(): UseQueryResult<PlayerFollow[]> {
+  return useQuery({
+    queryKey: ["player-follows"],
+    queryFn: () => api.playerFollows(),
+    staleTime: FIVE_MINUTES,
+  });
+}
+
+/**
+ * Follow one player. Invalidates the follows list and every league's
+ * leaders board (key prefix ["leaders"]): `StatLeader.followed` is stamped
+ * per-request server-side, so cached boards must refetch to show the star.
+ */
+export function useFollowPlayer(): UseMutationResult<
+  PlayerFollow,
+  Error,
+  { athleteId: string; body: PlayerFollowIn }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ athleteId, body }) => api.followPlayer(athleteId, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["player-follows"] });
+      void queryClient.invalidateQueries({ queryKey: ["leaders"] });
+    },
+  });
+}
+
+/** Unfollow one player; invalidation mirrors `useFollowPlayer`. */
+export function useUnfollowPlayer(): UseMutationResult<void, Error, string> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (athleteId) => api.unfollowPlayer(athleteId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["player-follows"] });
+      void queryClient.invalidateQueries({ queryKey: ["leaders"] });
+    },
   });
 }

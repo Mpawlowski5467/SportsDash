@@ -28,6 +28,7 @@ _EVENT_TAGS: dict[EventType, str] = {
     EventType.PERIOD_START: "arrows_counterclockwise",
     EventType.INTERMISSION: "pause_button",
     EventType.FINAL: "checkered_flag",
+    EventType.PLAYER_STATUS: "adhesive_bandage",
 }
 
 _HIGH_PRIORITY_EVENTS: frozenset[EventType] = frozenset({EventType.GAME_START, EventType.FINAL})

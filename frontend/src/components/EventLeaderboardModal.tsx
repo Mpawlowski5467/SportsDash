@@ -2,6 +2,7 @@ import { useId } from "react";
 
 import { formatShortDate } from "../lib/time";
 import type { LeaderRow, SportEvent } from "../types";
+import { NEUTRAL_FALLBACK_COLOR } from "./GameCard";
 import Portal from "./Portal";
 import { useModalChrome } from "./modalChrome";
 
@@ -66,13 +67,18 @@ function ScoreText({ score }: { score: string }) {
   );
 }
 
-/** Full leaderboard table for an event. */
+/**
+ * Full leaderboard table for an event. A non-null `player_id` IS a followed
+ * athlete (the backend contract — the scheduler rewrites the id, else
+ * nulls it); `followedColor` only tints the highlight, falling back to the
+ * neutral chip gray for athletes without a team color (racing drivers).
+ */
 function LeaderboardTable({
   event,
   followedColor,
 }: {
   event: SportEvent;
-  // player_id -> team color of a followed golfer on this board.
+  // player_id -> team color of a followed athlete on this board.
   followedColor: Record<string, string>;
 }) {
   if (event.leaderboard.length === 0) {
@@ -96,7 +102,9 @@ function LeaderboardTable({
         <tbody>
           {event.leaderboard.map((row: LeaderRow, idx) => {
             const color =
-              row.player_id !== null ? followedColor[row.player_id] : undefined;
+              row.player_id !== null
+                ? (followedColor[row.player_id] ?? NEUTRAL_FALLBACK_COLOR)
+                : undefined;
             const followed = color !== undefined;
             return (
               <tr
@@ -151,8 +159,8 @@ function LeaderboardTable({
  * (name, date span, venue, status) and the full Pos / Player / Score / Detail
  * leaderboard as its body. The caller (Today's event grid) owns the open state
  * and mounts this with the already-loaded `event`, so no extra fetch is needed.
- * Followed golfers' rows are highlighted with their team color. Closes on ESC
- * or a backdrop click.
+ * Followed athletes' rows are highlighted, tinted by their team color when
+ * one exists. Closes on ESC or a backdrop click.
  */
 export default function EventLeaderboardModal({
   event,
@@ -160,7 +168,7 @@ export default function EventLeaderboardModal({
   onClose,
 }: {
   event: SportEvent;
-  // player_id -> team color of a followed golfer on this board.
+  // player_id -> team color of a followed athlete on this board.
   followedColor: Record<string, string>;
   onClose: () => void;
 }) {

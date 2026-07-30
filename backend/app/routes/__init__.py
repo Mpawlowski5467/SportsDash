@@ -2,8 +2,8 @@
 
 ``app.main`` includes this router under the ``/api`` prefix; the modules
 here define provider- and storage-agnostic endpoints.  Read-only routes
-never commit; the setup routes are the lone writers (they commit
-explicitly).
+never commit; the writers are ``setup``, ``notifications``, and
+``players`` (each commits explicitly).
 """
 
 from __future__ import annotations
@@ -21,10 +21,12 @@ from app.routes import (
     map_view,
     matchup,
     meta,
+    metrics,
     nation,
     news,
     notifications,
     odds,
+    players,
     results,
     roster,
     schedule,
@@ -37,6 +39,7 @@ from app.routes import (
 
 router = APIRouter()
 router.include_router(health.router)
+router.include_router(metrics.router)
 router.include_router(meta.router)
 router.include_router(teams.router)
 router.include_router(today.router)
@@ -47,6 +50,7 @@ router.include_router(scorers.router)
 router.include_router(nation.router)
 router.include_router(bracket.router)
 router.include_router(roster.router)
+router.include_router(players.router)
 router.include_router(results.router)
 router.include_router(news.router)
 router.include_router(calendar.router)

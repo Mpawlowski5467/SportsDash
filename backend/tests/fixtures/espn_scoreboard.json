@@ -22,6 +22,33 @@
           "id": "9100001",
           "date": "2026-06-11T23:30Z",
           "venue": {"id": "7001", "fullName": "Crestfall Fieldhouse"},
+          "broadcasts": [
+            {"market": "national", "names": ["Crestline Sports Network"]},
+            {"market": "home", "names": ["Fieldhouse Local 5"]}
+          ],
+          "geoBroadcasts": [
+            {
+              "type": {"id": "1", "shortName": "TV"},
+              "market": {"id": "2", "type": "Home"},
+              "media": {"shortName": "Fieldhouse Local 5"},
+              "lang": "en",
+              "region": "us"
+            },
+            {
+              "type": {"id": "4", "shortName": "Streaming"},
+              "market": {"id": "1", "type": "National"},
+              "media": {"shortName": "Crestline Sports Network"},
+              "lang": "en",
+              "region": "us"
+            },
+            {
+              "type": {"id": "1", "shortName": "TV"},
+              "market": {"id": "1", "type": "National"},
+              "media": {"shortName": "Ultramar Deportes"},
+              "lang": "es",
+              "region": "mx"
+            }
+          ],
           "competitors": [
             {
               "id": "55",
@@ -80,6 +107,10 @@
           "id": "9100002",
           "date": "2026-06-11T17:00Z",
           "venue": {"id": "7002", "fullName": "Dunwick Pavilion"},
+          "broadcasts": [
+            {"market": "home", "names": ["Dunwick Cable One"]},
+            {"market": "national", "names": ["Meridian Sports Web"]}
+          ],
           "competitors": [
             {
               "id": "88",

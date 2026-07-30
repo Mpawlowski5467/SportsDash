@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import type { Game, GameOdds, GameSide, League, Sport } from "../types";
 import { useTeams } from "../hooks";
+import { watchability } from "../lib/whyWatch";
 import GameDetailModal from "./GameDetailModal";
 import StatusBadge, {
   fightResultOf,
@@ -25,6 +26,7 @@ const SPORT_FALLBACK_COLORS: Record<Sport, string> = {
   mma: "#ef4444",
   golf: "#14b8a6",
   volleyball: "#eab308",
+  racing: "#64748b", // checkered-flag slate
 };
 
 export const NEUTRAL_FALLBACK_COLOR = "#52525b";
@@ -217,6 +219,15 @@ export default function GameCard({
     odds != null && game.phase !== "final" ? favoriteChip(game, odds) : null;
   // ...and once it's over, a finished fight puts the round/time in its place.
   const fightChip = fightRoundChip(game);
+  const preOrLive = game.phase === "scheduled" || game.phase === "in_progress";
+  // A rare "why watch" pill scored from what the card already holds (the
+  // game plus the batched odds prop — no extra fetches). Pre/live only, and
+  // it yields whenever the fight chip occupies the slot.
+  const watch =
+    preOrLive && fightChip === null ? watchability(game, odds) : null;
+  // Where to watch: the first (national-market-first) network, pre/live only.
+  const broadcast =
+    preOrLive && game.broadcasts.length > 0 ? game.broadcasts[0] : null;
 
   return (
     <>
@@ -250,7 +261,12 @@ export default function GameCard({
           />
         </div>
         <div className="mt-2 flex items-center justify-between gap-2 border-t border-zinc-800/70 pt-2">
-          <span className="flex shrink-0 items-center gap-2">
+          {/* The chip rail can stack four chips (status + odds + why-watch +
+              broadcast) — it must SHRINK on one-column widths, not push past
+              the card border. min-w-0 lets it give way; the broadcast chip
+              is the only min-w-0 child, so it truncates first while the
+              fixed-content chips keep their size. */}
+          <span className="flex min-w-0 items-center gap-2">
             <StatusBadge game={game} />
             {chip !== null && (
               <span
@@ -266,6 +282,22 @@ export default function GameCard({
                 title={fightChip.title}
               >
                 {fightChip.label}
+              </span>
+            )}
+            {watch !== null && (
+              <span
+                className="inline-flex items-center rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-400"
+                title={`Why watch: ${watch.reason}`}
+              >
+                🔥 {watch.reason}
+              </span>
+            )}
+            {broadcast !== null && (
+              <span
+                className="inline-flex min-w-0 max-w-[7rem] items-center rounded-full border border-zinc-700 bg-zinc-800/60 px-2 py-0.5 text-[10px] font-semibold text-zinc-400"
+                title={game.broadcasts.join(" · ")}
+              >
+                <span className="truncate">{broadcast}</span>
               </span>
             )}
           </span>

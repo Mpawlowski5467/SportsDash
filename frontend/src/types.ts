@@ -12,7 +12,8 @@ export type Sport =
   | "tennis"
   | "mma"
   | "golf"
-  | "volleyball";
+  | "volleyball"
+  | "racing"; // leaderboard: one race weekend, a field of drivers
 
 export type GamePhase =
   | "scheduled"
@@ -80,6 +81,7 @@ export interface Game {
   venue: string | null;
   series: string | null; // tournament/round or fight card (individual sports)
   fight_result: FightResult | null; // MMA: method of victory (finished bouts)
+  broadcasts: string[]; // where to watch: network names, national market first
   phase: GamePhase;
   period: number;
   period_label: string;
@@ -213,6 +215,15 @@ export interface Goal {
   penalty: boolean;
 }
 
+/** A highlight video clip; `url` is the provider's clip page. */
+export interface Clip {
+  headline: string;
+  description: string | null;
+  duration_seconds: number | null;
+  thumbnail_url: string | null;
+  url: string;
+}
+
 export interface GameSummary {
   game_id: string;
   periods: PeriodScore[];
@@ -223,6 +234,7 @@ export interface GameSummary {
   away_total: number | null;
   win_probability: number[]; // home win % over time (0–100), chronological
   plays: GamePlay[]; // condensed key-moment play-by-play
+  clips: Clip[]; // highlight clips, when the provider ships them (never stored)
 }
 
 export interface Weather {
@@ -366,6 +378,7 @@ export interface StatLeader {
   stat_label: string; // headline stat unit (e.g. "G", "PPG")
   detail: string; // full stat_line
   highlighted: boolean; // on a team you follow
+  followed: boolean; // the player themselves is followed (stamped per-request)
 }
 
 export interface StatLeaders {
@@ -468,6 +481,25 @@ export interface NewsRefreshResult {
   inserted: number;
 }
 
+// --- "On this day" (historical archives) ----------------------------------
+
+/** One followed team's past games on today's local month-day. */
+export interface OnThisDayTeam {
+  team_id: string;
+  team_name: string;
+  games: Game[]; // newest first, across the scanned seasons
+}
+
+/**
+ * Followed teams' historical games on today's calendar date. `teams` only
+ * carries teams with at least one match; empty is the normal no-anniversary
+ * state (never a 404).
+ */
+export interface OnThisDay {
+  date: string; // the local ISO date (YYYY-MM-DD) the month-day was taken from
+  teams: OnThisDayTeam[];
+}
+
 export interface Meta {
   timezone: string;
   live_poll_seconds: number;
@@ -488,7 +520,7 @@ export interface CatalogLeague {
   provider: string;
   national: boolean; // national-team competition
   supports_follow_all: boolean; // offer "follow the whole competition"
-  entity_noun: string; // "team" | "player" | "fighter"
+  entity_noun: string; // "team" | "player" | "fighter" | "golfer" | "driver"
   logo_url: string | null; // league logo for the picker
 }
 
@@ -537,4 +569,30 @@ export interface NotificationPrefUpdate {
   scope: string;
   muted?: boolean;
   events?: Record<string, boolean>;
+}
+
+// --- Player follows --------------------------------------------------------
+
+/** One followed individual player (on a followed team-sport team). */
+export interface PlayerFollow {
+  athlete_id: string; // bare ESPN athlete id (roster ids carry it "espn:"-prefixed)
+  name: string;
+  team_id: string; // internal slug of the followed parent team
+  league_id: string;
+  position: string | null;
+  photo_url: string | null;
+  followed_at: string; // ISO 8601 UTC
+}
+
+/**
+ * Body of PUT /players/follows/{athlete_id}. v1 constraint: `team_id` must
+ * be a followed team and the athlete must be on its stored roster (the
+ * roster is the picker).
+ */
+export interface PlayerFollowIn {
+  name: string;
+  team_id: string;
+  league_id: string;
+  position: string | null;
+  photo_url: string | null;
 }

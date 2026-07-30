@@ -64,7 +64,8 @@ source fails fast.
 
 A package since 2026-07-12 (split from the original 3,174-line
 `espn.py`): `common` (constants, coercion, status/period normalization),
-`games`, `individual` (tennis / MMA), `golf`, `summary` (schedule
+`games`, `individual` (tennis / MMA), `golf`, `racing` (race weekends,
+added 2026-07-28 — see *Motorsport* below), `summary` (schedule
 chunking, box score, plays, win probability, odds), `standings`,
 `roster`, `news_location`, and `provider` (the class itself). Every
 module but `provider` is pure parsers over fetched JSON; `__init__`
@@ -102,7 +103,11 @@ contract is in the *Phase 6: volleyball* section below.
 
 All functions take `session: AsyncSession` first; **no commits inside** —
 callers commit (`session_scope()` commits on success; route handlers that
-write must commit explicitly).
+write must commit explicitly). Exactly **three** route modules write:
+`routes/setup.py` (`POST /setup/follow`), `routes/notifications.py`
+(`PUT /notifications/prefs`) and — since 2026-07-28 — `routes/players.py`
+(`PUT`/`DELETE /players/follows/{athlete_id}`); every other route is
+read-only and never commits (see *Player follows* below).
 
 ```python
 async def list_leagues(session) -> list[LeagueORM]
@@ -130,9 +135,12 @@ async def upsert_games(session, games: Sequence[domain.Game]) -> int
     # below. All provider strings are clipped to
     # their column widths on write. Returns number of rows touched.
 async def prune_stale_games(session, now_utc: datetime) -> int
-    # delete ghost rows: 'scheduled' with start older than now-3d,
-    # 'in_progress' older than now-2d (daily refresh would have healed
-    # them if any provider still knew the fixture). Run by daily_refresh.
+    # delete ghost rows: 'scheduled' games with start older than now-3d,
+    # 'in_progress' games older than now-2d (daily refresh would have
+    # healed them if any provider still knew the fixture); also deletes
+    # 'in_progress' EventORM rows whose coalesce(end_time, start_time)
+    # is older than now-2d (events_tick would otherwise poll a stuck
+    # event forever). Returns games + events deleted. Run by daily_refresh.
 async def apply_game_state(session, state: domain.GameState) -> GameORM | None
     # update state columns + state_updated_at; None if game id unknown
 def state_from_row(row: GameORM) -> domain.GameState
@@ -146,10 +154,22 @@ async def results_for_team(session, team_id: str, limit: int = 25) -> list[GameO
 async def games_needing_live_poll(session, now_utc, lead: timedelta, max_age: timedelta = timedelta(hours=8)) -> list[GameORM]
     # in_progress games (start_time newer than now-max_age), plus
     # scheduled games with start_time in [now - max_age, now + lead]
+async def team_ids_with_games_starting_within(session, now_utc, lookahead: timedelta) -> set[str]
+    # home/away ids of phase == 'scheduled' games with start_time in
+    # [now, now + lookahead); the null side is dropped. Returns ids, NOT
+    # rows: the caller fetches providers between DB scopes and a detached
+    # GameORM would lazy-load (MissingGreenlet). Nothing already started is
+    # included, unlike games_needing_live_poll. Scope query for
+    # refresh_pregame_rosters (2026-07-29).
 async def save_standings(session, standings: domain.Standings) -> None
 async def get_standings(session, league_id: str) -> StandingsORM | None
 async def replace_roster(session, roster: domain.Roster) -> None
-    # delete + reinsert players for the team; set teams.roster_updated_at
+    # delete + reinsert players for the team; set teams.roster_updated_at.
+    # THE single writer of that timestamp — since 2026-07-29 it is also the
+    # per-team cooldown clock for refresh_pregame_rosters, so a sync cools
+    # itself down. The delete+reinsert writes EVERY player column, so a
+    # caller holding a partial payload must carry the stored enrichment
+    # forward first (see _carry_forward_enrichment in scheduler/refresh.py).
 async def get_roster(session, team_id: str) -> list[PlayerORM]
 async def upsert_news(session, items: Sequence[domain.NewsItem]) -> int   # newly inserted count
 async def list_news(session, team_id: str | None = None, limit: int = 50) -> list[NewsORM]
@@ -220,6 +240,7 @@ def setup_scheduler() -> AsyncIOScheduler   # configured, NOT started
 async def refresh_schedules() -> None       # window: -7d … +45d per team
 async def refresh_standings() -> None
 async def refresh_rosters() -> None
+async def refresh_pregame_rosters() -> None # status-only roster re-sync for imminent games; NOT part of daily_refresh (2026-07-29)
 async def refresh_news() -> None            # delegates to services.news.refresh_all_news
 async def live_tick() -> None
 async def daily_refresh() -> None           # schedules + standings + rosters (+ news)
@@ -228,10 +249,14 @@ async def daily_refresh() -> None           # schedules + standings + rosters (+
 them to register them, so `jobs.refresh_schedules` still resolves — but only
 `setup_scheduler` is defined there. The package split into
 `scheduler/refresh.py` (`refresh_schedules`, `refresh_standings`,
-`refresh_rosters`, `refresh_news`, `refresh_locations`, `daily_refresh` and
+`refresh_rosters`, `refresh_pregame_rosters`, `refresh_news`,
+`refresh_locations`, `daily_refresh` and
 their `_resolve_*` helpers), `scheduler/live.py` (`live_tick`,
-`events_tick`), `scheduler/common.py` (shared constants and the golfer-id
-tagging) and `scheduler/stadium_cache.py` (competition stadium resolution).
+`events_tick`), `scheduler/common.py` (shared constants and the
+followed-athlete-id tagging for leaderboard sports —
+`_tag_followed_athletes`, renamed from `_tag_followed_golfers` when
+racing joined golf in `LEADERBOARD_SPORTS`; see *Motorsport* below) and
+`scheduler/stadium_cache.py` (competition stadium resolution).
 Sections written before the split — Phase 10, Phase 11, Phase 27 — still say
 `jobs.<name>`; read that as the name, not the file.
 
@@ -240,7 +265,10 @@ Jobs use `session_scope()`, resolve providers via
 and per-team errors so one bad source never kills a whole job. Schedule:
 `daily_refresh` daily at `settings.daily_refresh_hour` (in
 `settings.tzinfo`); news every `news_refresh_minutes`; `live_tick` every
-`live_poll_seconds` (`max_instances=1`, `coalesce=True`).
+`live_poll_seconds` (`max_instances=1`, `coalesce=True`);
+`refresh_pregame_rosters` every `pregame_roster_refresh_minutes`
+(`max_instances=1`, `misfire_grace_time=300`, `coalesce=True` — see
+*Same-day pre-game roster re-sync* below).
 
 `live_tick` cheap-gate logic:
 1. `games_needing_live_poll(now, lead=live_lead_minutes)`; empty → return
@@ -318,6 +346,7 @@ Route table (all under `/api`, response models from `schemas.py`):
 | Route | Response | Notes |
 |---|---|---|
 | `GET /health` | `{status, database, providers, provider_health}` | deep check; `status` is `"ok"`/`"degraded"`, `providers` is the count, `provider_health` the per-provider circuit state. Always 200 — a failed DB probe degrades `status` rather than 500-ing (see *Ops: backups + health deep-check* below) |
+| `GET /metrics` | `text/plain; version=0.0.4; charset=utf-8` | Prometheus text-format exposition, hand-rolled (no prometheus_client). Reads the SAME sources as `/health` (live `SELECT 1` probe, circuit-breaker registry) so the two can never disagree. Always 200 — a failed DB probe becomes `sportsdash_database_up 0` (see *Prometheus-style `/api/metrics`* below) |
 | `GET /meta` | `MetaOut` | `version` = `meta.APP_VERSION`, the shipped app version. Deliberately **not** repeated here as a literal: the string already ships in five files (only two of which fail the build when they disagree — see the release checklist in [CONTRIBUTING.md](../CONTRIBUTING.md#release-checklist)), and a copy in prose is the one nothing would catch |
 | `GET /teams` | `TeamsOut` | |
 | `GET /today` | `TodayOut` | local day via `local_day_bounds(local_today(tz), tz)`; sorted by start_time |
@@ -328,6 +357,10 @@ Route table (all under `/api`, response models from `schemas.py`):
 | `GET /results/{team_id}?limit=25` | `list[GameOut]` | finals, newest first |
 | `GET /news?team_id=&limit=50` | `list[NewsItemOut]` | |
 | `GET /calendar.ics?team_id=` | `text/calendar` | all games −30d…+60d **plus every leaderboard event overlapping that window** (all-day spans); `Content-Disposition: attachment; filename=sportsdash.ics`. `?team_id=` narrows to that team's games, omits events, and renames the file `sportsdash-{team_id}.ics`; 404 unknown team |
+| `GET /history/on-this-day` | `OnThisDayOut` | every followed team's past games on today's **local** month-day, scanned over the last 5 season keys; always 200 — empty `teams` is the normal no-anniversary state; unsupported providers/sports skipped silently (see *"On this day"* below) |
+| `GET /players/follows` | `list[PlayerFollowOut]` | followed players, ordered by name |
+| `PUT /players/follows/{athlete_id}` | `PlayerFollowOut` | body `PlayerFollowIn`; 404 unless the athlete is on a followed team's stored roster (see *Player follows* below) |
+| `DELETE /players/follows/{athlete_id}` | 204 | 404 when not followed |
 
 404s raise `HTTPException(404, "...")`. Unknown query params ignored.
 
@@ -829,11 +862,16 @@ already — currently only player/fighter/team; ADD golf→"golfer".)
   to the internal followed-team id when it matches a followed golfer,
   else None. `upsert_events`.
 - A new `events_tick` job (interval ~3 min, max_instances=1, coalesce):
-  for `active_events` (in-progress golf), call `get_event_state`,
-  re-tag followed golfers, `upsert_events`. Notifications (modest, via
-  notify + prefs): tournament FINAL with the followed golfer's finishing
-  position. Use a dedupe key `"{event_id}:final"`. Round-by-round is out
-  of scope this phase. Register events_tick in setup_scheduler.
+  for everything `active_events` returns — in-progress events PLUS
+  SCHEDULED events starting within the 30-min lookahead, so a
+  single-day race's flips (including straight to FINAL) are observed
+  live — call `get_event_state`, re-tag followed golfers,
+  `upsert_events`. Notifications (modest, via notify + prefs):
+  tournament FINAL with the followed golfer's finishing position. Use a
+  dedupe key `"{event_id}:final"`; `active_events` never returns FINAL
+  rows, so a fresh FINAL state is by definition a transition.
+  Round-by-round is out of scope this phase. Register events_tick in
+  setup_scheduler.
 
 ### mock.py (mock owner)
 - Implement `get_events`/`get_event_state`: a deterministic fictional
@@ -1933,7 +1971,11 @@ throughout the docs, the module docstrings and the code comments on
 2026-07-27. This is the wording to reuse: *"leaderboard competitions
 (golf tournaments — golf is the only sport modeled as an `Event`)"*. If a
 second leaderboard sport is ever added it joins `LEADERBOARD_SPORTS`
-first, and the docs follow the set, not the other way round.
+first, and the docs follow the set, not the other way round. **That
+happened on 2026-07-28: racing joined the set** (see *Motorsport* below),
+so `LEADERBOARD_SPORTS` is now `frozenset({Sport.GOLF, Sport.RACING})`
+and race weekends draw as all-day spans too; the tennis point above is
+unchanged.
 
 - `services/ics.py::games_to_ics` gains a keyword-only
   `events: Sequence[EventORM] = ()`; existing two-arg callers still
@@ -1985,7 +2027,8 @@ first, and the docs follow the set, not the other way round.
   empty. Considered and rejected: filtering events by the golfers in
   them. The only link from a stored event back to a followed golfer is
   `leaderboard[].player_id` (rewritten ESPN-id → internal-id by
-  `scheduler/common.py::_tag_followed_golfers`), which exists only once
+  `scheduler/common.py::_tag_followed_golfers`, since renamed
+  `_tag_followed_athletes`), which exists only once
   the provider publishes a field — future tournaments arrive from the
   season calendar with an empty board, so such a feed would carry the
   tournaments the golfer has already played and none of the ones they are
@@ -2138,3 +2181,1372 @@ identical buttons called "Map marker".
   [ROADMAP.md](../ROADMAP.md) *Loose ends*.
 - Sections *Phase 11 → Frontend* and *Phase 14* describe the marker
   rendering and the hover label this sits alongside.
+
+## Game broadcasts ("where to watch") + highlight clips (2026-07-28)
+
+Two additive features, landed together: one new list field on `GameOut`
+(backed by one new `games` JSON column) and one new list on
+`GameSummaryOut` (never stored). No route code changed; both ride the
+shared serializers.
+
+### Broadcasts: which networks carry a game
+
+- `domain.Game.broadcasts: tuple[str, ...] = ()`, after `fight_result` —
+  broadcast network names, national market first. `()` whenever the
+  provider lists none. Purely additive: individual sports
+  (`espn/individual.py::_parse_individual_competition`) never fill it and
+  keep their shape via the default.
+- Parsing (`espn/games.py::_parse_broadcasts`, called from `_parse_event`
+  beside the venue read): prefers the scoreboard competition's
+  `geoBroadcasts[]` — it carries a structured `market.type` plus
+  `region`/`lang`, so foreign feeds can be filtered — taking
+  `media.shortName` from entries with `region == "us"` and
+  `lang == "en"`, ordered National → Home → Away (`market.type` compared
+  case-insensitively; unknown markets sort last; the sort is stable so
+  the feed's own order survives within a market). When geo yields
+  nothing it falls back to the flat `broadcasts[].names` (national
+  market entries first). Deduped preserving order, capped at
+  `_BROADCASTS_MAX = 6`, and fully defensive — malformed entries are
+  skipped, never fatal. Upcoming (`pre`) games carry both arrays too
+  (verified live), so the chip works pre-game with no extra fetch.
+- `schemas.GameOut.broadcasts: list[str] = []`, mirrored in `types.ts`
+  as `Game.broadcasts: string[]` (placed between `fight_result` and
+  `phase`, matching schemas.py order; required client-side — the backend
+  defaults to `[]`). The contracts triple (domain, schema, TS) changed
+  together as always, with the regenerated OpenAPI snapshot. Every
+  endpoint serving `GameOut` (`/today`, `/schedule`,
+  `/schedule/{team_id}`, `/games/{id}`, `/results/{team_id}`,
+  `/history/results/{team_id}`, `/matchup/…`, `/nation/…`) carries it
+  for free via the shared serializer. (`/map`'s `MapGameOut` is its own
+  narrower shape and does NOT carry it.)
+- Persistence: `GameORM.broadcasts: Mapped[list] = mapped_column(JSON,
+  default=list)` (the `TeamORM.rss_feeds` precedent), with
+  `("games", "broadcasts", "JSON")` appended to
+  `migrations._ADDITIVE_COLUMNS` — the FIRST JSON column through the
+  additive path; `tests/test_db_migrations.py` proves the DDL against
+  the production sqlite engine. Rows predating the migration hold NULL,
+  which both serializers read as `[]`.
+- Merge rule (`repository.upsert_games`): the insert branch writes
+  `list(game.broadcasts)`; the update branch overwrites **only when the
+  incoming list is non-empty** — the crest/color truthiness rule, and
+  accurately so this time (one source, whole-value overwrite; unlike the
+  per-field `fight_*` merge). A state-only refresh or a feed that omits
+  the arrays never wipes a stored lineup of networks. The column is
+  always REASSIGNED a fresh list, never mutated in place — SQLAlchemy
+  does not change-track in-place JSON mutation (same gotcha as
+  `NotificationPrefORM.events`, repository.py's standing comment).
+- Serialization: `game_to_out` emits `list(row.broadcasts or [])`
+  (pre-migration NULL → `[]`); `domain_game_to_out` emits
+  `list(game.broadcasts)` — parity enforced in `tests/test_serialize.py`.
+
+### Highlight clips on the game detail (never stored)
+
+- `domain.Clip` (frozen): `headline: str`, `url: str` (the provider's
+  clip PAGE, required — the raw media URLs are unreliable/auth-gated),
+  plus optional `description`, `duration_seconds`, `thumbnail_url`.
+  `domain.GameSummary.clips: tuple[Clip, ...] = ()`.
+- Parsing (`espn/summary.py::_parse_clips`, from the summary payload's
+  top-level `videos[]`): a clip needs a `headline` and a
+  `links.web.href` to be kept; entries whose
+  `timeRestrictions.expirationDate` parses to a past instant are dropped
+  (the provider pulls expired clips, so linking one would 404), while an
+  absent or unparseable expiry keeps the clip. Capped at
+  `_CLIPS_MAX = 12`; per-clip try/except skip, never fatal.
+- `schemas.ClipOut` (`headline`, `description?`, `duration_seconds?`,
+  `thumbnail_url?`, `url`) and `GameSummaryOut.clips: list[ClipOut] = []`,
+  emitted by `serialize.summary_to_out`; mirrored in `types.ts` as
+  `Clip` (field-for-field) + `GameSummary.clips` (appended last).
+- Deliberately NO ORM/migration/repository change: `GameSummary` is the
+  contractually never-stored container, `fetch_summary` refetches live
+  per `GET /api/games/{game_id}` request (no caching), and clip URLs are
+  volatile provider assets with no precedent for persistence. Anything a
+  LIST view ever needs (e.g. a "has highlights" badge) would instead be
+  a stored `Game` column with migration + merge rule — not this field.
+- Reach: clips ride `GET /api/games/{game_id}` only (`GameDetailOut.summary`).
+  They can never appear for individual sports —
+  `EspnProvider.get_game_summary` returns `None` up front for
+  tennis/MMA/golf — and soccer effectively ships none (empty `videos[]`
+  verified across MLS/EPL), so the frontend must degrade gracefully on
+  an empty list (and does — see below).
+
+### Frontend
+
+- `GameCard`'s left footer chip rail (StatusBadge → odds chip → fight
+  chip → why-watch pill → broadcast chip) gains a display-only
+  broadcast chip: the zinc fight-chip recipe at `text-[10px]`, showing
+  `broadcasts[0]` truncated at `max-w-[7rem]`, with every network
+  joined `" · "` in the `title` tooltip. Gated to
+  `scheduled | in_progress`, and display-only because the card is one
+  `<button>` — no nested interactive elements. The rail itself is
+  shrinkable (`min-w-0`; the former `shrink-0` was dropped) so the
+  four-chip stack cannot overflow the card border on one-column widths
+  — the broadcast chip (`min-w-0` + `truncate`) collapses first while
+  fixed-content chips keep their size; the venue span's behavior is
+  unchanged.
+- `GameDetailModal`: the matchup header gains a quiet third line —
+  `broadcasts.join(" · ")`, `text-xs text-zinc-500`, only when
+  non-empty (any phase) — and a self-hiding **Highlights** section
+  renders in DetailBody after the play-by-play timeline: house h3 + one
+  bordered box with a divided list, each clip row a single
+  `<a target="_blank" rel="noreferrer">` (the NewsDetailPanel
+  convention) with an optional `aspect-video object-cover
+  loading="lazy" alt=""` thumbnail, truncated headline, and `m:ss`
+  duration when `duration_seconds` is set. `hasSummaryContent` now
+  includes `clips.length > 0`, so a clips-only summary no longer shows
+  "Box score not available".
+
+### Tests
+
+`tests/test_espn.py`: geo-preferred ordering + foreign-feed filtering
+(fixture), flat-names fallback (fixture), case-insensitive markets +
+dedupe + malformed-entry skips, cap + absent-keys default; clip fixture
+parse (full + minimal clip), expired/missing-url/missing-headline/
+malformed skips, unparseable-expiry keep, cap. `tests/test_repository.py`:
+insert stores, empty incoming preserves, non-empty overwrites.
+`tests/test_serialize.py`: both serializers emit identical `broadcasts`,
+pre-migration NULL reads as `[]`. `tests/test_db_migrations.py`: the
+JSON column arrives on a pre-existing production-path sqlite database,
+NULL on existing rows, list round-trips. Fixtures
+(`espn_scoreboard.json`, `espn_basketball_summary.json`) gained
+fictional networks/clips only.
+
+## Prometheus-style `/api/metrics` (2026-07-28)
+
+The last Phase-7 loose end, previously *Explicitly declined* in
+ROADMAP.md. Hand-rolled exposition-format 0.0.4 — **no new
+dependency** (half of the original objection), and every series reads
+the SAME sources `/api/health` reads (the other half: two endpoints must
+never tell different stories about the same breaker). The desktop
+PyInstaller bundle is unchanged.
+
+### `GET /api/metrics` (`routes/metrics.py`)
+
+`text/plain; version=0.0.4; charset=utf-8`, `# HELP`/`# TYPE` per
+family, escaped label values (`\\`, `\"`, `\n`), no timestamps, trailing
+newline. Never raises — a failed database probe degrades the gauge, not
+the status code. Series:
+
+| Series | Type | Source (shared with `/api/health`) |
+|---|---|---|
+| `sportsdash_database_up` | gauge | the same `SELECT 1` probe `health()` runs; 1 up / 0 down |
+| `sportsdash_provider_circuit_state{provider}` | gauge | `circuit_breaker.all_breakers()` × `registry.provider_ids()`; 0 closed / 1 half_open / 2 open. A provider with no live breaker (never called) reads 0, exactly as `/health` reads it as permanently `closed` |
+| `sportsdash_provider_consecutive_failures{provider}` | gauge | `CircuitBreaker.failures` — a gauge, **not** a counter: it resets to 0 on any success |
+| `sportsdash_provider_last_error_timestamp_seconds{provider}` | gauge | `CircuitBreaker.last_error_at` as unix seconds; the series is omitted for providers that never errored |
+| `sportsdash_background_tasks` | gauge | `len(background._tasks)` — the strong-reference set is the in-flight set |
+| `sportsdash_cache_hits_total` / `sportsdash_cache_misses_total` | counter | new module-level ints in `services/cache.py`'s `cache_get_json` (accessor `cache_counters()`). A hit returned a decoded value; everything else — no client configured, GET failure, absent key, invalid JSON — is a miss, matching the cache's best-effort semantics |
+| `sportsdash_scheduler_job_runs_total{job,result="success"\|"error"}` | counter | `services/metrics_state.py` job registry (below) |
+| `sportsdash_scheduler_job_last_run_timestamp_seconds{job}` | gauge | same registry; omitted before a job's first run |
+
+### `services/metrics_state.py` — scheduler-job registry
+
+The `AsyncIOScheduler` instance is a local inside `main.lifespan`, so
+the route cannot ask it anything. Instead a module-level registry
+(same pattern as `circuit_breaker._breakers`): `setup_scheduler` wraps
+each of the five job coroutines (`daily_refresh`, `refresh_news`,
+`refresh_pregame_rosters` — added 2026-07-29 — `live_tick`,
+`events_tick`) with `metrics_state.instrumented(job_id,
+func)`, which seeds the job id eagerly (all jobs visible with zero
+counts from startup) and ticks success/error counts plus a last-finish
+timestamp per run. Jobs are defensive and never raise; if one escapes
+anyway it counts as `result="error"` and re-raises so APScheduler's own
+logging still fires. `reset_all()` exists for test isolation, mirroring
+the breaker registry.
+
+Scrape targets: `127.0.0.1:8001/api/metrics` on the docker host (the
+api port is loopback-only), `api:8000/api/metrics` inside the compose
+network, or `:3000/api/metrics` through the frontend proxy (which
+forwards only `/api` paths — the reason the route is not root-mounted).
+
+*Verified per the old ROADMAP criterion:* `tests/test_metrics.py`
+asserts each series against the `/api/health` body in the same test —
+DB probe down ⇒ `sportsdash_database_up 0` **and** `database: false`;
+breaker open ⇒ state gauge 2 **and** `provider_health.….circuit ==
+"open"` + `status: "degraded"`.
+
+## Motorsport: F1 / NASCAR Cup / IndyCar as leaderboard leagues (2026-07-28)
+
+**Domain.** `Sport.RACING = "racing"` (`app/models/domain.py`). Racing is
+a member of BOTH `LEADERBOARD_SPORTS` (modeled as `Event`, never `Game` —
+the set is now `frozenset({Sport.GOLF, Sport.RACING})`) and
+`INDIVIDUAL_SPORTS` (a followed driver is a single-member "team" whose
+`provider_key` is the ESPN athlete id). Racing is NOT in `WEATHER_SPORTS`.
+
+**Catalog** (`app/providers/espn_catalog.py`). Three pickable leagues, all
+`supports_follow_all=True`, provider_keys and logo_urls live-verified
+2026-07 against each `racing/{key}/scoreboard` (`racing/nascar` and
+`racing/indycar` 400 — the working keys are below):
+
+| id | name | provider_key |
+|---|---|---|
+| `f1` | Formula 1 | `racing/f1` |
+| `nascar-cup` | NASCAR Cup Series | `racing/nascar-premier` |
+| `indycar` | IndyCar Series | `racing/irl` |
+
+The picker's driver list is the season driver standings UNIONED with
+the current scoreboard's field. The standings come from the `/apis/v2/`
+standings host (`https://site.api.espn.com/apis/v2/sports/{provider_key}/standings`
+— the `site/v2` host's `/standings` is a stub). Every
+`children[].standings.entries[]` row carrying an `athlete` object is a
+driver (F1's constructor child carries `team` rows and is passed over —
+no child-name matching). `CatalogTeam.provider_key` = `athlete.id`,
+abbreviation = `athlete.abbreviation` else name-initials, `logo_url` is
+CONSTRUCTED as `https://a.espncdn.com/i/headshots/rpm/players/full/{id}.png`
+(headshots appear nowhere in racing payloads; the `rpm` path is shared
+across series, verified live; a missing backmarker image 404s to the
+picker's initials chip). Standings rank order comes first, then the
+scoreboard competitors not already present (substitutes/part-time
+drivers holding no championship entry) — competitor-level `id` IS the
+athlete id (the nested `athlete` object has NO id) — deduped by athlete
+id, cap 120 across the union. When the standings yield nothing (or are
+down) the scoreboard field stands alone; a scoreboard fetch failure
+with standings in hand degrades to standings-only; empty results are
+not cached; both sources down raises `EspnCatalogError` (→ 502).
+`GET /setup/leagues` derives `entity_noun: "driver"` for racing.
+
+**Parser** (`app/providers/espn/racing.py`, sibling of `golf.py`). A racing
+scoreboard event is one race WEEKEND → one `Event`:
+
+- `id = "espn:{event.id}"` (F1 ids are 9-digit; NASCAR/IndyCar ids are
+  date-encoded `YYYYMMDDNNNN` — same shared events table, no collisions
+  observed).
+- `start_time` = event `date`; `end_time` = event `endDate`, falling back
+  to the latest session `date` (NASCAR/IndyCar have no `endDate`), else None.
+- `phase` from event `status.type.state` via the shared `_map_phase`
+  (pre→scheduled, in→in_progress, post→final; POSTPON/CANCEL by name).
+- `round_label`: only while in progress — the first session in state `"in"`
+  names it by `type.abbreviation` ("FP2", "Qual", "SS", "SR"); the Race
+  session (or the sole typeless competition, which IS the race for
+  NASCAR/IndyCar) appends lap progress from `status.period` when truthy:
+  `"Race · Lap 44"`. Bounded to 48 chars (`EventORM.round_label` is
+  String(48)). Scheduled/final → `""`.
+  **Since 2026-07-29** the provider extends that label in place to
+  `"Race · Lap 44 of 70"` when the core API yields the race distance (see
+  *Core-API board enrichment* below). The extension only ever touches a
+  label that already carries the `" · Lap "` clause — a practice or
+  qualifying label, and a finished weekend's empty label, are left alone —
+  and the result is still bounded to 48 chars (and re-clipped by
+  `repository._clip`). Without the distance the label is unchanged.
+- `leaderboard`: the Race session's competitors (finishing/running order);
+  when the race has no field yet, the latest session that has competitors
+  (quali/practice classification); else `()` — scheduled races often ship
+  no entry list at all. Rows ordered by `order`: `position = order`,
+  `position_label = str(order)` (racing positions are unique — no "T" tie
+  labels), `name = athlete.displayName` (fallback `fullName`), `score = ""`
+  and `detail = "Winner"` when `winner` is true else `""`. That is the
+  **un-enriched** board and it is still exactly what the parser alone
+  produces — the site scoreboard carries no per-driver time, lap, grid slot
+  or constructor, with **one 2026-07-29 exception**: on a board session in
+  state `"in"` the parser reads that competitor's own `statistics` slot for a
+  running gap, which is the only per-driver number the site payload has ever
+  been thought to carry (and has never been observed carrying — see *Live
+  gaps* below). Since 2026-07-29 the provider fills both columns from the
+  core API afterwards; see *Core-API board enrichment* below. Enrichment
+  only ever ADDS, so a row it cannot reach — or a column it cannot render —
+  keeps precisely the values above, and a core-API outage costs nothing but
+  garnish.
+  A competitor whose `order` is missing/zero/non-numeric sorts to the
+  END of the board and takes a trailing sequential position
+  (rows-so-far + 1) — it can never surface as P1/the winner; a field
+  where no competitor carries `order` (an entry list) still numbers
+  1..N in feed order.
+- `LeaderRow.player_id` carries the ESPN athlete id TRANSIENTLY — the
+  scheduler rewrites it to the internal followed-team id (or None) before
+  persisting, exactly the golf tagger contract.
+- Fully defensive: malformed events/competitors log + skip, never raise.
+
+**Provider** (`app/providers/espn/provider.py`). `get_events` /
+`get_event_state` now dispatch the scoreboard parser by sport (golf →
+`_parse_golf_scoreboard`, racing → `_parse_racing_scoreboard`); racing's
+`get_event_state` rescans the current scoreboard exactly like golf
+(racing's `summary?event=` 404s — verified live). NEW GATE (took the
+documented ROADMAP loose end): `get_schedule` and
+`get_competition_schedule` return `[]` early for `LEADERBOARD_SPORTS`
+without any fetch — a leaderboard league has no two-sided games, and the
+old tour-scoreboard scan only produced "Skipping malformed" log noise.
+Golf behavior is unchanged (it already yielded nothing there); a unit test
+pins that no games-path fetch is issued for a leaderboard league.
+
+**Scheduler** (`app/scheduler/common.py` + call sites in `refresh.py`,
+`live.py`). Helpers generalized, behavior identical: `_is_golf` →
+`_is_leaderboard` (membership in `LEADERBOARD_SPORTS`), `_golfer_id_map` →
+`_athlete_id_map`, `_tag_followed_golfers` → `_tag_followed_athletes`.
+Daily pass 4 (`_refresh_events`) and `events_tick` therefore cover racing
+leagues automatically (followed drivers + racing `follow_all` leagues);
+FINAL notifications, missed-final resend, ICS spans, `/events` and
+`/today` all work unchanged. The `events_tick` job's human name is now
+"Leaderboard (golf/racing) poll".
+
+**Config** (`backend/config/teams.yaml`). Comment template updated:
+`sport` accepts ten values (`… | volleyball | racing`); tennis/MMA/golf/
+racing entries under `teams:` are single athletes with ESPN athlete-id
+provider_keys.
+
+**Frontend** (landed with the backend, `frontend/src`):
+
+- `types.ts` `Sport` union gained `"racing"` (last, mirroring the
+  backend enum order); the stale `entity_noun` comment now enumerates
+  `"team" | "player" | "fighter" | "golfer" | "driver"`.
+- Frontend mirrors of the backend frozensets, updated in lockstep:
+  `views/calendar/gameSideFollows.ts` `LEADERBOARD_SPORTS` =
+  `{"golf", "racing"}` — keeps driver follows out of the calendar team
+  filter and the per-team Subscribe menu, pinned by
+  `gameSideFollows.test.ts` (sorted-set mirror assertion + a driver-drop
+  case); `views/RosterView.tsx` `INDIVIDUAL_SPORTS` = `{"tennis", "mma",
+  "racing"}` (empty-roster friendly note; golf was already absent there
+  and was left as-is); `lib/seasons.ts` `NO_ARCHIVE_SPORTS` =
+  `{"tennis", "mma", "golf", "racing"}` — no season-archive standings
+  path for leaderboard sports.
+- Exhaustive `Record<Sport, …>` maps (compile-forced):
+  `components/GameCard.tsx` `SPORT_FALLBACK_COLORS.racing = "#64748b"`
+  (checkered-flag slate, shared with the calendar);
+  `components/onboarding/LeagueStep.tsx` `SPORT_LABELS.racing =
+  "Racing"`, with `SPORT_ORDER` placing racing after golf (display
+  order only — the union keeps backend enum order).
+- `views/calendar/eventSpans.ts` `SPORT_GLYPH.racing = "🏁"` — span
+  bars read "🏁 {race name}"; pinned in `eventSpans.test.ts`.
+- Verified sport-agnostic, no change needed: `LineupView.SURFACE`,
+  `whyWatch.LATE_PERIOD/CLOSE_MARGIN`, `CalendarView.OUTDOOR_SPORTS`
+  (games only — racing has none), and `StandingsView`'s per-sport
+  branches.
+- `EventLeaderboardModal` and `TodayView.EventCard` render
+  `round_label` / `score` / `detail` verbatim and derive followedness
+  from the backend contract (a non-null `player_id` IS a followed
+  athlete); the followed team's color is purely an accent, falling
+  back to `NEUTRAL_FALLBACK_COLOR` (exported from `GameCard.tsx`) when
+  the catalog row carries no color (racing driver rows ship
+  `color=None`).
+
+**Tests** (`backend/tests/test_espn_racing.py`, fictional "Apex Circuit
+Series" data): scoreboard/event parsing (scheduled empty board, live lap
+label, non-race session label, sprint session types, final winner detail +
+ordering, quali-order fallback, orderless competitors sorting last —
+never P1 — with an all-orderless entry list numbering 1..N in feed
+order, single typeless competition, malformed competitor/event skips),
+provider dispatch + games-path gate, renamed scheduler helpers, catalog
+standings⊕scoreboard union + scoreboard-only fallback +
+scoreboard-outage degrade + failure modes. The 2026-07-29 enrichment added
+16 more tests to the same file, all listed under *Core-API board
+enrichment* below; these 22 pass unmodified.
+
+## "On this day" (2026-07-28)
+
+A read-only anniversary view over the season archives — no new provider
+code, no new storage; everything rides the existing
+`espn_history`/`season_results` pipeline.
+
+- `app/services/on_this_day.py`: for one followed team, walks season
+  keys `range(now_year, now_year - SEASONS_BACK, -1)` (`SEASONS_BACK =
+  5`, the same window as the head-to-head builder) **sequentially**
+  through `season_results.season_results_out` — already redis-cached
+  (7 d past / 6 h current) and never-raising — then keeps the FINAL
+  games whose **local** (`settings.timezone`) calendar month-day equals
+  today's, excluding actual today (that slate belongs to `/today`).
+  Newest first. The assembled per-team list gets its own best-effort
+  cache under `onthisday:{team_id}:{MM-DD}`, TTL 24 h; correctness
+  never depends on Redis (worst redis-less cost per team per request:
+  5 seasons × ≤2 schedule param-set calls, all through the
+  `get_with_retry` degrade paths). Season keys are ENDING years, so a
+  cross-year season's Aug–Dec games surface under key year+1 — the
+  month-day filter makes that transparent, and Feb 29 needs no special
+  casing (empty most years).
+- `GET /history/on-this-day` → `OnThisDayOut { date, teams }` where
+  `date` is the local ISO day (`YYYY-MM-DD`) the month-day was taken
+  from and `teams: OnThisDayTeamOut[]` =
+  `{ team_id, team_name, games: GameOut[] }`. Only teams with ≥ 1
+  historical game on this date appear; teams on non-espn providers or
+  sports failing `espn_history.supports_history` are skipped **before
+  any fetch** (silently — no error entry). The route always returns
+  200: an empty `teams` list is the normal state, deliberately unlike
+  `/history/results/{team_id}`'s 404-on-miss (a day without an
+  anniversary is not an error).
+- `schemas.OnThisDayTeamOut` / `schemas.OnThisDayOut` are additive;
+  `GameOut` entries are the shared serializer's shape, so broadcasts /
+  fight_result etc. ride along for free. Mirrored field-for-field in
+  `types.ts` (`OnThisDayTeam`, `OnThisDay`), with the regenerated
+  OpenAPI snapshot.
+- Frontend: `api.ts` `onThisDay: () => get<OnThisDay>("/history/on-this-day")`;
+  `hooks.ts` `useOnThisDay()` — queryKey `["on-this-day", <viewer-local
+  day key via lib/time.localKeyFromDate>]`: the always-mounted kiosk
+  re-renders on the Today poll, so the key flips at midnight and mounts
+  a fresh fetch; `refetchInterval` 6 h lets a failed boot-time fetch
+  recover (staleTime 6 h, `refetchOnWindowFocus: false`, `retry: false`
+  unchanged — an error just hides the section). `views/TodayView.tsx`
+  renders a self-hiding "On this day" section at the bottom — after the
+  Games section, before the leaderboard modal — in BOTH the games path
+  and the no-games empty state (it sits outside that conditional). It
+  hides entirely while the query is pending, errored, `teams` is empty,
+  or the payload's `date` differs from today's local key
+  (`isOnThisDayCurrent` in `views/today/onThisDay.ts` — the comparison
+  is skipped when either side is missing, so older backends omitting
+  `date` never hide the section), and never gates or blanks the main
+  slate (the hook is called before the early returns, the view's
+  standing rule).
+- Rows are NON-interactive by contract: history games are assembled on
+  demand and never stored, so `/games/{id}` would 404 —
+  `GameDetailModal` is deliberately not wired. Row shape: year chip
+  (viewer-local year of `start_time`, tabular-nums zinc pill) +
+  "AwayName A – H HomeName" with the winner bolded, derived from scores
+  alone. Pure row logic lives in `views/today/onThisDay.ts`
+  (`winningSide` — null on draw/missing score; `anniversaryYear` —
+  LOCAL year, matching the app's localize-at-render rule; `scoreline` —
+  away-first, em dash for a missing score; `isOnThisDayCurrent` — the
+  midnight-rollover render guard above), with colocated vitest
+  `onThisDay.test.ts` (runs under TZ=America/New_York; covers the
+  UTC/local year boundary and the render guard).
+
+## Player follows (2026-07-28)
+
+A followed player is a per-athlete star on top of an existing team
+follow. v1's rule is **the roster is the picker**: only an athlete on a
+followed team's stored roster can be followed, which keeps that player's
+games flowing through the existing team follow — schedule sync needs
+zero changes.
+
+### Amendment: writing routes
+
+The "setup and notifications are the only writing routes" clause is
+amended (the `repository.py` module contract above now says so too):
+**three** route modules write, each committing explicitly —
+
+1. `routes/setup.py` (`POST /setup/follow`)
+2. `routes/notifications.py` (`PUT /notifications/prefs`)
+3. `routes/players.py` (`PUT`/`DELETE /players/follows/{athlete_id}`) — NEW
+
+All other routes remain read-only and never commit; repository functions
+never commit (callers own transactions).
+
+### New table: `player_follows` (`PlayerFollowORM`, app/models/orm.py)
+
+| column      | type                     | notes                                              |
+|-------------|--------------------------|----------------------------------------------------|
+| athlete_id  | String(32), PK           | the **bare** ESPN athlete id (rosters store it `"espn:{id}"`-prefixed) |
+| name        | String(128)              | display name at follow time                        |
+| team_id     | String(64), **no FK**    | internal slug of the followed parent team          |
+| league_id   | String(64), **no FK**    |                                                    |
+| position    | String(32), nullable     |                                                    |
+| photo_url   | String(512), nullable    |                                                    |
+| followed_at | DateTime(timezone=True)  | UTC; preserved across a re-follow of the same athlete |
+| last_notified_status | String(24), nullable | the roster-diff alert baseline: seeded from the roster row's status at follow time (or silently on first sighting), advanced only on confirmed delivery |
+
+- **No FKs by design**: rosters are delete+reinserted on every roster
+  sync — the daily sweep, and since 2026-07-29 the pre-game re-sync too
+  (never FK the roster table) — and `replace_followed` wipes
+  `player_follows` anyway. Roster data is joined logically at read time
+  via `PlayerORM.id == f"espn:{athlete_id}"`.
+- New table ⇒ created by `Base.metadata.create_all` at startup; the
+  TABLE needs **no migrations.py entry** (that list is for added
+  columns only) — but `last_notified_status`, added after the table
+  shipped, has the additive entry `("player_follows",
+  "last_notified_status", "VARCHAR(24)")`.
+- `repository.replace_followed` now wipes `PlayerFollowORM` with the
+  other child tables: follows are re-picked after a wizard re-run.
+
+### New repository functions (app/services/repository.py)
+
+- `list_player_follows(session) -> list[PlayerFollowORM]` — ordered by
+  name, athlete_id.
+- `follow_player(session, *, athlete_id, name, team_id, league_id,
+  position=None, photo_url=None, last_notified_status=None) ->
+  PlayerFollowORM` — SELECT-then-upsert; a re-follow refreshes display
+  fields but keeps the original `followed_at`. `last_notified_status`
+  (re)seeds the roster-diff alert baseline — it is always assigned, so
+  a re-follow re-seeds (or clears) it.
+- `unfollow_player(session, athlete_id) -> bool` — False when not
+  followed.
+
+### New routes (app/routes/players.py, registered in routes/__init__.py)
+
+- `GET /api/players/follows` → `list[PlayerFollowOut]`
+- `PUT /api/players/follows/{athlete_id}` (body `PlayerFollowIn`: name,
+  team_id, league_id, position?, photo_url?) → `PlayerFollowOut`
+  - **v1 constraint** (the roster is the picker): 404 unless `team_id`
+    is a followed `TeamORM` AND the athlete is on its **stored roster**
+    (`PlayerORM` row keyed `(team_id, f"espn:{athlete_id}")`).
+  - 409 when the same bare athlete id is already followed under a
+    DIFFERENT league (ESPN athlete ids collide across sports; follows
+    key on the bare id alone); the original cross-league follow is
+    left untouched. Checked after both 404 validations, before the
+    write.
+  - The roster row's current status seeds `last_notified_status`, so
+    following an injured player never alerts at follow time.
+- `DELETE /api/players/follows/{athlete_id}` → 204; 404 when not
+  followed.
+
+### New schemas (app/schemas.py, mirrored in frontend/src/types.ts)
+
+- `PlayerFollowOut { athlete_id, name, team_id, league_id, position?,
+  photo_url?, followed_at }` — TS `PlayerFollow` mirrors it
+  field-for-field (`athlete_id` is the bare ESPN id; `followed_at` an
+  ISO 8601 UTC string).
+- `PlayerFollowIn { name, team_id, league_id, position?, photo_url? }` —
+  TS `PlayerFollowIn`.
+- `StatLeaderOut` gains `followed: bool = false` — the player themselves
+  is followed (distinct from the team-level `highlighted`); mirrored as
+  `StatLeader.followed`.
+
+### Leaders stamping rule (routes/leaders.py)
+
+`followed` is stamped **per request, after cache retrieval** — the 900s
+`leaders:{league_id}` cache stores rows with `followed=false` only, so a
+new follow/unfollow is reflected immediately without invalidation or a
+refetch. Matching is on the **bare** athlete id AND scoped to the
+requested league — only follows with `row.league_id == league_id` stamp
+(ESPN athlete ids are only unique per sport, so a follow in another
+league must not stamp a same-numbered stranger here); the roster-derived
+(non-ESPN-path) board's prefixed `"espn:{id}"` player ids are stripped
+before matching, so both board flavors stamp.
+
+### EVENT_TYPES addition: `player_status`
+
+New `EventType.PLAYER_STATUS = "player_status"` (app/models/domain.py),
+wired through:
+
+- `services/notify_prefs.EVENT_TYPES` (now six, `player_status` last).
+  `follow_all_default_events()` therefore seeds it **off** for
+  whole-competition league scopes (it is not game_start/final); the
+  plain default remains on.
+- `decide()`: no code change needed — **v1 gates player alerts on the
+  parent team's `team:{id}` scope**; callers pass `[parent_team_id]`
+  (+ league id) exactly like a game event. Per-player `player:{id}`
+  scopes are deferred.
+- `services/notify._EVENT_TAGS`: `player_status` → `adhesive_bandage`
+  (🩹), normal priority.
+- `routes/notifications.py` grid picks it up automatically from
+  EVENT_TYPES.
+
+Two emitters, each with its own dedupe:
+
+1. **Roster-sync status diff** (`scheduler/refresh.py::_sync_team_roster`,
+   run by BOTH `refresh_rosters` and — since 2026-07-29 —
+   `refresh_pregame_rosters`):
+   follows loaded once per refresh; per team, the FETCHED roster is
+   diffed against each follow's `last_notified_status` baseline (never
+   against the roster table, which `replace_roster` has already
+   overwritten). The baseline IS the dedupe — no `NotificationSentORM`
+   writes here. It advances (with its own commit, per follow) only on
+   confirmed delivery: a failed send leaves it behind and retries next
+   sync; a muted team's diff never advances it, so un-muting later
+   still alerts if the status still differs; a `None` baseline (a
+   fresh follow seeded outside the route, or a pre-baseline row) seeds
+   silently — no follow-time blast; and a re-injury after a delivered
+   recovery alert re-fires. The event's
+   `player:{athlete_id}:status:{new_status}` dedupe_key survives
+   purely as a log/identity label. Message: `"{name} is {status
+   label}"` + ` — {status_detail}` when present; title = the parent
+   team name. **The two jobs cannot double-send**: the per-follow
+   baseline IS the dedupe and advances only on confirmed delivery, so
+   whichever job observes a change first alerts and the other then sees
+   no difference.
+2. **Starting-soon "ruled out" pass** (`scheduler/live.py::live_tick`),
+   unchanged — deduped through the `NotificationSentORM` ledger with
+   the send-first / mark-on-confirmed-delivery idiom: for scheduled
+   games inside the `starting_soon_minutes` window, one event per
+   followed player on either side whose stored status != `active`.
+   Dedupe `{game_id}:player-out:{athlete_id}`; message
+   `"{name} ({status_detail or status}) — {away} @ {home} starts soon"`.
+   Freshness (updated 2026-07-29): statuses are as fresh as the last
+   roster sync of *either* job — `refresh_pregame_rosters` re-syncs a
+   followed team's roster in the hours before kickoff (see *Same-day
+   pre-game roster re-sync* below), so inside that lookahead this pass
+   reads same-day-fresh designations rather than yesterday's 5am sweep.
+   The pass itself is unchanged: it reads `PlayerORM.status` via
+   `session.get`, so a fresher players table is automatically a fresher
+   alert. Outside the lookahead (or with the job disabled) the old
+   caveat still holds — the status is as fresh as the daily sync.
+
+Shared helper: `services/events.player_status_label()`
+("day_to_day" → "day-to-day").
+
+### Frontend
+
+- API client (`api.ts`): `playerFollows()` → GET `/players/follows`;
+  `followPlayer(athleteId, body)` → PUT; `unfollowPlayer(athleteId)` →
+  DELETE (a new `del()` helper: DELETE that parses no body).
+- Query layer (`hooks.ts`): `usePlayerFollows()` — queryKey
+  `["player-follows"]`, staleTime 5 min. `useFollowPlayer()` /
+  `useUnfollowPlayer()` — on success invalidate `["player-follows"]`
+  AND the `["leaders"]` key prefix (every league's board;
+  `StatLeader.followed` is per-request so cached boards must refetch).
+  No optimistic cache surgery; stars disable while their own mutation
+  is in flight — the pending set is the UNION of the follow and
+  unfollow mutations' in-flight athlete ids (matched via
+  `mutation.variables`; both can be pending at once, and an either/or
+  would leave the second row enabled for a duplicate fire).
+- UI surfaces: `RosterView` gains a trailing follow-star column (ghost
+  button, amber filled star when followed, `aria-pressed`, aria-label
+  "Follow {name}"/"Unfollow {name}") — shown only for team-sport
+  rosters of followed teams, hidden for tennis/mma/golf/racing,
+  additionally gated on the league's provider being `"espn"` at BOTH
+  surfaces (RosterView and TeamProfileView) — a TheSportsDB roster
+  (volleyball) hides the stars because the follow PUT validates
+  against ESPN-keyed roster rows and can only 404 — and hidden
+  entirely when the follows query has no data (the
+  supplementary-section rule). The filled/unfollow state is scoped to
+  the current team (`follow.team_id` must equal the row's team id):
+  bare ESPN athlete ids are only unique per sport. `TeamProfileView`'s roster section
+  carries the same star, compact — the profile is name-keyed, so the
+  followed-team row is recovered by name from `useTeams()` to supply
+  `team_id`/`league_id`; nations (empty roster) never show stars.
+  `LeadersView` gives `row.followed` a stronger treatment than the
+  team-level `highlighted`: filled amber star before the name (sr-only
+  "Followed player") + brighter border/wash (`border-amber-400
+  bg-amber-500/15` vs `border-amber-500 bg-amber-500/10`);
+  non-followed rows unchanged. `SettingsView`'s `EVENT_LABELS` gained
+  `player_status: "Player status"` so the prefs grid renders the sixth
+  EventType cleanly (grid order still comes from the backend's
+  `event_types` list).
+- Shared helpers exported from `components/TeamProfileView.tsx`:
+  `FollowStarButton` (ghost star toggle, `compact` variant),
+  `bareAthleteId(playerId)` (strips the `"espn:"` prefix from roster
+  row ids — follows key on the bare id, mirroring the backend
+  leaders.py idiom), and `NO_PLAYER_FOLLOW_SPORTS` = `{tennis, mma,
+  golf, racing}` (sports whose rosters can't contain followable
+  players).
+
+### Known v1 limits
+
+- Per-player `player:{id}` notification scopes are deferred — player
+  alerts ride the parent team's `team:{id}` scope (above).
+- ~~Player status is as fresh as the last daily roster sync; the
+  starting-soon ruled-out pass does not re-fetch same-day.~~ **Closed
+  2026-07-29** by `refresh_pregame_rosters` (below): a followed team with
+  a game inside `pregame_roster_lookahead_hours` is re-synced status-only
+  every `pregame_roster_refresh_minutes`, at most once per
+  `pregame_roster_cooldown_minutes`. Still true outside that window, for
+  a team with no followed player, and when the job is disabled.
+- Follow context requires the roster surface (the roster is the
+  picker); there is no follow affordance on the Leaders board itself.
+- `TeamProfileView` matches the followed team BY NAME (the profile is
+  normalized); if a club and a nation ever shared an exact name the
+  star could appear on a nation profile — harmless today because nation
+  profiles have empty rosters. When the profile name matches MORE than
+  one followed team the stars are hidden entirely (binding to the
+  first match would attach follows to — and delete follows from — the
+  wrong team); the nation caveat stands.
+- The leaders server cache is 900s. The post-cache stamping rule means
+  the `followed` flag itself is always fresh; only the underlying board
+  rows can be up to 15 min old.
+
+### Tests
+
+`tests/test_player_follows.py` (fictional names): repository CRUD +
+replace_followed wipe; route validation (unknown team 404, off-roster
+404, cross-league bare-id PUT 409, follow-time baseline seeding — no
+alert at follow, round trip, DELETE 204/404); leaders post-cache
+stamping (warm cache + new follow flips the flag with no refetch;
+cached copy stays unstamped; roster-board prefixed-id stamping; the
+stamp is scoped to the requested league); roster-diff baseline (fires
+once, unchanged quiet, first sighting seeds silently, failed send
+leaves the baseline and retries, re-injury after recovery re-fires,
+muted team leaves the baseline and un-muting refires); starting-soon
+player-out (ruled-out followed player fires once, active/unfollowed
+don't); events_tick scheduled-within-lookahead pickup;
+prune_stale_games sweeps stuck in_progress events.
+`test_notifications_api.py` / `test_notify_prefs.py` EVENT_TYPES
+enumerations updated to six.
+
+## Why-watch signal on game cards (2026-07-28)
+
+Frontend-only — no API, schema, or `types.ts` change: the signal is
+computed client-side from data the cards already receive (the existing
+`odds` prop; no new fetches, no TodayView changes, no re-sorting).
+
+- `lib/whyWatch.ts` (pure; colocated `whyWatch.test.ts`):
+  - `detectSignal(game, odds): UpsetSignal | null` — moved verbatim from
+    `UpsetRadar.tsx`, which now imports it (zero behavior change).
+    Needs all four of win pcts + moneylines; fires only when the market
+    underdog's model win % > 50.
+  - `watchability(game, odds): WhyWatch | null`
+    (`WhyWatch = { score, reason }`). Deterministic weights: Tight late
+    = 60 (live, both scores present, margin ≤ one score, period ≥ the
+    sport's late threshold); Upset watch = 45 (`detectSignal` fires);
+    Toss-up = 35 (both win pcts present, `|home_win_pct − 50| ≤ 5`);
+    both sides followed = +15 (bonus only). Threshold = 35, so at least
+    one primary signal is required — the bonus alone never shows.
+  - One-score margins: basketball/football ≤ 3, hockey/soccer ≤ 1, else
+    ≤ 2. Late thresholds: basketball/football/volleyball ≥ 4, hockey
+    ≥ 3, soccer ≥ 2, baseball ≥ 8, unknown sports ≥ 4 (conservative).
+  - `reason` = the strongest matched signal ("Tight late" > "Upset
+    watch" > "Toss-up"). Returns null for any phase other than
+    scheduled/in_progress (function-level, on top of caller gating).
+- `GameCard` renders it as a rose pill (`border-rose-500/30
+  bg-rose-500/10 text-rose-400`, content `🔥 {reason}`) in the footer
+  chip rail, gated to `scheduled | in_progress` AND suppressed whenever
+  the fight chip shows.
+
+## Backup restore drill (2026-07-28)
+
+`scripts/verify-backup.sh` proves the newest `backups/sportsdash-*.sql.gz`
+actually restores, host-side only (no compose service, no CI job — the
+risky surface is the homelab's real dumps, which CI cannot see):
+
+- Restores into a throwaway `postgres:16-alpine` container created with
+  `POSTGRES_USER=sportsdash` (the dumps carry `ALTER TABLE ... OWNER TO
+  sportsdash` and have no `--clean`/`--create`, so the target must be a
+  fresh empty database under that role). **No host ports are published** —
+  all access goes through `docker exec`, so a stale container shadowing
+  a port can never fool the drill.
+- `psql -v ON_ERROR_STOP=1` plus script-level `pipefail` are
+  load-bearing: without them psql shrugs past mid-file errors and a gzip
+  read failure vanishes into the pipe. The dumps embed pg_dump 16's
+  `\restrict` meta-commands, so they are restorable only via a psql 16
+  client — the one inside the 16-alpine container is exactly right.
+- Sanity contract on the restored database: `teams` > 0, `leagues` > 0,
+  `games` counted (and when > 0, `MAX(start_time)` must be non-NULL),
+  `standings_archive` must exist (may be 0 rows), `players` counted.
+  There is no `follows` table — the followed set IS the rows in
+  `teams`/`leagues`.
+- Freshness: newest dump older than `SPORTSDASH_BACKUP_MAX_AGE_DAYS`
+  (default 16) days → WARN; `--strict-age` makes it fatal. Warn-only is
+  the default because the daily backup loop only runs while compose is
+  up, which is intermittently true on the dev machine; strict is the
+  intended mode for a homelab cron.
+- The container is removed via an EXIT trap; any failed step exits
+  nonzero with a message saying what broke.
+
+Verified 2026-07-28 against the real dump
+`sportsdash-20260721-010235.sql.gz` (7 days old at run time): restore
+clean, counts teams=8 leagues=7 games=69 standings_archive=0
+players=222, exit 0. Failure paths exercised the same day:
+`--strict-age` on the 7-day-old dump exits 1 before any container
+starts; unknown flags exit 2; the warn path (low
+`SPORTSDASH_BACKUP_MAX_AGE_DAYS`, no `--strict-age`) warns and still
+restores with exit 0; and a deliberately truncated copy of the dump
+pushed through the identical `gzip -dc | docker exec -i psql -v
+ON_ERROR_STOP=1` pipeline exits nonzero (gzip unexpected-EOF + psql
+abort mid-`COPY`). No leftover `sportsdash-restore-verify-*` containers
+after any run.
+
+## Same-day pre-game roster re-sync (2026-07-29)
+
+Closes the *Player follows* v1 limit above. Injury and scratch
+designations are only final in the hours before kickoff, while the daily
+5am sync can be a whole day stale — so a player ruled out at noon was
+invisible until the next sweep. A new job re-fetches the roster
+**status-only** for followed teams with an imminent game, and rides the
+existing `player_status` diff so the scratch alerts within a tick.
+
+**No route, schema, OpenAPI or `types.ts` change.** No migration and no
+`_ADDITIVE_COLUMNS` entry either — the cooldown reuses
+`TeamORM.roster_updated_at`.
+
+### `refresh_pregame_rosters` (`app/scheduler/refresh.py`, registered in `jobs.py`)
+
+A separate **instrumented interval job** — its own
+`sportsdash_scheduler_job_runs_total{job="refresh_pregame_rosters"}`
+counters, so its cost and failures are visible on `/api/metrics`. It is
+**not** part of `daily_refresh` and **not** part of `live_tick` (whose
+gate reaches only `live_lead_minutes` = 20 min ahead, includes
+`in_progress` and hours-old scheduled rows, and fires every 45 s).
+Registered between `refresh_news` and `live_tick` with `max_instances=1`,
+`misfire_grace_time=300`, `coalesce=True`.
+
+Three gates, cheapest first:
+
+1. **Player follows.** `_followed_players_by_team()`; no follows anywhere
+   → return before any game scan or provider call.
+2. **Imminent game.** `repository.team_ids_with_games_starting_within(now,
+   pregame_roster_lookahead_hours)` intersected with the followed-player
+   team ids. Empty → return. Teams whose league sport is in
+   `INDIVIDUAL_SPORTS` are skipped: a followed athlete is a single-member
+   "team" with no roster, so a sync would only delete its rows and restamp
+   it.
+3. **Per-team cooldown.** `TeamORM.roster_updated_at` (read through
+   `ensure_utc` — SQLite returns it naive) must be older than
+   `pregame_roster_cooldown_minutes`. `replace_roster` is still the single
+   writer of that timestamp, so a sync cools itself down. Its only
+   consumer stays `routes/roster.py` → `RosterOut.fetched_at` →
+   RosterView's "Updated …" label, which is simply fresher (it is not
+   wired to `is_stale`; `data_stale_after_minutes` is standings-only).
+
+**Cost bound: exactly one `/teams/{id}/roster` call per eligible team per
+cooldown window.** The provider is asked for the cheap variant
+(`get_roster(..., with_stat_lines=False)`), which skips the
+one-`/athletes/{id}/overview`-per-player pass; the soccer TheSportsDB
+photo backfill is skipped too (it shares the free key with the
+stadium/About enrichment and is paced ~0.34 s/request). With stat lines
+the job would cost ~400–700 ESPN calls/day for six followed teams instead
+of ~15–25.
+
+**No collateral blanking.** `replace_roster` is a blind delete-and-reinsert
+of every player column, so the cheap path first carries the stored
+`stat_line` / `career_stat_line` / `photo_url` forward onto the fetched
+players — `_carry_forward_enrichment(stored, fetched)`, pure, keyed on the
+roster player id; a fetched value wins whenever it is not empty, so a
+call-up keeps its own. Without it the roster view's stat columns,
+TeamProfileView's roster lines and `routes/leaders.py`'s roster-derived
+board would empty out between daily syncs. Storing still goes through
+`replace_roster` — one roster writer — so call-ups and trades are picked
+up as usual.
+
+**Per-team isolation.** The fetch/store/diff body is
+`refresh.py::_sync_team_roster(league, team, followed, *, with_stat_lines,
+backfill_photos)`, shared verbatim with `refresh_rosters` (which calls it
+with both flags on). It swallows its own per-team exception, and the job
+swallows everything else — `metrics_state.instrumented` re-raises whatever
+escapes. Because the helper is shared, its log lines are prefixed
+`"roster sync:"` rather than `"refresh_rosters:"`; each job still logs its
+own job-named summary line.
+
+### Provider protocol: `get_roster` gained `with_stat_lines`
+
+```python
+async def get_roster(self, league, team, *, with_stat_lines: bool = True) -> Roster
+    # with_stat_lines=False -> the roster payload ONLY (one call). ESPN
+    # skips its per-athlete season/career overview pass; TheSportsDB
+    # accepts and ignores the flag (its roster is already one call).
+    # Statuses ride on the roster payload, so the cheap variant loses
+    # nothing the pre-game re-sync needs.
+```
+
+The change is additive, keyword-only and default-preserving, so every
+existing caller and test fake is unaffected — but note that it touches
+`app/providers/base.py`, one of the "already written, **do not modify**"
+foundation files listed at the top of this document. It was the only way
+to hit the cost bound: `EspnProvider.get_roster` called `_attach_stat_lines`
+unconditionally and `_GuardedProvider.__getattr__` hides signatures, so no
+capability probe was possible. `app/providers/thesportsdb.py::get_roster`
+accepts and ignores the flag deliberately — `espn_catalog.py` can create
+thesportsdb-provider leagues, and an unexpected-kwarg `TypeError` there
+would be a silent per-team skip every 15 minutes.
+
+### Alerting: two jobs, one ledger
+
+The re-sync runs the same emitter-1 diff described under *Player
+follows* → `player_status`, against the same per-follow
+`PlayerFollowORM.last_notified_status` baseline. **The two jobs cannot
+double-send**: the baseline is the dedupe and advances only on confirmed
+delivery, so whichever job observes the change first alerts and the other
+then sees no difference.
+
+**Two alerts per same-day scratch is intended** (and unchanged in kind):
+the roster-diff alert when the designation is first observed, then
+`live_tick`'s `{game_id}:player-out:{athlete_id}` game-context reminder
+inside the starting-soon window. Different ledgers by design — news
+first, then a reminder tied to the fixture.
+
+`live_tick` itself needed no change: it reads `PlayerORM.status` via
+`session.get`, so a fresher players table is automatically a fresher
+alert.
+
+### Settings (`app/config.py`, env prefix `SPORTSDASH_`)
+
+| Setting | Env var | Default | Meaning |
+|---|---|---|---|
+| `pregame_roster_refresh_enabled` | `SPORTSDASH_PREGAME_ROSTER_REFRESH_ENABLED` | `True` | Master switch. Off ⇒ the job returns immediately; it stays registered, so its metrics counters still exist. |
+| `pregame_roster_lookahead_hours` | `SPORTSDASH_PREGAME_ROSTER_LOOKAHEAD_HOURS` | `4` | Re-sync a followed team whose next scheduled game starts within this window. |
+| `pregame_roster_cooldown_minutes` | `SPORTSDASH_PREGAME_ROSTER_COOLDOWN_MINUTES` | `45` | Minimum gap between one team's re-syncs, measured off `teams.roster_updated_at`. |
+| `pregame_roster_refresh_minutes` | `SPORTSDASH_PREGAME_ROSTER_REFRESH_MINUTES` | `15` | Job interval. |
+
+All four are read **inside** the job body, not at import, so a settings
+override in a test takes effect against the cached singleton. Defaults
+rationale: 4 h / 45 min gives up to ~5 re-syncs per team per game, the
+last comfortably inside the injury-report window, at ~15–25 ESPN calls a
+day for six followed teams. `.env.example` deliberately does not list
+them — it documents only the timezone and the ntfy topic, not tuning
+knobs.
+
+### Known limits (unchanged by this feature)
+
+- A team with **no followed player** is never re-synced. The job exists
+  to make a player alert same-day-fresh, not to keep every roster warm.
+- Per-player `player:{id}` notification scopes are still deferred; player
+  alerts still ride the parent team's `team:{id}` scope.
+- Trade-following is still deferred: a traded player's follow keeps its
+  original `team_id`, and the re-sync only diffs statuses on rosters it
+  fetches.
+- Pre-existing and deliberately left alone: on the **daily** soccer path
+  `_attach_player_photos` only backfills the first
+  `_PHOTO_BACKFILL_MAX_PLAYERS` (15) photoless players in the fetched
+  roster, and `replace_roster` then writes NULL for the rest — so ESPN
+  roster-order churn can still blank a stored TheSportsDB headshot there.
+  Carrying enrichment forward on the daily path too would fix it, at the
+  cost of changing the daily job's behavior.
+
+### Tests
+
+`tests/test_player_follows.py` section 7 (11 tests) + one in
+`tests/test_scheduler.py`: the end-to-end same-day scratch (one alert,
+baseline advanced, `roster_calls == [(TEAM_ID, False)]`, zero overview
+calls, stored stat lines and photos intact next to the fresh status); a
+game beyond the lookahead makes zero calls; the cooldown suppresses a
+second run and a zeroed cooldown lets it through without re-alerting; no
+follows ⇒ no provider call; the disabling setting; per-team failure
+isolation; a raising scope query never propagates; individual-sport teams
+skipped; pre-game re-sync then `live_tick` ordering (roster-diff alert,
+`:soon`, then `:player-out:` off the freshly written status);
+`_carry_forward_enrichment` as a pure function;
+`team_ids_with_games_starting_within` window/exclusion semantics; and the
+job's registration (id, `max_instances`, `coalesce`,
+`misfire_grace_time=300`, interval == the setting).
+`tests/test_metrics.py::test_setup_scheduler_seeds_job_registry` asserts
+the job-id set exactly and now expects five ids.
+
+## Core-API board enrichment for racing leaderboards (2026-07-29)
+
+Fills the two columns the *Motorsport* section above documented as empty.
+`sports.core.api.espn.com/v2/sports/racing/leagues/{key}` (the site
+`racing/{key}` key with a `leagues` segment inserted — the existing
+`_core_event_path` helper) carries everything the site scoreboard omits.
+Keyless; no throttling observed (~430 sequential core calls from one IP
+in 25 min, zero 429/5xx).
+
+**No new domain, schema or `types.ts` field, and no scheduler or frontend
+change.** `domain.py`, `schemas.py`, `serialize.py`, `scheduler/*` and
+`frontend/*` are untouched: the enrichment rides the existing free-form
+display strings. Files changed: `app/providers/espn/racing.py` (all the
+pure parsers, URL builders, bounds and rendering),
+`app/providers/espn/provider.py` (`_enrich_racing` /
+`_enrich_racing_event` / `_racing_car_details` / `_racing_distance` /
+`_racing_json`, called from both `get_events` and `get_event_state`), and
+`app/providers/espn/__init__.py` (re-exports).
+
+Amended later the same day, in the same two modules (`provider.py` only for
+the per-car status tuple's type, now `tuple[str, int | None]`, and one
+docstring — no new fetch, no new call site, no change to the tiers, caps,
+memo or degrade paths; `__init__.py` needed no new re-export): a **running
+gap on a live board**, read out of the site scoreboard's own per-competitor
+`statistics` slot, and an **exact status-name mapping** that stops a
+disqualification rendering as a finish. Both cost **zero** extra ESPN calls
+and both ride the same free-form display strings, so there is still no
+domain, schema, `types.ts`, scheduler, frontend, fixture or OpenAPI change.
+
+### Display semantics — what `score` and `detail` MEAN for racing
+
+`LeaderRow.score` and `LeaderRow.detail` are free display strings the
+frontend renders verbatim (`EventLeaderboardModal`'s Pos/Player/Score/Detail,
+`TodayView.EventCard`). Enrichment **only ever adds**: a row it cannot
+reach keeps the un-enriched `("", "Winner")` / `("", "")`.
+
+`score` — the car's time, gap, or fate. On a **FINAL** board it is resolved
+in this fixed order. The order is load-bearing: a lead-lap finisher carries
+BOTH a total time and a gap and the gap is the useful number, so only the
+leader falls through to the total time; and a retired or disqualified car
+must never borrow a time it did not set (a disqualified one in particular
+can carry the full race distance AND a finishing gap).
+
+| # | condition | rendered |
+|---|---|---|
+| 1 | outcome is `retired` — status `STATUS_RETIRED`, or the F1-only inference below | `"DNF"` |
+| 2 | outcome is `disqualified` — status `STATUS_DISQUALIFIED` only, never inferred | `"DSQ"` |
+| 3 | `behindTime` present and non-zero | `"+15.080"` (a `+` is added when ESPN omits one) |
+| 4 | `abs(behindLaps) >= 1` | `"+1 lap"` / `"+3 laps"` |
+| 5 | `totalTime` present | `"1:39:56.180"` (the leader) |
+| 6 | `lapsCompleted` present | `"160 laps"` (series that publish no time at all) |
+| 7 | otherwise | `""` — unchanged from the parser |
+
+On an **IN_PROGRESS** board the column is a *running gap* instead, taken
+from the site scoreboard's own per-competitor `statistics` slot
+(`events[].competitions[].competitors[].statistics`) — which lives inside
+the payload the board is already parsed from, so this costs **zero extra
+calls per poll**:
+
+| # | condition (live board only) | rendered |
+|---|---|---|
+| 1 | `behindTime` present and non-zero | `"+2.418"` |
+| 2 | `abs(behindLaps) >= 1` | `"+1 lap"` / `"+2 laps"` |
+| 3 | otherwise | `""` — an empty column, exactly as before this amendment |
+
+`totalTime` and `lapsCompleted` are deliberately NOT rendered mid-race even
+though the FINAL chain renders both: `totalTime` is a *finishing* time (a
+running car has not set one) and `lapsCompleted` only restates the lap
+counter the round label already carries as `"Lap 44 of 70"`. On a live board
+a borrowed or stale time is worse than an empty column. The read is gated on
+the **board session** being in state `"in"` (`_racing_leaderboard` →
+`_racing_leader_row(..., live=...)`), so a FINAL board never touches the slot
+and **the FINAL semantics above are untouched**. It is also strictly
+additive — `_apply_racing_facts` still merges with `score = car.score or
+row.score`, so a tier-A constructor / number / grid lands on the same row
+without clearing a live gap. **This path is STRUCTURALLY VERIFIED ONLY:** see
+*Live gaps: the free source, unverified live* below before trusting it.
+
+`detail` — who the car is, as ` · `-joined parts: `"Winner"` (only when
+the feed flags P1, preserving the un-enriched value) · entrant · `"#7"` ·
+`"Grid 2"` · then one of `"Retired lap 13"` (so the `"DNF"` in `score`
+reads as a fact — the lap comes from the status `period`, falling back to
+`lapsCompleted`, and degrades to a bare `"Retired"` when neither is
+knowable), `"Disqualified"` (behind the `"DSQ"`), `"Fastest lap 1:22.000"`
+(the single car in the field that set it), or `"Status unknown"` when the
+car's outcome is undecidable. Example:
+`"Winner · Corvane Works · #7 · Grid 2"`.
+
+`"Status unknown"` is always the LAST part, and
+`_racing_detail_text(..., keep_last=True)` protects it from the `_DETAIL_MAX`
+bound — it trims the facts in front of it instead, because losing that part
+would change what the row *means* rather than just how much of it is shown.
+
+Bounds: `score` capped at `_SCORE_MAX` = 24 chars, `detail` at
+`_DETAIL_MAX` = 80. `LeaderRow.player_id` is untouched — still the
+TRANSIENT bare ESPN athlete id the scheduler rewrites to the internal
+followed-team id, and also the join key matching a core competitor to a
+board row.
+
+### Fetch tiers
+
+**Tier A — every poll, ONE call per active race.** `GET
+…/events/{eventId}` (the EVENT ROOT) inlines *every* session's full
+competitor array with `vehicle` (constructor + car number), `startOrder`
+(grid), `order` and `winner`. It replaces one call per session on an
+F1-style weekend and sidesteps the 25-item paging the
+`…/competitions/{id}/competitors` collection imposes on a 39-car
+stock-car field. The session whose field is used is picked with the same
+rule as the site board (`_board_session` / `_competitor_items`, factored
+out of `_racing_leaderboard` with no behavior change: the Race session
+when it has a field, else the latest session that does — so a Saturday
+board is enriched with Saturday's cars). Payloads observed: F1 89 KB,
+stock car 29 KB, IndyCar 18 KB.
+
+Plus, for an IN_PROGRESS race only, `GET
+…/events/{eventId}/competitions/{compId}/statistics` → `general.laps` =
+the scheduled distance, for the `"Lap 44 of 70"` label. One call per
+event, then memoized for the event's lifetime. The current lap costs
+nothing extra — the site scoreboard's `status.period` already counts laps
+run.
+
+Tier A deliberately fetches **no** per-car statistics, so **a live board's
+constructor, car number and grid slot are free, and its gap column is
+whatever the site scoreboard itself published for that car** — nothing else
+is bought for a running race. See *Live gaps* below.
+
+**Tier B — once, when the Race session is FINAL.** One
+`…/competitors/{id}/statistics` per car (race time / gap / laps behind /
+fastest lap) plus one `…/competitors/{id}/status` per car (classified vs
+retired, and that car's laps). ESPN offers **no** bulk expansion — every
+`&enable=…` / `&expand=…` variant returns the byte-identical payload and
+`…/competitors/statistics` is a 400 — so this is a genuine N+1. It is
+therefore bounded three ways and memoized:
+
+- at most `_ENRICH_MAX_EVENTS = 2` events enriched per provider call,
+  chosen live-races-first then most-recently-started FINAL, so a
+  season-wide `get_events` window can never fan out over two dozen
+  finished races;
+- at most `_ENRICH_MAX_CARS = 40` cars per event, front of the field
+  first, so a truncated fan-out still covers the rows anyone reads;
+- at most `_ENRICH_CONCURRENCY = 8` calls in flight (measured: 22 calls
+  in 0.87 s at P=8, all 200);
+- the rendered `(score, detail)` per athlete id is memoized per provider
+  event key in a bounded (`_ENRICH_MEMO_MAX = 64`) insertion-ordered
+  dict. A finished classification never changes, so the second poll of a
+  FINAL race spends **zero** core calls.
+
+Measured worst case for one FINAL F1 race: 1 event root + 22 statistics +
+22 status = 45 calls, ~13 s sequential / ~2–3 s at P=8. Worst-case
+cold start for sizing: 5 racing leagues × 2 events × ~45 = ~450 core
+calls on a restart plus a full daily refresh, once, ~20 s of wall time at
+P=8 spread across leagues. Steady state on a live race day is 1–2 extra
+calls per event per 180 s tick.
+
+The status call is issued only when the event root actually offered a
+`status.$ref`: stock-car and IndyCar competitors have no `status` key at
+all and that endpoint answers 400 for them. A `$ref` is a URL arriving
+inside a remote payload, so it is followed **only** when it addresses the
+core API host we asked (`_CORE_REF_PREFIX`).
+
+### Degradation
+
+Every core fetch goes through `provider._get_json` (the same
+`http_util.get_with_retry` + shared client + settings-driven
+retry/backoff as every other ESPN call), and `_racing_json` swallows
+`httpx.HTTPError` / `TransientProviderError` / `ValueError`. A 404
+(canceled race, unpublished entry list), an exhausted-retry outage, and a
+200 carrying an HTML error page all leave the site-scoreboard board
+intact. `_enrich_racing` additionally wraps each event in a bare `except
+Exception`, so an unannounced shape change can never take down
+`get_events` for a whole league.
+
+`_racing_json` swallowing `TransientProviderError` means **a core-API
+outage does not trip the per-provider circuit breaker from this path** —
+intentional, matching the existing `_attach_fight_results` /
+`_attach_stat_lines` precedent for best-effort garnish. The
+site-scoreboard call in the same method still trips it.
+
+Gating: `league.sport is Sport.RACING` (golf boards are already scored by
+the site scoreboard and are never enriched); `_racing_enrich_targets`
+skips SCHEDULED and board-less events outright, because a canceled race
+(`STATUS_CANCELED`) and every scheduled race 404 the competitors
+resources — entry lists are not published pre-race. That is "no field
+yet", never an outage.
+
+### Per-series shape traps encoded in the parsers
+
+- **Constructor = `vehicle.team` when present, else
+  `vehicle.manufacturer`** — one rule, correct for all three series. F1
+  has no `team` and puts the constructor in `manufacturer` (verified
+  equal to the athlete record's `vehicles[0].team` for every driver
+  checked; the 22-car field resolves to 11 constructors × 2 cars sharing
+  a `teamColor`). Stock-car/IndyCar name the entrant in `team` ("Joe
+  Gibbs Racing", "Team Penske", null on ~7 of every field) and demote
+  `manufacturer` to the OEM / engine supplier.
+- **Never read the constructor from the ATHLETE record.** There
+  `vehicles[0].manufacturer` is always identical to `vehicles[0].engine`
+  (the engine supplier), and on stock cars it is outright stale — an
+  athlete listed with one make and car number while the race competitor
+  says another.
+- `behindLaps` is **POSITIVE** on F1 and **NEGATIVE** on
+  stock-car/IndyCar → always `abs()`.
+- Stock-car/IndyCar expose **no per-car race time or gap whatsoever** (no
+  `totalTime`; `behindTime` pinned at `.000`), so those boards land on the
+  laps-completed / laps-down rendering. Zeroed placeholders are everywhere
+  (that `.000` gap, a zeroed `fastestLap` for a whole field, qualifying
+  splits on a Race competition), so a stat whose numeric `value` is 0 is
+  dropped rather than rendered as a real time.
+- **Three** per-competitor status types exist, not two (an earlier draft of
+  this section said two, from a 217-document sample that happened to
+  contain no disqualification). Measured over 611 F1 cars from 30 races
+  (all 24 of 2025 plus 6 of 2026):
+
+  | id | `type.name` | `displayValue` | `completed` | count |
+  |---|---|---|---|---|
+  | 12 | `STATUS_CLASSIFIED` | Classified | true | 529 |
+  | 8 | `STATUS_RETIRED` | Retired | false | 76 |
+  | 14 | `STATUS_DISQUALIFIED` | DQ | false | 6 |
+
+  There is still no DNS type, a **lapped** car is CLASSIFIED with
+  `behindLaps >= 1`, and a **non-starter is simply absent** from the field.
+  The outcome comes from the status NAME only — reading `completed: false`
+  would brand every car on a live board a DNF, and it is false for a
+  disqualification too — and `_parse_racing_car_status` maps that name
+  through an **exact** lookup (`_STATUS_OUTCOMES`). The substring test it
+  replaced (`"RETIRED" in type.name`) is exactly what let a
+  disqualification render as a finish: of the six DSQ'd cars observed,
+  three carry the full race distance (`"56 laps"`) and one carries
+  `behindTime "+53.472"` — a 53-second finishing gap for a car that
+  completed **zero** laps. An unrecognized name now yields an explicit "not
+  read" (`_OUTCOME_NONE`), never a silent "classified".
+- The per-competitor status resource is **F1-only**. `nascar-premier`,
+  `nascar-truck` and `irl` answer
+  `{"message":"getCompetitorStatus() not supported for …","code":400}`, so
+  outside F1 there is no outcome ground truth *and no call to fail*. There
+  is also no bulk source: on the event root a competitor's `status` is
+  **always** a bare `{$ref}`, under every expansion variant.
+- `statistics.pole` is misnamed: it is the GRID slot and equals
+  `startOrder` (verified 22/22 F1, 39/39 stock car, 25/25 IndyCar);
+  `statistics.place` equals `order`. Both therefore come free from tier A
+  and need no per-car call.
+
+### Live gaps: the free source, unverified live
+
+The live score column documented above is **implemented but has never been
+seen working**, and the two are not the same claim.
+
+**No in-progress racing session was observable anywhere.** At the probe
+(2026-07-30T02:49Z) all five ESPN racing leagues had zero events and zero
+competitions in `status.type.state == "in"`, and `?dates=20260729-20260812`
+confirms nothing runs for 9 days (F1 summer break, Cup off-weekend).
+
+What IS established: the `statistics` key exists on **every** racing
+competitor in **every** league and session, and it was an empty `[]` on all
+**1606** competitors scanned (F1 2025-H1 + July, Cup July, IndyCar Jun–Jul,
+both current scoreboards) — every one of them a FINAL or scheduled session.
+What is NOT established: that it ever populates, or what it looks like when
+it does. **The populated shape is a model, not an observation.**
+
+The parser therefore treats the slot as an *unverified shape* and is
+deliberately liberal about it (`_racing_site_stat_map` /
+`_parse_racing_site_stats`): a flat list of `{name, value, displayValue}`
+(how the site API spells `statistics` everywhere it does populate one), a
+dict handed to the core flattener (`splits.categories[]` / `categories[]`),
+an entry keyed by `abbreviation` when `name` is missing — and it treats
+*absent* as the normal case. Zeroed placeholders are dropped by the same
+`_racing_display` rule as tier B. `_racing_live_row_score` wraps the whole
+parse in a bare `except Exception`, so a surprise in a shape nobody has
+observed costs **that one column** — never the driver's row, never the
+board. Both cases are pinned by tests: populated (gap / lap deficit /
+dropped `.000` placeholder) and absent (missing key, `[]`, `"nope"`,
+`[1,2,3]`, a nameless entry, an empty core nesting → today's board exactly).
+
+**A per-car live pass was deliberately NOT built.** It is the only other
+route that exists, and it costs 22 calls per poll on an F1 race and 39 on a
+Cup race: the competition-level aggregate (`…/competitions/{c}/statistics`)
+is 6 stats with **no competitor dimension**, every `enable=` / `expand=` /
+`view=` variant of the event root and of the competitors collection returns
+the **byte-identical** payload (md5-proven, 6 variants each), 24 plausible
+sub-resource names (`timing`, `gaps`, `laps`, `splits`, `intervals`,
+`classification`, …) 404, `site.api…/racing/f1/summary?event=` 404s on
+ESPN's own bug (it substitutes the event id for the competition id),
+`cdn.espn.com/core/f1/race?xhr=1` is 302→503, and
+`apis/v2/scoreboard/header` returns `competitors: null`. Worse, it is not
+established that anything in a per-car payload *moves* during a race:
+`totalTime` / `behindTime` are finishing values, the competition aggregate
+publishes `avgSpeed`, `victoryMargin`, `poleSpeed`, `poleTime` as `.000` on
+a *completed* Grand Prix, `fastestLap` is zeroed on 581 of 611 cars, the
+`gapToLeader` category (nascar-premier / nascar-truck / irl only, absent on
+F1) has an **empty `stats` array on all ~210 cars sampled**, and
+`…/competitions/{c}/situation` returns a body containing only `$ref`.
+Spending a per-poll N+1 to discover whether the numbers move is not a trade
+worth making blind, so: ship the free source, leave the column empty when
+it is empty. The two dated probes that decide whether to build more, and
+the decision rule they feed, are in `ROADMAP.md` under *Loose ends*.
+
+### Outcome resolution: status first, then an F1-only inference
+
+`outcome` is resolved per car as **ESPN's status if it said anything**, else
+— F1 cars only (gated on `car.status_url`, which only F1 competitors have),
+and only when that car's statistics were actually fetched — the inference
+below, else nothing (`_OUTCOME_NONE`, which renders exactly as it did
+before any of this existed). Cost: **zero additional calls**; all of it
+re-renders data the enrichment already fetches.
+
+| outcome | `score` | appended `detail` part |
+|---|---|---|
+| `STATUS_RETIRED`, or inferred DNF | `"DNF"` | `"Retired lap 13"` (status `period`, else `lapsCompleted`, else bare `"Retired"`) |
+| `STATUS_DISQUALIFIED` | `"DSQ"` | `"Disqualified"` |
+| `STATUS_CLASSIFIED`, or inferred finisher | unchanged (gap / laps / time chain) | `"Fastest lap 1:22.000"` when set |
+| **undecidable** (`_OUTCOME_AMBIGUOUS`) | unchanged — the lap deficit is true either way | **`"Status unknown"`, always last** |
+| nothing known (no status resource, or car past the fan-out cap) | unchanged | unchanged |
+
+`"Status unknown"` is the honest answer rather than a hedge on the number:
+the score column is a number column, and a `"DNF?"` in it reads as a data
+glitch.
+
+The inference (`_racing_inferred_outcome`) is measured over the same 611 F1
+cars (529 classified / 76 retired / 6 DSQ), each clause with **zero** false
+positives on the 529 classified:
+
+| clause | evidence |
+|---|---|
+| `abs(behindLaps) >= 4` (`_DNF_LAPS_BEHIND`) | precision **1.000** (0/529), recall 0.974 (74/76) |
+| `lapsCompleted` absent or 0 | 17 of 17 such cars were retired |
+| `pitsTaken` absent | 26 of 26 retired (+3 of the 6 DSQ), 0 of 529 classified |
+| a **non-zero** `totalTime` ⟹ finisher | 398 of 398, no violations |
+
+Bottom-six-of-the-field accuracy: 178 of 180 (30 races × 6), and both misses
+are in one race.
+
+**What is left over is undecidable, not merely unmeasured.** 2025 Qatar GP
+(event `600052107`, competition `401737850`, 57 laps): two cars RETIRED on
+lap 55 sit directly beneath CLASSIFIED cars on lap 56 — same `behindLaps`
+of 2, same pit count, and 56→55 is the same one-lap step as 57→56. Those
+rows come back undecidable — the band is "laps completed and pits both
+published, `abs(behindLaps)` under 4 (or absent), and no non-zero
+`totalTime`": **4.5 cars per race** on average (136 of 611),
+and only **1 of 30 races** actually had a retired car inside the band.
+
+**The threshold must never leave F1.** With no ground truth outside it,
+`abs(behindLaps) >= 4` fires on 5 of 37 cars at North Wilkesboro —
+including two only 8 laps down at 0.982 of race distance, which at a
+0.4-mile short track are still circulating — 7 of 39 at Cup Indianapolis, 4
+of 38 at Truck Indianapolis and 7 of 33 at the Indy 500.
+
+**DSQ is not inferable at all** and is never guessed: 3 of the 6 sampled
+carry the full race distance and look exactly like finishers.
+`"Disqualified"` only ever comes from the status resource.
+
+### Deliberate limitations
+
+- **Live mid-race gaps are only half implemented, and the shipped half is
+  unverified against a live race.** The free source is read at zero extra
+  calls (above), but it has never been observed populated, so the honest
+  expectation is that a live board may well carry constructor, car number,
+  grid slot and an **empty** gap column exactly as it did before. The
+  expensive half — a bounded per-car live pass — is deliberately deferred
+  until one of the two dated probes in `ROADMAP.md` says it is worth 12
+  calls per 180 s poll. Also not implemented: an F1-only caution indicator
+  off the competition status `flag` (1 call per poll per live F1 event); all
+  that has been observed is `CHECKER` post-race.
+- **One accepted degradation, now much narrower:** if a car's
+  per-competitor `status` call fails while its `statistics` call succeeds,
+  a RETIRED F1 car in the confident band renders `"DNF"` (the old `"+57
+  laps"` case is fixed), and one in the undecidable band keeps its true lap
+  deficit plus `"Status unknown"`. Nothing is inferred outside F1 — a stock
+  car 8 laps down at a short track is still circulating — so a NASCAR /
+  IndyCar board still degrades to laps completed, which is all those series
+  publish anyway. It never renders a bogus TIME in any case: a retired car
+  has no `totalTime` or `behindTime` at all.
+- Not implemented: the optional "retry the status call for just the
+  undecidable cars" pass (≤6 calls, once per event). That band only exists
+  when the status call **already failed in this same pass**, so an immediate
+  retry spends calls on a resource that just errored, and the memo would
+  then have to distinguish a retried miss from a fresh one. If it is ever
+  wanted, it is a second bounded gather inside `_racing_car_details` over
+  the cars whose outcome came back undecidable.
+- The "already-enriched boards are not re-fetched" guarantee is a bounded
+  **in-process** memo on the provider instance (`_racing_facts_memo`, 64
+  events), not a read of the persisted board — the provider is stateless
+  w.r.t. the DB and rebuilds the board from the site scoreboard every
+  poll. In practice this is airtight for the paths that matter:
+  `active_events` never returns FINAL rows, so `events_tick` polls a
+  FINAL race only on the transition tick, and that enriched board is what
+  `EventORM.leaderboard` persists. The cost of a cold cache is a process
+  restart followed by a daily `get_events`, which re-spends tier B for at
+  most 2 events per racing league. Making it durable is a scheduler-side
+  change (skip re-enrichment when the stored row's board already carries
+  non-empty scores) and belongs to whoever owns `scheduler/*`. Memo
+  semantics are **unchanged** by the outcome work, which means a FINAL board
+  rendered during a status-resource outage keeps its inferred / `"Status
+  unknown"` rows for that process's lifetime. Not a regression — the same
+  outage previously memoized a retired car as `"+57 laps"` — and left alone
+  deliberately: skipping the memo for a degraded board would re-spend the
+  per-car fan-out on every subsequent `get_events`, trading a documented
+  zero-call guarantee for a rare improvement.
+- The competition-distance memo caches a parse MISS (so a series that
+  never publishes `general.laps` costs one call, not one per tick) but
+  never caches a fetch FAILURE — so a series whose distance endpoint is
+  persistently 404 costs one extra core call per 180 s tick per live
+  race. Deliberate: memoizing the failure would permanently lose the
+  denominator for that event.
+- Considered and deliberately not done: dedicated optional
+  `LeaderRow.constructor` / `car_number` / `grid` / `gap` fields. They
+  would be better if the frontend ever wants to sort or column-align on
+  them (`detail` is one opaque string today, so the UI cannot right-align
+  a grid slot or colour-code a DNF), but that is a deliberate contract
+  change for later, not a side effect of this one.
+- A knock-on left alone because `scheduler/*` is out of scope for this
+  section: the FINAL notification message is
+  `f"{best.name} finished {best.position_label} ({best.score})"`
+  (`scheduler/live.py`), so a followed driver who was disqualified now reads
+  *"finished 2 (DSQ)"* and one who retired *"finished 18 (DNF)"*. Both are
+  more accurate than the old *"(+15.080)"* / *"(56 laps)"*, but the verb
+  "finished" is now the wrong word for those two cases — a wording fix for
+  whoever owns that file.
+
+### Tests
+
+`backend/tests/test_espn_racing.py` (22 → 38 → **62** tests), fictional
+"Apex Circuit Series" data — fictional drivers, constructors and circuits, core
+payloads built to the real shapes. FINAL enrichment fills the right
+columns for leader / gap / lapped / retired and asserts an exact call
+count (1 event root + N statistics + N status, zero competition-statistics
+calls) with `player_id` surviving as the bare ESPN id; a FINAL board is
+memoized and the second poll adds zero calls; a live race costs one event
+root + one distance call, zero per-car calls, and gets
+`"Race · Lap 44 of 70"` with the distance fetched once across two polls; a
+404 / exhausted-retry outage / non-JSON body each leave the plain board
+intact and are not memoized; a monkeypatched parser raising `TypeError`
+is caught; a per-car failure costs only that car's score; golf and
+SCHEDULED races are skipped with a forbidden `_get_json` stub proving no
+fetch; a 45-car field caps at exactly 40 statistics + 40 status calls with
+the front of the field enriched; a stock-car board degrades to laps with
+the entrant from `vehicle.team`, a negated `behindLaps`, dropped `.000`
+placeholders and zero status calls. Plus pure-function tests for the
+`$ref` host guard (an `evil.example.com` ref and a relative ref both
+ignored), zero-placeholder dropping, the status-name-only rule, the lap
+label, the competition aggregate, target bounding/ordering, and
+"enrichment only ever adds" (identity return on empty facts). All 22
+tests pre-existing at 2026-07-28 pass unmodified.
+
+The 2026-07-29 amendment added 24 more. **Live gaps:** a populated site slot
+(signed interval, lap deficit, a dropped zeroed `.000` placeholder, and a
+lap COUNT never rendered as a gap); 6 absent/junk spellings of the slot,
+parametrized, each asserting today's exact board; a FINAL board ignoring the
+slot; the gap surviving tier-A enrichment with no per-car call; a
+monkeypatched blow-up inside the slot parse costing the score column but not
+the row; both nestings plus `abbreviation` keying. **Outcome:** all three
+status types mapped by exact name and an unknown name yielding "not read"; a
+DSQ rendering `"DSQ · Disqualified"` in both observed shapes (full distance +
+gap, and zero laps + gap); a status-call failure inferring DNF for the parked
+car while the lead-lap finisher stays a finisher; a status-call failure
+marking the undecidable band and nobody else; a CLASSIFIED lapped car never
+hedged even though its statistics alone are undecidable; a 7-case inference
+matrix (each clause plus the band); a stock car 8 laps down with no status
+resource never inferred a DNF; and the `"Status unknown"` part surviving a
+detail that overflows `_DETAIL_MAX`.
+
+Two pre-existing tests changed with the behavior, not to fit it:
+`test_racing_car_status_only_trusts_the_status_name` →
+`test_racing_car_status_maps_all_three_types_by_name` (the helper returns an
+outcome, not a bool, and `STATUS_IN_PROGRESS` now maps to "not read" rather
+than "not retired"), and the `_core_status` builder takes
+`kind="classified"|"retired"|"dsq"`. The four-car finished-race stub also
+gained the `pitsTaken` stat that every real classified car publishes (529 of
+529), so the fixture is faithful to the payload the inference reads.

@@ -672,11 +672,15 @@ class TheSportsDbProvider:
         """
         return str(timeutil.utcnow().year)
 
-    async def get_roster(self, league: League, team: Team) -> Roster:
+    async def get_roster(
+        self, league: League, team: Team, *, with_stat_lines: bool = True
+    ) -> Roster:
         """Team roster via ``lookup_all_players.php``.
 
         National-team rosters are often empty on the free tier; an empty or
         failed response yields an empty Roster, never a crash.
+        ``with_stat_lines`` is accepted for the provider protocol and
+        ignored: this roster is one call with no per-athlete pass to skip.
         """
         data = await self._get_json("lookup_all_players.php", {"id": str(team.provider_key)})
         if data is None:

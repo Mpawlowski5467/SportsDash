@@ -36,13 +36,17 @@ from typing import Mapping, Protocol, runtime_checkable
 
 from app.models.domain import EventType
 
-# The five notifiable event types, in canonical order.
+# The six notifiable event types, in canonical order.  PLAYER_STATUS is
+# about a followed PLAYER rather than a game; in v1 it is gated on the
+# player's parent team scope — callers pass the parent ``team_id`` (and
+# the league id) to :func:`decide` like any game event.
 EVENT_TYPES: tuple[str, ...] = (
     EventType.STARTING_SOON.value,
     EventType.GAME_START.value,
     EventType.PERIOD_START.value,
     EventType.INTERMISSION.value,
     EventType.FINAL.value,
+    EventType.PLAYER_STATUS.value,
 )
 
 

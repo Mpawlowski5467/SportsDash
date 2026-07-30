@@ -84,7 +84,19 @@ class SportsProvider(Protocol):
 
     async def get_standings(self, league: League) -> Standings: ...
 
-    async def get_roster(self, league: League, team: Team) -> Roster: ...
+    async def get_roster(
+        self, league: League, team: Team, *, with_stat_lines: bool = True
+    ) -> Roster:
+        """A team's roster.
+
+        ``with_stat_lines=False`` asks for the cheap variant: the roster
+        payload only, no per-athlete enrichment.  Providers whose roster is
+        a single call ignore it; the ESPN provider skips its
+        one-request-per-athlete season/career line pass, which the same-day
+        pre-game re-sync cannot afford at its cadence (statuses ride on the
+        roster payload itself).
+        """
+        ...
 
     async def get_team_location(self, league: League, team: Team) -> TeamLocation | None:
         """Home venue (name + optional coordinates) for the map view.

@@ -65,6 +65,7 @@ class GameOut(BaseModel):
     venue: str | None = None
     series: str | None = None  # tournament/round or fight card (individual sports)
     fight_result: FightResultOut | None = None  # MMA: method of victory (finished bouts)
+    broadcasts: list[str] = []  # where to watch: network names, national market first
     phase: str  # scheduled | in_progress | final | postponed | canceled
     period: int
     period_label: str
@@ -132,6 +133,16 @@ class GamePlayOut(BaseModel):
     scoring: bool = False
 
 
+class ClipOut(BaseModel):
+    """A highlight video clip; ``url`` is the provider's clip page."""
+
+    headline: str
+    description: str | None = None
+    duration_seconds: int | None = None
+    thumbnail_url: str | None = None
+    url: str
+
+
 class GameSummaryOut(BaseModel):
     game_id: str
     periods: list[PeriodScoreOut] = []
@@ -144,6 +155,8 @@ class GameSummaryOut(BaseModel):
     win_probability: list[float] = []
     # Condensed key-moment play-by-play.
     plays: list[GamePlayOut] = []
+    # Highlight clips, when the provider ships them (never stored).
+    clips: list[ClipOut] = []
 
 
 class WeatherOut(BaseModel):
@@ -393,6 +406,8 @@ class StatLeaderOut(BaseModel):
     stat_label: str  # the headline stat's unit (e.g. "G", "PPG")
     detail: str  # the player's full stat_line
     highlighted: bool = False  # the player is on a team you follow
+    # The player themselves is followed (stamped per-request, never cached).
+    followed: bool = False
 
 
 class StatLeadersOut(BaseModel):
@@ -567,3 +582,58 @@ class NotificationPrefUpdate(BaseModel):
     scope: str
     muted: bool | None = None
     events: dict[str, bool] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Player follows
+# ---------------------------------------------------------------------------
+
+
+class PlayerFollowOut(BaseModel):
+    """One followed individual player (on a followed team-sport team)."""
+
+    athlete_id: str  # bare ESPN athlete id (roster ids carry it "espn:"-prefixed)
+    name: str
+    team_id: str  # internal slug of the followed parent team
+    league_id: str
+    position: str | None = None
+    photo_url: str | None = None
+    followed_at: datetime  # UTC
+
+
+class PlayerFollowIn(BaseModel):
+    """Body of ``PUT /players/follows/{athlete_id}``.
+
+    v1 constraint: ``team_id`` must be a followed team and the athlete
+    must be on its stored roster (the roster is the picker).
+    """
+
+    name: str
+    team_id: str
+    league_id: str
+    position: str | None = None
+    photo_url: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# "On this day" (historical archives)
+# ---------------------------------------------------------------------------
+
+
+class OnThisDayTeamOut(BaseModel):
+    """One followed team's past games on today's local month-day."""
+
+    team_id: str
+    team_name: str
+    games: list[GameOut] = []  # newest first, across the scanned seasons
+
+
+class OnThisDayOut(BaseModel):
+    """Followed teams' historical games on today's calendar date.
+
+    ``teams`` only carries teams with at least one match; empty is the
+    normal no-anniversary state (never a 404).
+    """
+
+    date: str  # the local ISO date (YYYY-MM-DD) the month-day was taken from
+    teams: list[OnThisDayTeamOut] = []

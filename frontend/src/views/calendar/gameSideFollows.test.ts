@@ -1,9 +1,10 @@
 /**
  * appearsOnGameSide: the one rule behind both calendar controls that list
  * followed teams — the Subscribe menu's per-team `.ics` rows and the team
- * filter's options. A golf follow is dropped (its tournaments are `Event`s,
- * which have no team side); every other follow stays, including the other
- * athlete-as-team sports, whose matches ARE games.
+ * filter's options. A leaderboard-sport follow (golf, racing) is dropped
+ * (its tournaments are `Event`s, which have no team side); every other
+ * follow stays, including the other athlete-as-team sports, whose matches
+ * ARE games.
  */
 import { describe, expect, it } from "vitest";
 
@@ -46,6 +47,13 @@ describe("appearsOnGameSide", () => {
     expect(appearsOnGameSide(golfer, leaguesFor("golf"))).toBe(false);
   });
 
+  it("drops a racing driver the same way", () => {
+    // Racing is the second leaderboard sport: a driver's races are Events.
+    const driver = makeTeam({ id: "test:rc-ashby", name: "Corin Ashby" });
+
+    expect(appearsOnGameSide(driver, leaguesFor("racing"))).toBe(false);
+  });
+
   it("keeps athlete-as-team follows whose matches are games", () => {
     // Tennis and MMA are individual sports too, but their bouts are
     // two-sided Games, so both controls can serve them.
@@ -64,7 +72,7 @@ describe("appearsOnGameSide", () => {
     expect(appearsOnGameSide(makeTeam({}), {})).toBe(true);
   });
 
-  it("mirrors the backend's LEADERBOARD_SPORTS, which is golf only", () => {
-    expect([...LEADERBOARD_SPORTS]).toEqual(["golf"]);
+  it("mirrors the backend's LEADERBOARD_SPORTS: golf and racing", () => {
+    expect([...LEADERBOARD_SPORTS].sort()).toEqual(["golf", "racing"]);
   });
 });

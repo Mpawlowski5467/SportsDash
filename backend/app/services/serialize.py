@@ -13,6 +13,7 @@ from app.models import domain
 from app.models.domain import GameLineup, GameOdds, GameSummary, TeamLineup, Weather
 from app.models.orm import EventORM, GameORM, LeagueORM
 from app.schemas import (
+    ClipOut,
     EventOut,
     FightResultOut,
     GameLineupOut,
@@ -109,6 +110,7 @@ def domain_game_to_out(game: domain.Game, league: LeagueORM) -> GameOut:
         venue=game.venue,
         series=game.series,
         fight_result=_fight_result_out(game.fight_result),
+        broadcasts=list(game.broadcasts),
         phase=phase,
         period=state.period if state is not None else 0,
         period_label=state.period_label if state is not None else "",
@@ -165,6 +167,8 @@ def game_to_out(row: GameORM, league: LeagueORM) -> GameOut:
         venue=row.venue,
         series=row.series,
         fight_result=_row_fight_result_out(row),
+        # NULL on rows predating the additive migration — read as empty.
+        broadcasts=list(row.broadcasts or []),
         phase=row.phase,
         period=row.period,
         period_label=row.period_label,
@@ -219,6 +223,16 @@ def summary_to_out(summary: GameSummary) -> GameSummaryOut:
                 scoring=play.scoring,
             )
             for play in summary.plays
+        ],
+        clips=[
+            ClipOut(
+                headline=clip.headline,
+                description=clip.description,
+                duration_seconds=clip.duration_seconds,
+                thumbnail_url=clip.thumbnail_url,
+                url=clip.url,
+            )
+            for clip in summary.clips
         ],
     )
 
