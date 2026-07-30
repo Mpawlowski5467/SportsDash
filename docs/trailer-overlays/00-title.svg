@@ -13,6 +13,12 @@
       <stop offset="1" stop-color="#4c7de0"/>
     </linearGradient>
     <filter id="soft"><feGaussianBlur stdDeviation="34"/></filter>
+    <clipPath id="logo-w0"><path d="M60,60 L60,8 A52,52 0 0 1 105,34 Z"/></clipPath>
+    <clipPath id="logo-w1"><path d="M60,60 L105,34 A52,52 0 0 1 105,86 Z"/></clipPath>
+    <clipPath id="logo-w2"><path d="M60,60 L105,86 A52,52 0 0 1 60,112 Z"/></clipPath>
+    <clipPath id="logo-w3"><path d="M60,60 L60,112 A52,52 0 0 1 15,86 Z"/></clipPath>
+    <clipPath id="logo-w4"><path d="M60,60 L15,86 A52,52 0 0 1 15,34 Z"/></clipPath>
+    <clipPath id="logo-w5"><path d="M60,60 L15,34 A52,52 0 0 1 60,8 Z"/></clipPath>
   </defs>
   <rect width="1280" height="720" fill="url(#bg)"/>
   <circle cx="224" cy="95" r="180" fill="#e8643c" opacity=".09" filter="url(#soft)"/>
@@ -24,12 +30,21 @@
     <path d="M60 60 L60 112 A52 52 0 0 1 15 86 Z" fill="#3b6fd4"/>
     <path d="M60 60 L15 86 A52 52 0 0 1 15 34 Z" fill="#f4efe6"/>
     <path d="M60 60 L15 34 A52 52 0 0 1 60 8 Z" fill="#9a6a43"/>
-    <g fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round">
-      <path d="M60 60 L60 8"/><path d="M60 60 L105 34"/><path d="M60 60 L105 86"/>
-      <path d="M60 60 L60 112"/><path d="M60 60 L15 86"/><path d="M60 60 L15 34"/>
-      <circle cx="60" cy="60" r="52"/>
+    <g clip-path="url(#logo-w0)"><path d="M60,8 V112 M8,60 H112 M60,8 Q18,60 60,112 M60,8 Q102,60 60,112" fill="none" stroke="#15171c" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g clip-path="url(#logo-w1)"><path d="M82,49 L92.5,56.6 L88.5,68.9 L75.5,68.9 L71.5,56.6 Z" fill="#15171c"/></g>
+    <g clip-path="url(#logo-w2)"><path d="M104,70 C84,72 80,86 64,104 M98,57 C86,66 88,82 78,99" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g clip-path="url(#logo-w3)"><path d="M16,84 Q40,74 60,60 M28,98 Q48,84 66,82 M10,68 Q34,72 52,64" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g clip-path="url(#logo-w4)"><path d="M24,32 Q36,60 24,88" fill="none" stroke="#d8423b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g clip-path="url(#logo-w5)">
+      <path d="M37,16 L47,42" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M32,23 L42,20 M34,30 L44,27 M36,37 L46,34" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     </g>
-    <circle cx="60" cy="60" r="4" fill="#fff"/>
+    <g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round">
+      <path d="M60,60 L60,8"/><path d="M60,60 L105,34"/><path d="M60,60 L105,86"/>
+      <path d="M60,60 L60,112"/><path d="M60,60 L15,86"/><path d="M60,60 L15,34"/>
+    </g>
+    <circle cx="60" cy="60" r="52" fill="none" stroke="#fff" stroke-width="2.6"/>
+    <circle cx="60" cy="60" r="4.5" fill="#fff"/>
   </g>
   <text x="640" y="360" text-anchor="middle" fill="#f8f5ef"
         font-family="SF Pro Display, Inter, Arial, sans-serif"
