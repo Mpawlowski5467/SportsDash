@@ -38,7 +38,9 @@ tennis, MMA, golf, motorsport, and volleyball.**
 | **Stat leaders** | |
 | ![Leaders](docs/screenshots/leaders.png) | |
 
-[![Watch the live SportsDash product trailer](docs/trailer-poster.svg)](docs/trailer.mp4)
+[![SportsDash live product trailer](docs/trailer-preview.gif)](https://github.com/Mpawlowski5467/SportsDash/releases/download/v1.4.0/SportsDash-1.4.0-trailer.mp4)
+
+*The preview plays inline on GitHub. Click it for the full 720p trailer with sound.*
 
 ## Features
 
