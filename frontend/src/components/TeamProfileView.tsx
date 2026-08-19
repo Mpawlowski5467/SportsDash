@@ -102,7 +102,7 @@ export function FollowStarButton({
       className={
         "shrink-0 rounded-md transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 " +
         (compact ? "p-0.5 " : "p-1 ") +
-        (followed ? "text-amber-400" : "text-zinc-600 hover:text-amber-400")
+        (followed ? "text-amber-400" : "text-zinc-500 hover:text-amber-400")
       }
     >
       <svg
@@ -423,7 +423,7 @@ export default function TeamProfileView({
                                   )}
                                 </span>
                                 {p.career_stat_line && (
-                                  <span className="block truncate text-xs tabular-nums text-zinc-600">
+                                  <span className="block truncate text-xs tabular-nums text-zinc-500">
                                     Career: {p.career_stat_line}
                                   </span>
                                 )}
@@ -546,7 +546,7 @@ const SOURCE_LABEL: Record<string, string> = {
 /** Muted provenance line under an "About" prose block. */
 function Attribution({ source }: { source: string }) {
   return (
-    <p className="mt-1 text-xs text-zinc-600">
+    <p className="mt-1 text-xs text-zinc-500">
       via {SOURCE_LABEL[source] ?? source}
     </p>
   );

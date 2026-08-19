@@ -103,7 +103,12 @@ function firstFollowedColor(
   return undefined;
 }
 
-function TeamRow({
+/**
+ * One side of a game inside a row: crest, name, and the score once there is
+ * one. The leader's score is the only bold figure on the line, so a glance
+ * down a column of rows finds the winners without reading them.
+ */
+function Side({
   side,
   opponent,
   game,
@@ -118,30 +123,17 @@ function TeamRow({
 }) {
   const followed =
     side.team_id !== null && game.followed_team_ids.includes(side.team_id);
-  // Prefer the real crest/flag the API now sends for EVERY side; fall back to
-  // a followed team's cached /teams logo.
-  const logoUrl =
-    side.logo_url ??
-    (side.team_id !== null && teamLogos ? teamLogos[side.team_id] : undefined);
-  // Color the fallback abbreviation chip: a followed team's brand color, else
-  // the side's own provider color (e.g. a nation's flag color). The chip only
-  // shows when there's no logo / it 404s.
-  const followedColor =
-    followed && side.team_id !== null && teamColors
-      ? teamColors[side.team_id]
-      : undefined;
-  const chipColor = followedColor ?? side.color ?? undefined;
-
-  const started = game.phase === "in_progress" || game.phase === "final";
+  const chipColor =
+    side.team_id !== null ? teamColors?.[side.team_id] : undefined;
+  const logoUrl = side.team_id !== null ? teamLogos?.[side.team_id] : undefined;
   const showScore = game.phase !== "scheduled" && side.score !== null;
   const isLeader =
-    started &&
     side.score !== null &&
     opponent.score !== null &&
     side.score > opponent.score;
 
   return (
-    <div className="flex items-center gap-2">
+    <span className="flex min-w-0 items-center gap-2">
       <TeamLogo
         logoUrl={logoUrl}
         name={side.name}
@@ -151,8 +143,7 @@ function TeamRow({
       />
       <span
         className={
-          "min-w-0 flex-1 truncate text-sm " +
-          (followed ? "text-zinc-100" : "text-zinc-300")
+          "truncate " + (followed ? "font-semibold text-zinc-100" : "text-zinc-300")
         }
       >
         {side.name}
@@ -161,31 +152,36 @@ function TeamRow({
         <span
           key={side.score ?? "none"}
           className={
-            "sd-score shrink-0 text-right text-sm tabular-nums " +
+            "sd-score sd-figure shrink-0 " +
             (isLeader ? "font-bold text-zinc-100" : "text-zinc-400")
           }
         >
           {side.score}
         </span>
       )}
-    </div>
+    </span>
   );
 }
 
 /**
- * Dense, glanceable game card: away on top, home below, status + venue
- * footer. Followed teams get their color on the abbreviation chip and the
- * first followed team's color as a thin left accent border.
+ * A game as a row in a listing, not a tile: kickoff time in a fixed gutter,
+ * the matchup on the primary line, venue and broadcast demoted beneath it,
+ * and the odds / why-watch chips trailing right.
+ *
+ * The gutter is the point — a column of rows sharing one time column is
+ * scannable in a way a grid of cards is not, and it is what lets the
+ * typography carry the hierarchy instead of borders and fills. A followed
+ * team is marked by a rule on the leading edge rather than a tinted card.
  *
  * Whole-competition games have no followed team, so neither side is
- * colored; the card falls back to a per-league accent and labels itself
- * with the competition name so it still reads at a glance.
+ * colored; the row falls back to a per-league accent and labels itself with
+ * the competition name so it still reads at a glance.
  *
- * The whole card is a button: clicking (or Enter/Space when focused) opens a
- * full-screen box-score drill-down for this game. The modal state lives here
- * so every existing call site keeps working with the same props.
+ * The whole row is a button: clicking (or Enter/Space when focused) opens a
+ * full-screen box-score drill-down. The modal state lives here so every
+ * call site keeps working with the same props.
  */
-export default function GameCard({
+export default function GameRow({
   game,
   teamColors,
   leaguesById,
@@ -199,8 +195,8 @@ export default function GameCard({
   const [open, setOpen] = useState(false);
   // Logos live on the cached /teams payload (Team.logo_url), keyed by the
   // internal team id; GameSide only carries team_id, so we resolve here
-  // rather than threading a prop through every call site (keeps TodayView /
-  // the kiosk untouched). useTeams is staleTime:Infinity — already in cache.
+  // rather than threading a prop through every call site. useTeams is
+  // staleTime:Infinity — already in cache.
   const teamsQuery = useTeams();
   const teamLogos = useMemo(() => {
     const map: Record<string, string> = {};
@@ -220,14 +216,20 @@ export default function GameCard({
   // ...and once it's over, a finished fight puts the round/time in its place.
   const fightChip = fightRoundChip(game);
   const preOrLive = game.phase === "scheduled" || game.phase === "in_progress";
-  // A rare "why watch" pill scored from what the card already holds (the
-  // game plus the batched odds prop — no extra fetches). Pre/live only, and
-  // it yields whenever the fight chip occupies the slot.
+  // A rare "why watch" pill scored from what the row already holds (the game
+  // plus the batched odds prop — no extra fetches). Pre/live only, and it
+  // yields whenever the fight chip occupies the slot.
   const watch =
     preOrLive && fightChip === null ? watchability(game, odds) : null;
   // Where to watch: the first (national-market-first) network, pre/live only.
   const broadcast =
     preOrLive && game.broadcasts.length > 0 ? game.broadcasts[0] : null;
+
+  // The gutter reads as a time before the game and as a status after it —
+  // "10:10 PM" while it is still a plan, "Final" once it is a fact.
+  const meta = [game.venue, broadcast].filter(
+    (part): part is string => part !== null && part !== undefined,
+  );
 
   return (
     <>
@@ -236,93 +238,97 @@ export default function GameCard({
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
         aria-label={`Box score: ${game.away.name} at ${game.home.name}`}
-        className="sd-card sd-stagger-item block w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-left transition hover:border-zinc-700 hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
-        style={{ borderLeftWidth: "3px", borderLeftColor: accent }}
+        className="sd-row sd-hair sd-stagger-item w-full py-4 text-left transition-colors hover:bg-zinc-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
       >
-        {game.series !== null && (
-          <div className="mb-1.5 truncate text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-            {game.series}
-          </div>
-        )}
-        <div className="space-y-1.5">
-          <TeamRow
-            side={game.away}
-            opponent={game.home}
-            game={game}
-            teamColors={teamColors}
-            teamLogos={teamLogos}
+        <span className="sd-figure flex shrink-0 items-center gap-2 self-start pl-3 text-[15px] font-semibold text-zinc-100">
+          <span
+            aria-hidden="true"
+            className="absolute-none -ml-3 h-5 w-0.5 shrink-0 rounded-full"
+            style={{ backgroundColor: accent }}
           />
-          <TeamRow
-            side={game.home}
-            opponent={game.away}
-            game={game}
-            teamColors={teamColors}
-            teamLogos={teamLogos}
-          />
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-2 border-t border-zinc-800/70 pt-2">
-          {/* The chip rail can stack four chips (status + odds + why-watch +
-              broadcast) — it must SHRINK on one-column widths, not push past
-              the card border. min-w-0 lets it give way; the broadcast chip
-              is the only min-w-0 child, so it truncates first while the
-              fixed-content chips keep their size. */}
-          <span className="flex min-w-0 items-center gap-2">
-            <StatusBadge game={game} />
-            {chip !== null && (
-              <span
-                className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-amber-400"
-                title={chip.title}
-              >
-                {chip.label}
-              </span>
-            )}
-            {fightChip !== null && (
-              <span
-                className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-800/60 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-400"
-                title={fightChip.title}
-              >
-                {fightChip.label}
-              </span>
-            )}
-            {watch !== null && (
-              <span
-                className="inline-flex items-center rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-400"
-                title={`Why watch: ${watch.reason}`}
-              >
-                🔥 {watch.reason}
-              </span>
-            )}
-            {broadcast !== null && (
-              <span
-                className="inline-flex min-w-0 max-w-[7rem] items-center rounded-full border border-zinc-700 bg-zinc-800/60 px-2 py-0.5 text-[10px] font-semibold text-zinc-400"
-                title={game.broadcasts.join(" · ")}
-              >
-                <span className="truncate">{broadcast}</span>
-              </span>
-            )}
+          <StatusBadge game={game} />
+        </span>
+
+        <span className="flex min-w-0 flex-col gap-1.5">
+          <span className="sd-lede flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+            <Side
+              side={game.away}
+              opponent={game.home}
+              game={game}
+              teamColors={teamColors}
+              teamLogos={teamLogos}
+            />
+            <span className="sd-meta shrink-0 text-zinc-500">at</span>
+            <Side
+              side={game.home}
+              opponent={game.away}
+              game={game}
+              teamColors={teamColors}
+              teamLogos={teamLogos}
+            />
           </span>
-          <span className="flex min-w-0 items-center gap-2">
-            {isWholeComp && leagueName !== undefined && (
-              <span
-                className="inline-flex max-w-[10rem] items-center gap-1 truncate rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                style={{ color: accent }}
-                title={leagueName}
-              >
-                <span
-                  className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: accent }}
-                  aria-hidden="true"
-                />
-                <span className="truncate">{leagueName}</span>
-              </span>
-            )}
-            {game.venue !== null && (
-              <span className="min-w-0 truncate text-xs text-zinc-500">
-                {game.venue}
-              </span>
-            )}
-          </span>
-        </div>
+          {(meta.length > 0 || game.series !== null || isWholeComp) && (
+            <span className="sd-meta flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-zinc-500">
+              {game.series !== null && (
+                <>
+                  <span className="truncate">{game.series}</span>
+                  <span aria-hidden="true" className="text-zinc-500">
+                    ·
+                  </span>
+                </>
+              )}
+              {isWholeComp && leagueName !== undefined && (
+                <>
+                  <span className="truncate" style={{ color: accent }}>
+                    {leagueName}
+                  </span>
+                  {meta.length > 0 && (
+                    <span aria-hidden="true" className="text-zinc-500">
+                      ·
+                    </span>
+                  )}
+                </>
+              )}
+              {meta.map((part, index) => (
+                <span key={part} className="flex min-w-0 items-center gap-2">
+                  <span className="truncate">{part}</span>
+                  {index < meta.length - 1 && (
+                    <span aria-hidden="true" className="text-zinc-500">
+                      ·
+                    </span>
+                  )}
+                </span>
+              ))}
+            </span>
+          )}
+        </span>
+
+        <span className="flex shrink-0 items-center gap-2 self-start">
+          {chip !== null && (
+            <span
+              className="sd-figure text-[13px] font-semibold text-amber-400"
+              title={chip.title}
+            >
+              {chip.label}
+            </span>
+          )}
+          {fightChip !== null && (
+            <span
+              className="sd-figure text-[13px] font-semibold text-zinc-400"
+              title={fightChip.title}
+            >
+              {fightChip.label}
+            </span>
+          )}
+          {watch !== null && (
+            <span
+              className="text-[13px] font-semibold text-rose-400"
+              title={`Why watch: ${watch.reason}`}
+            >
+              {watch.reason}
+            </span>
+          )}
+        </span>
       </button>
       {open && (
         <GameDetailModal

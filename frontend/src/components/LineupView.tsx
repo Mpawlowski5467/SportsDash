@@ -6,7 +6,7 @@ import type {
   Sport,
   TeamLineup,
 } from "../types";
-import { leagueFallbackColor } from "./GameCard";
+import { leagueFallbackColor } from "./GameRow";
 import TeamLogo from "./TeamLogo";
 
 /**
@@ -92,7 +92,7 @@ export default function LineupView({
       <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
         Projected lineups
       </h3>
-      <p className="mb-3 text-[11px] leading-snug text-zinc-600">
+      <p className="mb-3 text-[11px] leading-snug text-zinc-500">
         Arranged from each squad by position — a depth-chart view, not a
         confirmed starting lineup.
       </p>
@@ -134,7 +134,7 @@ function SideLineup({
         )}
       </div>
       {teamLineup === null ? (
-        <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-4 text-center text-xs text-zinc-600">
+        <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-4 text-center text-xs text-zinc-500">
           Lineup unavailable — follow this team to see its squad.
         </p>
       ) : sport === "baseball" ? (
@@ -258,7 +258,7 @@ function PlayerChip({ slot, color }: { slot: LineupSlot; color: string }) {
 function Bench({ names }: { names: string[] }) {
   return (
     <p className="mt-1.5 text-[11px] leading-snug text-zinc-500">
-      <span className="font-semibold uppercase tracking-wide text-zinc-600">
+      <span className="font-semibold uppercase tracking-wide text-zinc-500">
         Bench:{" "}
       </span>
       {names.join(", ")}

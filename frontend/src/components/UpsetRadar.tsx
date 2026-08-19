@@ -32,7 +32,7 @@ export default function UpsetRadar({ games }: { games: Game[] }) {
 
   return (
     <section>
-      <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+      <h2 className="sd-eyebrow sd-rule mb-3 flex items-center gap-2 pb-2.5 text-zinc-500">
         <svg
           viewBox="0 0 20 20"
           fill="none"

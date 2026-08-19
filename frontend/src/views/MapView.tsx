@@ -1797,7 +1797,7 @@ export default function MapView() {
             is pointer-events-none so the map still drags between the cards; each
             card re-enables its own pointer events. */}
         <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[min(26rem,calc(100%-1.5rem))] flex-col gap-1.5">
-          <div className="pointer-events-auto flex flex-col gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/80 p-1.5 shadow-lg backdrop-blur-sm">
+          <div className="pointer-events-auto flex flex-col gap-1.5 rounded-md border border-zinc-700 bg-zinc-950/90 p-1.5 backdrop-blur-sm">
             <div className="flex flex-wrap items-center gap-1.5">
               <ModeToggle mode={mode} onChange={setMode} />
               <BasemapToggle value={basemap} onChange={onBasemapChange} />
@@ -1828,7 +1828,7 @@ export default function MapView() {
                 className={
                   "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition " +
                   (geoState === "denied"
-                    ? "border-zinc-800 bg-zinc-900 text-zinc-600"
+                    ? "border-zinc-800 bg-zinc-900 text-zinc-500"
                     : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200")
                 }
               >
