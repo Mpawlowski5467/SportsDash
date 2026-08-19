@@ -901,7 +901,7 @@ already — currently only player/fighter/team; ADD golf→"golfer".)
   background events — nice-to-have; at minimum don't break. **Landed
   2026-07-27**, as solid all-day spans rather than FullCalendar
   *background* events (a background fill is unreadable under the light /
-  newsprint themes and can't be clicked open) — see "MMA method of
+  light themes and can't be clicked open) — see "MMA method of
   victory + leaderboard events on the calendar" for the shipped contract.
 - Onboarding: golf league picker uses entity_noun "golfer" ("Pick your
   golfers"); sport heading "golf"→"Golf".
@@ -1075,30 +1075,39 @@ and re-theme automatically. Only targeted files change.
 
 - `src/index.css`: define theme blocks. Default (`:root` / no attribute /
   `[data-theme="dark"]`) keeps today's look (Tailwind zinc defaults — can
-  leave unset). Add `[data-theme="light"]`, `[data-theme="newsprint"]`,
-  `[data-theme="stadium"]` each overriding the ramp the app actually uses:
+  leave unset). Add `[data-theme="light"]`, `[data-theme="custom"]`,
+  `[data-theme="contrast"]` each overriding the ramp the app actually uses:
   `--color-zinc-950/900/800/700/600/500/400/300/200/100` (background→text
   scale) plus accent `--color-amber-300/400/500` and status `--color-red-*`,
   `--color-emerald-*`. Set `color-scheme` per theme (light vs dark) so
   scrollbars/form controls follow. Pick tasteful, WCAG-AA-contrast ramps:
   - light: near-white bgs (zinc-950→#f8fafc … zinc-900→#f1f5f9), dark text
     (zinc-100→#18181b … zinc-400→#52525b), amber accent kept readable.
-  - newsprint: warm paper (cream/ivory bg ramp), ink-brown text, a muted
-    crimson/maroon accent; optionally a serif `--font-sans` override for
-    headings via a `.theme-newsprint` heading rule.
-  - stadium: dark base (keep dark ramp) but accent driven by a
+  - custom: dark base (keep dark ramp) but accent driven by a
     `--sd-accent` var — remap `--color-amber-400`(and 300/500) to
     `var(--sd-accent, <default>)`. A small effect sets `--sd-accent` from
-    the team being viewed (see below); default to a vibrant amber.
+    the team being viewed (see below); default to a vibrant amber. The
+    team colour is passed through `accentOnDark` first, which lifts a dark
+    club colour (navy, maroon) toward a readable tone — without it a navy
+    club renders at ~1.3:1 on the base.
+  - contrast: an accessibility option, not a look — true black backdrop,
+    white headings, every text token at WCAG AAA (7:1) against both the
+    backdrop and a card surface. Borders are deliberately lighter than the
+    other dark themes (#3a3a3a, not #27272a): at a true-black base a
+    hairline at the usual value is invisible.
+  Retired 2026-08-19: `newsprint`, `floodlight`, `ember`. A stored id for
+  any of them must MIGRATE rather than fail validation (see
+  `LEGACY_THEME_IDS` in `src/lib/theme.ts`, mirrored in the `index.html`
+  bootstrap), or a returning user is silently reset to the default.
 - `src/calendar.css`: change the hardcoded `--fc-*` hex values to reference
   the palette vars (e.g. `--fc-page-bg-color: var(--color-zinc-950)`), so
   FullCalendar re-themes with the rest.
 - Theme switcher: persisted in localStorage `sportsdash.theme` (values
-  `dark|light|newsprint|stadium`, default `dark`). Apply `data-theme` to
+  `dark|light|custom|contrast`, default `dark`). Apply `data-theme` to
   `document.documentElement` as early as possible (an inline script in
   `index.html` head, or first thing in `main.tsx`) to avoid a flash.
-  Expose a switcher control in SettingsView (the gear → Notifications panel
-  area gets a "Appearance" section) AND a quick theme button in the header
+  Expose a switcher control in SettingsView (the gear → Settings panel
+  gets an "Appearance" section) AND a quick theme button in the header
   next to the gear is optional. Keep `types`/api untouched (pure client
   state).
 - Stadium dynamic accent: a tiny `ThemeContext`/effect that, only when
@@ -2071,7 +2080,7 @@ unchanged.
   back to the bare event name for any sport without an entry.
 - `CalendarView` draws spans with a solid `leagueFallbackColor(sport)`
   fill and `isLightColor`-derived text (the only theme-proof option —
-  a translucent fill would be unreadable under the light/newsprint
+  a translucent fill would be unreadable under the light
   `[data-theme]`s), a ⛳ glyph in the title, and opens the existing
   `EventLeaderboardModal` on click. Hidden while the team filter is set,
   matching the per-team feed — which is why the filter offers only
@@ -2794,7 +2803,12 @@ Shared helper: `services/events.player_status_label()`
   non-followed rows unchanged. `SettingsView`'s `EVENT_LABELS` gained
   `player_status: "Player status"` so the prefs grid renders the sixth
   EventType cleanly (grid order still comes from the backend's
-  `event_types` list).
+  `event_types` list). **Superseded 2026-08-19**: the prefs grid — and
+  with it `EVENT_LABELS` — was removed from `SettingsView` because the
+  notification path has never been exercised against a real device. The
+  API, the scheduler and the `useNotificationPrefs` client are unchanged;
+  restoring the panel means restoring this label map with it. See the
+  ROADMAP loose end for what must be verified first.
 - Shared helpers exported from `components/TeamProfileView.tsx`:
   `FollowStarButton` (ghost star toggle, `compact` variant),
   `bareAthleteId(playerId)` (strips the `"espn:"` prefix from roster
