@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from app import timeutil
+from app import timeutil, useragent
 from app.models.domain import Sport
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ async def fetch_playoff_bracket(provider_key: str, sport: Sport) -> list[Playoff
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(15.0),
-            headers={"User-Agent": "SportsDash/1.0"},
+            headers=useragent.headers(),
             follow_redirects=True,
         ) as client:
             response = await client.get(url, params=params)

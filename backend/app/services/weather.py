@@ -22,6 +22,7 @@ from typing import Any
 
 import httpx
 
+from app import useragent
 from app.services import http_client
 
 from app.config import get_settings
@@ -31,7 +32,7 @@ from app.services import cache
 logger = logging.getLogger(__name__)
 
 _URL = "https://api.open-meteo.com/v1/forecast"
-_HEADERS = {"User-Agent": "SportsDash/1.0 (self-hosted)"}
+_HEADERS = useragent.headers("self-hosted")
 _TIMEOUT = httpx.Timeout(15.0)
 # Cap concurrent upstream calls regardless of how many pins ask at once.
 _MAX_INFLIGHT = asyncio.Semaphore(8)

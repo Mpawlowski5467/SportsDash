@@ -24,13 +24,14 @@ from typing import Any
 
 import httpx
 
+from app import useragent
 from app.config import get_settings
 from app.providers.http_util import get_with_retry
 
 logger = logging.getLogger(__name__)
 
 TSDB_BASE_URL = "https://www.thesportsdb.com/api/v1/json/3/"
-HEADERS = {"User-Agent": "SportsDash/1.0 (self-hosted)"}
+HEADERS = useragent.headers("self-hosted")
 TIMEOUT = httpx.Timeout(15.0)
 
 # Map the app's ``Sport`` value onto TheSportsDB's ``strSport`` label so a

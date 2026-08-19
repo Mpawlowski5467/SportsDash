@@ -22,6 +22,7 @@ import time
 
 import httpx
 
+from app import useragent
 from app.services import http_client
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 _NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 # Nominatim's usage policy *requires* a descriptive User-Agent naming the
 # application (a generic one gets blocked).
-_HEADERS = {"User-Agent": "SportsDash/1.0 (self-hosted)"}
+_HEADERS = useragent.headers("self-hosted")
 _TIMEOUT = httpx.Timeout(15.0)
 
 # Nominatim allows at most one request per second; serialize calls and

@@ -101,7 +101,7 @@ forget.**
 
 | File | Enforced by | Notes |
 |---|---|---|
-| `backend/app/routes/meta.py` → `APP_VERSION` | — | **The source of truth.** `main.py` passes it to `FastAPI(version=…)` and `GET /api/meta` returns it. Edit this one first. |
+| `backend/app/version.py` → `APP_VERSION` | — | **The source of truth.** `app/routes/meta.py` re-exports it under the same name, so `main.py` still passes it to `FastAPI(version=…)` and `GET /api/meta` still returns it; `app/useragent.py` stamps it into every outbound request. It sits in a leaf module precisely so a provider can read the version without importing the route package. Edit this one first. |
 | `frontend/src-tauri/tauri.conf.json` → `version` | `tests/test_api.py::test_app_version_has_one_source_of_truth` | What the desktop bundle ships as, and what names the artifact: `SportsDash_<version>_aarch64.dmg`. |
 | `backend/tests/openapi_snapshot.json` → `info.version` | `tests/test_openapi_snapshot.py` | **Regenerated, never hand-edited** — see below. |
 | `frontend/package.json` → `version` | *nothing* | Drifts silently. |

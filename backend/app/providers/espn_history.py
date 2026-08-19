@@ -18,6 +18,7 @@ import logging
 
 import httpx
 
+from app import useragent
 from app.config import get_settings
 from app.models.domain import (
     INDIVIDUAL_SPORTS,
@@ -39,7 +40,7 @@ from app.services import http_client
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = httpx.Timeout(15.0)
-_HEADERS = {"User-Agent": "SportsDash/1.0"}
+_HEADERS = useragent.headers()
 
 
 def supports_history(sport: Sport) -> bool:

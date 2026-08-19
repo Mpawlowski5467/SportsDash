@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     wiki_lang: str = "en"
     wiki_cache_minutes: int = 10080  # 7 days
 
+    # Outbound identity.  ``None`` builds the string in app/useragent.py,
+    # which names the project and its URL because ESPN's edge 403s a bare
+    # product token and Nominatim's policy requires a descriptive agent.
+    # Set this only to override both — see that module for the measurements.
+    user_agent: str | None = None
+
     # Provider HTTP resilience (retry/backoff around upstream calls).
     provider_timeout_seconds: float = 15.0
     provider_max_retries: int = 3  # attempts beyond the first, on transient errors

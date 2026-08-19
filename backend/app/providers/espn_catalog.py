@@ -21,6 +21,7 @@ from typing import Any
 
 import httpx
 
+from app import useragent
 from app.models.domain import INDIVIDUAL_SPORTS, LEADERBOARD_SPORTS, Sport
 
 logger = logging.getLogger(__name__)
@@ -1241,7 +1242,7 @@ async def _fetch_json(url: str, params: dict[str, str], league_id: str) -> Any:
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(15.0),
-            headers={"User-Agent": "SportsDash/1.0"},
+            headers=useragent.headers(),
             follow_redirects=True,
         ) as client:
             response = await client.get(url, params=params)
