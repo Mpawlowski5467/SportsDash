@@ -39,8 +39,14 @@ export interface Props {
 function StepIndicator({ current }: { current: Step }) {
   const index = STEP_ORDER.indexOf(current);
   return (
+    // "Step 2 of 4 · Teams" rather than a lit dot: the dots alone showed
+    // progress without saying how much was left, which is the one thing a
+    // first-run wizard has to answer.
     <div className="flex items-center gap-3">
-      <span className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+      <span className="sd-micro font-semibold uppercase tracking-wider text-zinc-500">
+        Step {index + 1} of {STEP_ORDER.length}
+      </span>
+      <span className="sd-meta font-medium text-zinc-200">
         {STEP_TITLES[current]}
       </span>
       <div className="flex items-center gap-1.5" aria-hidden="true">
@@ -49,9 +55,9 @@ function StepIndicator({ current }: { current: Step }) {
             key={step}
             className={
               i === index
-                ? "h-1.5 w-4 rounded-full bg-amber-400"
+                ? "h-1.5 w-5 rounded-full bg-amber-400"
                 : i < index
-                  ? "h-1.5 w-1.5 rounded-full bg-amber-400/40"
+                  ? "h-1.5 w-1.5 rounded-full bg-amber-400/50"
                   : "h-1.5 w-1.5 rounded-full bg-zinc-700"
             }
           />
@@ -214,7 +220,7 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
           </div>
         </header>
 
-        <div className="flex-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-6">
+        <div className="flex-1 pt-2">
           {step === "leagues" && (
             <LeagueStep
               selectedIds={selectedLeagueIds}

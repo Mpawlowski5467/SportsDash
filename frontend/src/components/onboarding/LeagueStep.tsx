@@ -64,21 +64,26 @@ function LeagueChip({
   // follow; picking teams is mutually exclusive with it.
   const active = selected && !followAll;
   return (
+    // A CARD in a fixed grid, not a pill in a wrapping row. Pills sized
+    // themselves by name length, so the rows came out ragged — one league on
+    // one line, three on the next — and the nested "Follow all" pill read as
+    // part of the same control. Here the league is the primary target and
+    // "Follow all" is a separate line beneath it.
     <div
       className={
-        "inline-flex items-center gap-2 rounded-full border py-1 pl-4 pr-1.5 text-sm font-medium transition-colors " +
+        "flex flex-col gap-2 rounded-lg border p-3 transition-colors " +
         (followAll
-          ? "border-emerald-400/60 bg-emerald-500/15 text-emerald-300"
+          ? "border-emerald-400/50 bg-emerald-500/10"
           : active
-            ? "border-amber-400/60 bg-amber-500/15 text-amber-300"
-            : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100")
+            ? "border-amber-400/60 bg-amber-500/10"
+            : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700")
       }
     >
       <button
         type="button"
         onClick={onToggle}
         aria-pressed={active}
-        className="flex cursor-pointer items-center gap-1.5"
+        className="flex min-w-0 cursor-pointer items-center gap-2 text-left disabled:cursor-default"
         disabled={followAll}
         title={
           followAll
@@ -90,7 +95,7 @@ function LeagueChip({
           <img
             src={league.logo_url}
             alt=""
-            className="h-4 w-4 shrink-0 object-contain"
+            className="h-5 w-5 shrink-0 object-contain"
             // No logo for this league, or it failed to load: drop the img and
             // fall back to showing just the league name.
             onError={(event) => {
@@ -98,7 +103,18 @@ function LeagueChip({
             }}
           />
         )}
-        {league.name}
+        <span
+          className={
+            "sd-body min-w-0 truncate font-medium " +
+            (followAll
+              ? "text-emerald-300"
+              : active
+                ? "text-amber-300"
+                : "text-zinc-300")
+          }
+        >
+          {league.name}
+        </span>
       </button>
       {league.supports_follow_all && (
         <button
@@ -111,7 +127,7 @@ function LeagueChip({
               : `Follow all of ${league.name} (every game, no team picks)`
           }
           className={
-            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition-colors " +
+            "sd-micro self-start rounded-full px-2 py-0.5 font-semibold transition-colors " +
             (followAll
               ? "bg-emerald-500/25 text-emerald-200 hover:bg-emerald-500/35"
               : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200")
@@ -124,7 +140,7 @@ function LeagueChip({
   );
 }
 
-/** League multi-select: pill-cards grouped under sport / national headings. */
+/** League multi-select: cards in a grid, grouped by sport. */
 export default function LeagueStep({
   selectedIds,
   followAllIds,
@@ -191,11 +207,9 @@ export default function LeagueStep({
 
   return (
     <div className="space-y-6">
-      <header>
-        <h2 className="text-xl font-semibold text-zinc-100">
-          Choose your leagues
-        </h2>
-        <p className="mt-1 text-sm text-zinc-400">
+      <header className="sd-rule pb-4">
+        <h2 className="sd-title text-zinc-100">Choose your leagues</h2>
+        <p className="sd-body mt-2 max-w-prose text-pretty text-zinc-400">
           Pick every league you want to follow — you&rsquo;ll choose teams next.
           Or hit &ldquo;Follow all&rdquo; on a league to follow it in full (every
           game), no team picks needed.
@@ -204,10 +218,8 @@ export default function LeagueStep({
 
       {nationalLeagues.length > 0 && (
         <section>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            National Teams
-          </h3>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <h3 className="sd-eyebrow text-zinc-500">National teams</h3>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             {nationalLeagues.map(renderChip)}
           </div>
         </section>
@@ -215,10 +227,8 @@ export default function LeagueStep({
 
       {sportGroups.map(({ sport, leagues: sportLeagues }) => (
         <section key={sport}>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            {sportLabel(sport)}
-          </h3>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <h3 className="sd-eyebrow text-zinc-500">{sportLabel(sport)}</h3>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             {sportLeagues.map(renderChip)}
           </div>
         </section>
