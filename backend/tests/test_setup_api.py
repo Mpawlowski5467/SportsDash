@@ -1121,11 +1121,11 @@ async def test_tsdb_catalog_empty_payload_is_empty_picker(
 
 
 async def test_setup_leagues_carries_countries(client: AsyncClient) -> None:
-    """The wizard's country drill-down: pins, and what sits behind them.
+    """The wizard's country drill-down, and what sits behind each entry.
 
-    A pin that opens an empty list is worse than no pin, so only countries
-    with at least one league are offered — and every league that claims a
-    country must name one that was actually offered.
+    A country that opens an empty list is worse than no country, so only
+    those with at least one league are offered — and every league that claims
+    a country must name one that was actually offered.
     """
     response = await client.get("/api/setup/leagues")
     assert response.status_code == 200
@@ -1133,14 +1133,12 @@ async def test_setup_leagues_carries_countries(client: AsyncClient) -> None:
 
     countries = payload["countries"]
     assert countries, "expected at least one country with leagues"
-    assert all(
-        set(country) == {"code", "name", "lat", "lon", "league_count"} for country in countries
-    )
+    assert all(set(country) == {"code", "name", "league_count"} for country in countries)
     codes = {country["code"] for country in countries}
     assert len(codes) == len(countries), "country codes must be unique"
 
-    # Every offered country has something behind its pin, and the count is
-    # the real number of leagues rather than a placeholder.
+    # Every offered country has something behind it, and the count is the
+    # real number of leagues rather than a placeholder.
     leagues = payload["leagues"]
     for country in countries:
         actual = sum(1 for lg in leagues if lg["country_code"] == country["code"])

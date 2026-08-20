@@ -91,11 +91,6 @@ class CatalogTeam:
 # "ned" are not ISO-3166 — so guessing at it would be wrong for exactly the
 # countries a soccer fan cares most about.
 #
-# Coordinates are a representative point for a map PIN, not a centroid: they
-# sit where the country reads clearly at world zoom, which for a long country
-# is not its geometric middle.  They are display hints and nothing keys on
-# them.
-#
 # A code absent from this table (``uefa``, ``fifa``, ``conmebol``,
 # ``concacaf``) is a confederation rather than a country, and its leagues
 # group under "International" in the wizard instead of behind a pin.
@@ -105,32 +100,30 @@ class CatalogTeam:
 class CatalogCountry:
     code: str  # ESPN's league-code prefix, e.g. "eng" — NOT an ISO code
     name: str
-    lat: float
-    lon: float
 
 
 COUNTRIES: tuple[CatalogCountry, ...] = (
-    CatalogCountry(code="eng", name="England", lat=52.36, lon=-1.17),
-    CatalogCountry(code="sco", name="Scotland", lat=56.82, lon=-4.18),
-    CatalogCountry(code="esp", name="Spain", lat=40.24, lon=-3.65),
-    CatalogCountry(code="ger", name="Germany", lat=51.11, lon=10.38),
-    CatalogCountry(code="ita", name="Italy", lat=42.79, lon=12.57),
-    CatalogCountry(code="fra", name="France", lat=46.65, lon=2.43),
-    CatalogCountry(code="ned", name="Netherlands", lat=52.19, lon=5.54),
-    CatalogCountry(code="por", name="Portugal", lat=39.60, lon=-8.11),
-    CatalogCountry(code="bel", name="Belgium", lat=50.64, lon=4.66),
-    CatalogCountry(code="tur", name="Türkiye", lat=39.05, lon=35.17),
-    CatalogCountry(code="gre", name="Greece", lat=39.31, lon=22.16),
-    CatalogCountry(code="aut", name="Austria", lat=47.60, lon=14.14),
-    CatalogCountry(code="sui", name="Switzerland", lat=46.315, lon=8.23),
-    CatalogCountry(code="den", name="Denmark", lat=56.06, lon=9.50),
-    CatalogCountry(code="nor", name="Norway", lat=61.30, lon=9.09),
-    CatalogCountry(code="swe", name="Sweden", lat=62.42, lon=15.62),
-    CatalogCountry(code="rus", name="Russia", lat=57.00, lon=40.00),
-    CatalogCountry(code="usa", name="United States", lat=39.42, lon=-98.58),
-    CatalogCountry(code="mex", name="Mexico", lat=23.63, lon=-102.55),
-    CatalogCountry(code="bra", name="Brazil", lat=-12.24, lon=-51.93),
-    CatalogCountry(code="arg", name="Argentina", lat=-35.42, lon=-64.87),
+    CatalogCountry(code="eng", name="England"),
+    CatalogCountry(code="sco", name="Scotland"),
+    CatalogCountry(code="esp", name="Spain"),
+    CatalogCountry(code="ger", name="Germany"),
+    CatalogCountry(code="ita", name="Italy"),
+    CatalogCountry(code="fra", name="France"),
+    CatalogCountry(code="ned", name="Netherlands"),
+    CatalogCountry(code="por", name="Portugal"),
+    CatalogCountry(code="bel", name="Belgium"),
+    CatalogCountry(code="tur", name="Türkiye"),
+    CatalogCountry(code="gre", name="Greece"),
+    CatalogCountry(code="aut", name="Austria"),
+    CatalogCountry(code="sui", name="Switzerland"),
+    CatalogCountry(code="den", name="Denmark"),
+    CatalogCountry(code="nor", name="Norway"),
+    CatalogCountry(code="swe", name="Sweden"),
+    CatalogCountry(code="rus", name="Russia"),
+    CatalogCountry(code="usa", name="United States"),
+    CatalogCountry(code="mex", name="Mexico"),
+    CatalogCountry(code="bra", name="Brazil"),
+    CatalogCountry(code="arg", name="Argentina"),
 )
 
 _COUNTRY_BY_CODE: dict[str, CatalogCountry] = {c.code: c for c in COUNTRIES}
@@ -155,8 +148,8 @@ def league_country_code(league: CatalogLeague) -> str | None:
 def countries_with_leagues() -> tuple[CatalogCountry, ...]:
     """Countries that actually have at least one league in the catalog.
 
-    The wizard drops a map pin per entry, so a country with nothing to offer
-    must not appear — a pin that opens an empty list is worse than no pin.
+    The wizard offers one card per entry, so a country with nothing behind it
+    must not appear — a card that opens an empty list is worse than none.
     """
     present = {
         code for code in (league_country_code(league) for league in CATALOG) if code is not None

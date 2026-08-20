@@ -1105,8 +1105,8 @@ and re-theme automatically. Only targeted files change.
 ### Setup: the country drill-down
 
 `GET /api/setup/leagues` carries two things the wizard's first step needs:
-each league's `country_code`, and a `countries[]` list of `{code, name, lat,
-lon, league_count}`.
+each league's `country_code`, and a `countries[]` list of `{code, name,
+league_count}`.
 
 - `code` is **ESPN's league-code prefix, not an ISO code**. ESPN's soccer
   keys are `soccer/eng.1`, `soccer/sco.1`, `soccer/ned.1` — "eng", "sco" and
@@ -1117,11 +1117,16 @@ lon, league_count}`.
   a confederation, so its leagues carry `country_code: null` and are offered
   regardless of what the map has selected. So does every sport not organised
   by country.
-- `countries[]` lists ONLY countries with at least one league — a pin that
-  opens an empty list is worse than no pin — and `league_count` must equal
-  the number of leagues actually carrying that code.
-- `lat`/`lon` are a representative point for a map pin, not a centroid, and
-  are display hints: nothing keys on them.
+- `countries[]` lists ONLY countries with at least one league — one that
+  opens an empty list is worse than none — and `league_count` must equal the
+  number of leagues actually carrying that code.
+- The step renders as a GRID, not a map. It was an OpenStreetMap pin map
+  briefly and the pins did not work: nine of the twenty-one countries sit
+  within a few degrees of each other, so labels overlapped and had to hide
+  below a zoom threshold, leaving anonymous dots. Pin coordinates were
+  dropped from this payload with the map (2026-08-20); re-adding a map means
+  re-adding them AND solving the collision, which is why the Map view
+  clusters.
 - The wizard shows the step only when some sport spans MORE than one country
   (`countryStepApplies`), so the step turns itself on when a catalog gains a
   second country for a sport and off again when it does not — today soccer

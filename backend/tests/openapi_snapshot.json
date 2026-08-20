@@ -121,17 +121,9 @@
             "title": "Code",
             "type": "string"
           },
-          "lat": {
-            "title": "Lat",
-            "type": "number"
-          },
           "league_count": {
             "title": "League Count",
             "type": "integer"
-          },
-          "lon": {
-            "title": "Lon",
-            "type": "number"
           },
           "name": {
             "title": "Name",
@@ -141,8 +133,6 @@
         "required": [
           "code",
           "name",
-          "lat",
-          "lon",
           "league_count"
         ],
         "title": "CatalogCountryOut",

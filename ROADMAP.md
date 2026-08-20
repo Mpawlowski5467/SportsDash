@@ -60,20 +60,22 @@ for a live sighting.
 - **Setup asks "where?" before "which?"** (2026-08-20) — soccer is 40 of the
   catalog's 55 leagues, and a flat list of all 40 was the worst way to find
   the two you actually watch. ESPN's own league codes carry the country
-  (`soccer/eng.1`), so the wizard now opens on an OpenStreetMap map — the
-  same OpenFreeMap tiles the Map view uses — with a pin per country that has
-  leagues (21 of them). Pick England and Spain, and the league step narrows
-  to their six; everything belonging to no country (Champions League, World
-  Cup, NBA, the tours) is offered either way, and skipping the step shows
-  everything exactly as before. Pins are real buttons, so they tab and take
-  Enter — affordable at 21, which is precisely why the Map view's 700+
-  markers still cannot (see the keyboard loose end). Two details worth
-  keeping: names appear only above zoom 3.2 because nine of the countries
-  sit inside a few degrees of Europe and label rectangles simply stack, and
-  a league already selected survives unpicking its country, so going back
-  never silently drops a choice the user made. The step is derived, not
-  hardcoded to soccer — a catalog that gains a second country for any sport
-  turns it on by itself.
+  (`soccer/eng.1`), so the wizard now opens on a grid of the 21 countries
+  that have leagues. Pick England and Spain, and the league step narrows to
+  their six; everything belonging to no country (Champions League, World
+  Cup, NBA, the tours) is offered either way, and skipping shows everything
+  exactly as before. A league already selected survives unpicking its
+  country, so going back never silently drops a choice. The step is derived,
+  not hardcoded to soccer — a catalog that gains a second country for any
+  sport turns it on by itself.
+  This shipped as an **OpenStreetMap pin map first, and that was the wrong
+  answer**: nine of the twenty-one countries sit within a few degrees of
+  each other, so pins overlapped, names had to hide below a zoom threshold,
+  and the result was a world map of anonymous dots you had to hover to read
+  — worse at the actual question ("which countries can I pick?") than a list
+  that answers it at a glance, and it dragged MapLibre (~1.1MB) into the
+  onboarding bundle. Replaced same day. The Map view is still where a map
+  earns its place: there, position IS the information.
 
 - **The UI has a type scale** (2026-08-19) — the flatness was measurable:
   26 distinct text styles on a page but only **four font sizes**, with 149

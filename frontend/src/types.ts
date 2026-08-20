@@ -522,7 +522,7 @@ export interface CatalogLeague {
   supports_follow_all: boolean; // offer "follow the whole competition"
   entity_noun: string; // "team" | "player" | "fighter" | "golfer" | "driver"
   logo_url: string | null; // league logo for the picker
-  // Country whose map pin this league sits behind in setup, as a code into
+  // Country this league is grouped under in setup, as a code into
   // `CatalogLeaguesResponse.countries`. Null for a confederation competition
   // (UEFA, FIFA) or a sport organised globally.
   country_code: string | null;
@@ -531,15 +531,13 @@ export interface CatalogLeague {
 export interface CatalogCountry {
   code: string; // ESPN's league-code prefix, e.g. "eng" — NOT an ISO code
   name: string;
-  lat: number; // representative point for the map pin, not a centroid
-  lon: number;
   league_count: number;
 }
 
 export interface CatalogLeaguesResponse {
   leagues: CatalogLeague[];
-  // Only countries that actually have leagues — a pin that opens an empty
-  // list is worse than no pin.
+  // Only countries that actually have leagues — one that opens an empty
+  // list is worse than none.
   countries: CatalogCountry[];
 }
 

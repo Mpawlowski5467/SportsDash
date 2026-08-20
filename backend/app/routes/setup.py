@@ -133,8 +133,6 @@ async def setup_leagues() -> CatalogLeaguesOut:
             CatalogCountryOut(
                 code=country.code,
                 name=country.name,
-                lat=country.lat,
-                lon=country.lon,
                 league_count=sum(
                     1
                     for league in espn_catalog.CATALOG

@@ -74,9 +74,15 @@ function LeagueChip({
     // one line, three on the next — and the nested "Follow all" pill read as
     // part of the same control. Here the league is the primary target and
     // "Follow all" is a separate line beneath it.
+    //
+    // The WHOLE card toggles the league, not just the words. The button
+    // stretches over the card with an inset ::after rather than wrapping it,
+    // because a button cannot contain the "Follow all" button — nested
+    // buttons are invalid HTML and browsers do not deliver the inner click.
+    // So the overlay sits under Follow all, which is lifted above it.
     <div
       className={
-        "flex flex-col gap-2 rounded-lg border p-3 transition-colors " +
+        "relative flex flex-col gap-2 rounded-lg border p-3 transition-colors " +
         (followAll
           ? "border-emerald-400/50 bg-emerald-500/10"
           : active
@@ -88,7 +94,10 @@ function LeagueChip({
         type="button"
         onClick={onToggle}
         aria-pressed={active}
-        className="flex min-w-0 cursor-pointer items-center gap-2 text-left disabled:cursor-default"
+        className={
+          "flex min-w-0 items-center gap-2 text-left after:absolute after:inset-0 after:content-[''] " +
+          (followAll ? "cursor-default" : "cursor-pointer")
+        }
         disabled={followAll}
         title={
           followAll
@@ -132,7 +141,9 @@ function LeagueChip({
               : `Follow all of ${league.name} (every game, no team picks)`
           }
           className={
-            "sd-micro self-start rounded-full px-2 py-0.5 font-semibold transition-colors " +
+            // Above the card-wide overlay, or this would toggle the league
+            // instead of the whole-league follow it is here to offer.
+            "sd-micro relative z-10 self-start rounded-full px-2 py-0.5 font-semibold transition-colors " +
             (followAll
               ? "bg-emerald-500/25 text-emerald-200 hover:bg-emerald-500/35"
               : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200")
