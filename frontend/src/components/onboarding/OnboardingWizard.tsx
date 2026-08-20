@@ -9,21 +9,51 @@
  * is still trapped and the page scroll locked like any other overlay.
  */
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
-import type { CatalogTeam, FollowSelection } from "../../types";
+import type { CatalogLeague, CatalogTeam, FollowSelection } from "../../types";
+import { useSetupLeagues } from "../../hooks";
 import { apiErrorMessage } from "./errors";
 import { useModalChrome } from "../modalChrome";
+import CountryStep from "./CountryStep";
 import LeagueStep from "./LeagueStep";
 import TeamsStep from "./TeamsStep";
 import ReviewStep from "./ReviewStep";
 import SyncingStep from "./SyncingStep";
 
-type Step = "leagues" | "teams" | "review" | "syncing";
+type Step = "countries" | "leagues" | "teams" | "review" | "syncing";
 
-const STEP_ORDER: Step[] = ["leagues", "teams", "review", "syncing"];
+/** Every step that can exist; a given run uses a subset (see `steps`). */
+const ALL_STEPS: Step[] = [
+  "countries",
+  "leagues",
+  "teams",
+  "review",
+  "syncing",
+];
+
+/**
+ * The country step is offered only when some sport is actually organised by
+ * country — today that is soccer alone (40 of 55 leagues across 21
+ * countries), while the NBA, the NFL and the tours have one country or none.
+ * Deriving it rather than hardcoding "soccer" means a future league in a new
+ * country turns the step on by itself, and a catalog trimmed back to one
+ * country per sport turns it off again instead of showing a map with a
+ * single pin on it.
+ */
+function countryStepApplies(leagues: CatalogLeague[]): boolean {
+  const bySport = new Map<string, Set<string>>();
+  for (const league of leagues) {
+    if (league.country_code === null) continue;
+    const seen = bySport.get(league.sport) ?? new Set<string>();
+    seen.add(league.country_code);
+    bySport.set(league.sport, seen);
+  }
+  return [...bySport.values()].some((codes) => codes.size > 1);
+}
 
 const STEP_TITLES: Record<Step, string> = {
+  countries: "Countries",
   leagues: "Leagues",
   teams: "Teams",
   review: "Review",
@@ -36,21 +66,21 @@ export interface Props {
   onClose?: () => void;
 }
 
-function StepIndicator({ current }: { current: Step }) {
-  const index = STEP_ORDER.indexOf(current);
+function StepIndicator({ current, steps }: { current: Step; steps: Step[] }) {
+  const index = steps.indexOf(current);
   return (
     // "Step 2 of 4 · Teams" rather than a lit dot: the dots alone showed
     // progress without saying how much was left, which is the one thing a
     // first-run wizard has to answer.
     <div className="flex items-center gap-3">
       <span className="sd-micro font-semibold uppercase tracking-wider text-zinc-500">
-        Step {index + 1} of {STEP_ORDER.length}
+        Step {index + 1} of {steps.length}
       </span>
       <span className="sd-meta font-medium text-zinc-200">
         {STEP_TITLES[current]}
       </span>
       <div className="flex items-center gap-1.5" aria-hidden="true">
-        {STEP_ORDER.map((step, i) => (
+        {steps.map((step, i) => (
           <span
             key={step}
             className={
@@ -72,7 +102,39 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
   // First-run mode deliberately stays non-dismissible (ESC hits a no-op)
   // but still traps focus and locks scroll like every other overlay.
   const dialogRef = useModalChrome(onClose ?? (() => {}));
-  const [step, setStep] = useState<Step>("leagues");
+  const leaguesQuery = useSetupLeagues();
+  const catalog = useMemo(
+    () => leaguesQuery.data?.leagues ?? [],
+    [leaguesQuery.data],
+  );
+  const countries = useMemo(
+    () => leaguesQuery.data?.countries ?? [],
+    [leaguesQuery.data],
+  );
+  const hasCountryStep = useMemo(
+    () => countryStepApplies(catalog),
+    [catalog],
+  );
+  const steps = useMemo(
+    () =>
+      hasCountryStep
+        ? ALL_STEPS
+        : ALL_STEPS.filter((entry) => entry !== "countries"),
+    [hasCountryStep],
+  );
+
+  const [step, setStep] = useState<Step>("countries");
+
+  // The catalog arrives after mount, so the opening step is a guess until it
+  // does. If this run has no country step, step past it — but only from the
+  // country step itself, so a user who has already moved on is never yanked
+  // backwards by a late refetch.
+  useEffect(() => {
+    if (!hasCountryStep && step === "countries" && leaguesQuery.isSuccess) {
+      setStep("leagues");
+    }
+  }, [hasCountryStep, step, leaguesQuery.isSuccess]);
+  const [selectedCountryCodes, setSelectedCountryCodes] = useState<string[]>([]);
   const [selectedLeagueIds, setSelectedLeagueIds] = useState<string[]>([]);
   // Subset of selectedLeagueIds in whole-competition mode: these follow the
   // entire competition (follow_all:true) and skip the team-picking step.
@@ -100,6 +162,14 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
       delete next[leagueId];
       return next;
     });
+  };
+
+  const toggleCountry = (code: string) => {
+    setSelectedCountryCodes((current) =>
+      current.includes(code)
+        ? current.filter((existing) => existing !== code)
+        : [...current, code],
+    );
   };
 
   const toggleLeague = (leagueId: string) => {
@@ -193,7 +263,7 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
             Sports<span className="text-amber-400">Dash</span>
           </span>
           <div className="ml-auto flex items-center gap-3">
-            <StepIndicator current={step} />
+            <StepIndicator current={step} steps={steps} />
             {mode === "manage" && onClose !== undefined && (
               <button
                 type="button"
@@ -221,12 +291,27 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
         </header>
 
         <div className="flex-1 pt-2">
+          {step === "countries" && (
+            <CountryStep
+              countries={countries}
+              leagues={catalog}
+              selectedCodes={selectedCountryCodes}
+              onToggle={toggleCountry}
+              onContinue={() => setStep("leagues")}
+              onSkip={() => {
+                setSelectedCountryCodes([]);
+                setStep("leagues");
+              }}
+            />
+          )}
           {step === "leagues" && (
             <LeagueStep
+              countryCodes={selectedCountryCodes}
               selectedIds={selectedLeagueIds}
               followAllIds={followAllLeagueIds}
               onToggle={toggleLeague}
               onToggleFollowAll={toggleFollowAll}
+              onBack={hasCountryStep ? () => setStep("countries") : undefined}
               onContinue={() =>
                 setStep(pickTeamLeagueIds.length > 0 ? "teams" : "review")
               }

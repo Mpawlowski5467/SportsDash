@@ -36,6 +36,11 @@ function sportLabel(sport: Sport): string {
 }
 
 export interface Props {
+  // Country codes chosen on the map step. A league that belongs to one of
+  // these is offered; a league that belongs to NO country is always offered
+  // (confederation competitions and every sport not organised by country).
+  // Empty means no narrowing at all — skipping the map shows everything.
+  countryCodes: string[];
   selectedIds: string[];
   followAllIds: string[];
   onToggle: (leagueId: string) => void;
@@ -142,6 +147,7 @@ function LeagueChip({
 
 /** League multi-select: cards in a grid, grouped by sport. */
 export default function LeagueStep({
+  countryCodes,
   selectedIds,
   followAllIds,
   onToggle,
@@ -177,7 +183,21 @@ export default function LeagueStep({
     );
   }
 
-  const leagues = leaguesQuery.data.leagues;
+  // Narrow to the chosen countries, keeping everything that has no country
+  // of its own. A league already SELECTED always survives the filter — going
+  // back and unpicking a country must not silently drop a league the user
+  // chose while it was picked, which would be a change they never made and
+  // would not see until the review step.
+  const chosen = new Set(countryCodes);
+  const leagues =
+    chosen.size === 0
+      ? leaguesQuery.data.leagues
+      : leaguesQuery.data.leagues.filter(
+          (league) =>
+            league.country_code === null ||
+            chosen.has(league.country_code) ||
+            selectedIds.includes(league.id),
+        );
   // National-team competitions get their own group, separate from club
   // leagues; club leagues stay grouped by sport.
   const nationalLeagues = leagues.filter((league) => league.national);
