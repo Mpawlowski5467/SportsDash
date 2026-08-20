@@ -532,10 +532,25 @@ class CatalogLeagueOut(BaseModel):
     supports_follow_all: bool = False  # offer "follow the whole competition"
     entity_noun: str = "team"  # what a pickable item is: team | player | fighter
     logo_url: str | None = None  # league logo for the picker
+    # The country whose pin this league sits behind in the wizard, as a code
+    # into ``CatalogLeaguesOut.countries``. ``None`` for a confederation
+    # competition (UEFA, FIFA) or any sport organised globally.
+    country_code: str | None = None
+
+
+class CatalogCountryOut(BaseModel):
+    code: str  # ESPN's league-code prefix, e.g. "eng" — NOT an ISO code
+    name: str
+    lat: float  # representative point for the map pin, not a centroid
+    lon: float
+    league_count: int
 
 
 class CatalogLeaguesOut(BaseModel):
     leagues: list[CatalogLeagueOut]
+    # Only countries that actually have leagues, so the wizard never drops a
+    # pin that opens an empty list. Empty for a catalog with none.
+    countries: list[CatalogCountryOut] = []
 
 
 class CatalogTeamOut(BaseModel):

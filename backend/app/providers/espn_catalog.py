@@ -79,6 +79,91 @@ class CatalogTeam:
 # no real league logo: a generic ESPN sport icon (tennis tours) or the
 # ``default-team-logo`` placeholder (Danish/Norwegian leagues), and the
 # TheSportsDB volleyball catalog.  http:// hrefs are normalized to https://.
+# ---------------------------------------------------------------------------
+# Countries — the setup wizard's first drill-down
+# ---------------------------------------------------------------------------
+#
+# ESPN's soccer league codes carry the country in their prefix
+# (``soccer/eng.1``, ``soccer/bra.1``), which is the whole reason a
+# country-first picker is possible without a second data source.  The mapping
+# is spelled out here rather than derived from a lookup table somewhere else:
+# the prefix is ESPN's own vocabulary, not an ISO code — "eng", "sco" and
+# "ned" are not ISO-3166 — so guessing at it would be wrong for exactly the
+# countries a soccer fan cares most about.
+#
+# Coordinates are a representative point for a map PIN, not a centroid: they
+# sit where the country reads clearly at world zoom, which for a long country
+# is not its geometric middle.  They are display hints and nothing keys on
+# them.
+#
+# A code absent from this table (``uefa``, ``fifa``, ``conmebol``,
+# ``concacaf``) is a confederation rather than a country, and its leagues
+# group under "International" in the wizard instead of behind a pin.
+
+
+@dataclass(frozen=True)
+class CatalogCountry:
+    code: str  # ESPN's league-code prefix, e.g. "eng" — NOT an ISO code
+    name: str
+    lat: float
+    lon: float
+
+
+COUNTRIES: tuple[CatalogCountry, ...] = (
+    CatalogCountry(code="eng", name="England", lat=52.36, lon=-1.17),
+    CatalogCountry(code="sco", name="Scotland", lat=56.82, lon=-4.18),
+    CatalogCountry(code="esp", name="Spain", lat=40.24, lon=-3.65),
+    CatalogCountry(code="ger", name="Germany", lat=51.11, lon=10.38),
+    CatalogCountry(code="ita", name="Italy", lat=42.79, lon=12.57),
+    CatalogCountry(code="fra", name="France", lat=46.65, lon=2.43),
+    CatalogCountry(code="ned", name="Netherlands", lat=52.19, lon=5.54),
+    CatalogCountry(code="por", name="Portugal", lat=39.60, lon=-8.11),
+    CatalogCountry(code="bel", name="Belgium", lat=50.64, lon=4.66),
+    CatalogCountry(code="tur", name="Türkiye", lat=39.05, lon=35.17),
+    CatalogCountry(code="gre", name="Greece", lat=39.31, lon=22.16),
+    CatalogCountry(code="aut", name="Austria", lat=47.60, lon=14.14),
+    CatalogCountry(code="sui", name="Switzerland", lat=46.315, lon=8.23),
+    CatalogCountry(code="den", name="Denmark", lat=56.06, lon=9.50),
+    CatalogCountry(code="nor", name="Norway", lat=61.30, lon=9.09),
+    CatalogCountry(code="swe", name="Sweden", lat=62.42, lon=15.62),
+    CatalogCountry(code="rus", name="Russia", lat=57.00, lon=40.00),
+    CatalogCountry(code="usa", name="United States", lat=39.42, lon=-98.58),
+    CatalogCountry(code="mex", name="Mexico", lat=23.63, lon=-102.55),
+    CatalogCountry(code="bra", name="Brazil", lat=-12.24, lon=-51.93),
+    CatalogCountry(code="arg", name="Argentina", lat=-35.42, lon=-64.87),
+)
+
+_COUNTRY_BY_CODE: dict[str, CatalogCountry] = {c.code: c for c in COUNTRIES}
+
+
+def league_country_code(league: CatalogLeague) -> str | None:
+    """The country a league belongs to, or ``None`` for a confederation.
+
+    Reads the prefix of ESPN's league code — ``soccer/eng.1`` -> ``eng`` —
+    and returns it only when :data:`COUNTRIES` knows it, so an unmapped or
+    confederation-scoped competition degrades to "no country" rather than
+    inventing one.  A provider whose keys are not ``sport/code`` shaped (the
+    TheSportsDB volleyball ids are bare numbers) simply has no country.
+    """
+    _, _, code = league.provider_key.partition("/")
+    if not code:
+        return None
+    prefix = code.split(".", 1)[0]
+    return prefix if prefix in _COUNTRY_BY_CODE else None
+
+
+def countries_with_leagues() -> tuple[CatalogCountry, ...]:
+    """Countries that actually have at least one league in the catalog.
+
+    The wizard drops a map pin per entry, so a country with nothing to offer
+    must not appear — a pin that opens an empty list is worse than no pin.
+    """
+    present = {
+        code for code in (league_country_code(league) for league in CATALOG) if code is not None
+    }
+    return tuple(c for c in COUNTRIES if c.code in present)
+
+
 CATALOG: tuple[CatalogLeague, ...] = (
     CatalogLeague(
         id="nba",

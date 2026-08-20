@@ -26,6 +26,7 @@ from app.providers import espn_catalog
 from app.providers.espn_catalog import CatalogLeague, CatalogTeam, EspnCatalogError
 from app.scheduler import jobs
 from app.schemas import (
+    CatalogCountryOut,
     CatalogLeagueOut,
     CatalogLeaguesOut,
     CatalogTeamOut,
@@ -124,9 +125,24 @@ async def setup_leagues() -> CatalogLeaguesOut:
                     else "team"
                 ),
                 logo_url=getattr(league, "logo_url", None),
+                country_code=espn_catalog.league_country_code(league),
             )
             for league in espn_catalog.CATALOG
-        ]
+        ],
+        countries=[
+            CatalogCountryOut(
+                code=country.code,
+                name=country.name,
+                lat=country.lat,
+                lon=country.lon,
+                league_count=sum(
+                    1
+                    for league in espn_catalog.CATALOG
+                    if espn_catalog.league_country_code(league) == country.code
+                ),
+            )
+            for country in espn_catalog.countries_with_leagues()
+        ],
     )
 
 

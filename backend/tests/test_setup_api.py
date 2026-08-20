@@ -362,6 +362,7 @@ async def test_setup_leagues_static_shape(client: AsyncClient) -> None:
             "supports_follow_all",
             "entity_noun",
             "logo_url",
+            "country_code",
         }
         for league in leagues
     )
@@ -1117,3 +1118,45 @@ async def test_tsdb_catalog_empty_payload_is_empty_picker(
     assert league is not None
     teams = await tsdb_catalog.get_tsdb_league_teams(league)
     assert teams == []
+
+
+async def test_setup_leagues_carries_countries(client: AsyncClient) -> None:
+    """The wizard's country drill-down: pins, and what sits behind them.
+
+    A pin that opens an empty list is worse than no pin, so only countries
+    with at least one league are offered — and every league that claims a
+    country must name one that was actually offered.
+    """
+    response = await client.get("/api/setup/leagues")
+    assert response.status_code == 200
+    payload = response.json()
+
+    countries = payload["countries"]
+    assert countries, "expected at least one country with leagues"
+    assert all(
+        set(country) == {"code", "name", "lat", "lon", "league_count"} for country in countries
+    )
+    codes = {country["code"] for country in countries}
+    assert len(codes) == len(countries), "country codes must be unique"
+
+    # Every offered country has something behind its pin, and the count is
+    # the real number of leagues rather than a placeholder.
+    leagues = payload["leagues"]
+    for country in countries:
+        actual = sum(1 for lg in leagues if lg["country_code"] == country["code"])
+        assert country["league_count"] == actual > 0, country["code"]
+
+    # No league may reference a country that was not offered.
+    referenced = {lg["country_code"] for lg in leagues if lg["country_code"]}
+    assert referenced <= codes
+
+    by_id = {lg["id"]: lg for lg in leagues}
+    # ESPN's own prefix vocabulary, which is what makes this derivable at all.
+    assert by_id["epl"]["country_code"] == "eng"
+    assert by_id["laliga"]["country_code"] == "esp"
+    # A confederation competition belongs to no country and must say so,
+    # rather than being filed under whoever happens to host it.
+    assert by_id["ucl"]["country_code"] is None
+    assert by_id["worldcup"]["country_code"] is None
+    # A sport organised globally never drills through a country either.
+    assert by_id["nba"]["country_code"] is None
