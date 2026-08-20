@@ -8,6 +8,7 @@ export interface Props {
   leagueIds: string[];
   teamsByLeague: Record<string, CatalogTeam[]>;
   onToggleTeam: (leagueId: string, team: CatalogTeam) => void;
+  onClearLeague: (leagueId: string) => void;
   totalSelected: number;
   onBack: () => void;
   onContinue: () => void;
@@ -24,7 +25,7 @@ function TeamLogo({ team }: { team: CatalogTeam }) {
 
   if (team.logo_url === null || failed) {
     return (
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[11px] font-bold text-zinc-300">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-bold text-zinc-300">
         {team.abbreviation}
       </span>
     );
@@ -35,20 +36,20 @@ function TeamLogo({ team }: { team: CatalogTeam }) {
       alt=""
       loading="lazy"
       onError={() => setFailed(true)}
-      className="h-10 w-10 shrink-0 object-contain"
+      className="h-8 w-8 shrink-0 object-contain"
     />
   );
 }
 
 function SectionSkeleton() {
   return (
-    <div className="grid animate-pulse grid-cols-2 gap-2 sm:grid-cols-3">
+    <div className="grid animate-pulse grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
       {Array.from({ length: 6 }, (_, i) => (
         <div
           key={i}
           className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2"
         >
-          <div className="h-10 w-10 shrink-0 rounded-full bg-zinc-800" />
+          <div className="h-8 w-8 shrink-0 rounded-full bg-zinc-800" />
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="h-4 w-3/4 rounded bg-zinc-800" />
             <div className="h-3 w-1/3 rounded bg-zinc-800/70" />
@@ -70,16 +71,20 @@ function LeagueSection({
   entityNoun,
   selected,
   onToggle,
+  onClear,
 }: {
   leagueId: string;
   leagueName: string;
   entityNoun: string;
   selected: CatalogTeam[];
   onToggle: (team: CatalogTeam) => void;
+  onClear: () => void;
 }) {
   const teamsQuery = useSetupTeams(leagueId);
   const [search, setSearch] = useState("");
   const nounPlural = pluralize(entityNoun);
+  const nounSingular = entityNoun;
+  const total = teamsQuery.data?.teams.length ?? 0;
 
   const visible = useMemo(() => {
     const teams = teamsQuery.data?.teams ?? [];
@@ -96,22 +101,31 @@ function LeagueSection({
 
   return (
     <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-zinc-200">
-          {leagueName}
+      <div className="sd-rule flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 pb-2.5">
+        <div className="flex items-baseline gap-3">
+          <h3 className="sd-title-sm text-zinc-100">{leagueName}</h3>
+          <span className="sd-meta tabular-nums text-zinc-500">
+            {selected.length > 0
+              ? `${selected.length} selected`
+              : `${total} ${total === 1 ? nounSingular : nounPlural}`}
+          </span>
           {selected.length > 0 && (
-            <span className="ml-2 text-xs font-medium text-amber-400">
-              {selected.length} selected
-            </span>
+            <button
+              type="button"
+              onClick={onClear}
+              className="sd-meta text-zinc-500 underline-offset-2 hover:text-zinc-300 hover:underline"
+            >
+              Clear
+            </button>
           )}
-        </h3>
+        </div>
         <input
           type="search"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder={`Search ${nounPlural}…`}
           aria-label={`Search ${leagueName} ${nounPlural}`}
-          className="w-48 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-sm text-zinc-200 placeholder:text-zinc-500 focus:border-amber-400/60 focus:outline-none"
+          className="sd-meta w-44 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-zinc-200 placeholder:text-zinc-500 focus:border-amber-400/60 focus:outline-none"
         />
       </div>
 
@@ -131,11 +145,11 @@ function LeagueSection({
           </button>
         </div>
       ) : visible.length === 0 ? (
-        <p className="py-4 text-sm text-zinc-500">
+        <p className="sd-meta py-4 text-zinc-500">
           No {nounPlural} match &ldquo;{search}&rdquo;.
         </p>
       ) : (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
           {visible.map((team) => {
             const isSelected = selected.some(
               (chosen) => chosen.provider_key === team.provider_key,
@@ -147,20 +161,39 @@ function LeagueSection({
                 onClick={() => onToggle(team)}
                 aria-pressed={isSelected}
                 className={
-                  isSelected
-                    ? "flex items-center gap-3 rounded-lg border border-amber-400/60 bg-amber-500/10 px-3 py-2 text-left"
-                    : "flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-left transition-colors hover:border-zinc-600"
+                  "flex cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors " +
+                  (isSelected
+                    ? "border-amber-400/60 bg-amber-500/10"
+                    : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700")
                 }
               >
                 <TeamLogo team={team} />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-zinc-100">
-                    {team.name}
-                  </span>
-                  <span className="block text-xs text-zinc-500">
-                    {team.abbreviation}
-                  </span>
+                <span
+                  className={
+                    "sd-body min-w-0 flex-1 truncate font-medium " +
+                    (isSelected ? "text-amber-200" : "text-zinc-300")
+                  }
+                >
+                  {team.name}
                 </span>
+                {/* A tick, not a second line of text: the abbreviation
+                    repeated what the crest and name already said, and cost
+                    every card a row of height across thirty of them. */}
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                  className={
+                    "h-4 w-4 shrink-0 " +
+                    (isSelected ? "text-amber-400" : "text-transparent")
+                  }
+                >
+                  <path d="m4 10.5 4 4 8-9" />
+                </svg>
               </button>
             );
           })}
@@ -175,6 +208,7 @@ export default function TeamsStep({
   leagueIds,
   teamsByLeague,
   onToggleTeam,
+  onClearLeague,
   totalSelected,
   onBack,
   onContinue,
@@ -198,17 +232,16 @@ export default function TeamsStep({
 
   return (
     <div className="space-y-6">
-      <header>
-        <h2 className="text-xl font-semibold text-zinc-100">
-          Pick your {headingNoun}
-        </h2>
-        <p className="mt-1 text-sm text-zinc-400">
-          Select at least one {headingNoun === "teams" ? "team" : headingNoun.slice(0, -1)}{" "}
-          to follow across your leagues.
+      <header className="sd-rule pb-4">
+        <h2 className="sd-title text-zinc-100">Pick your {headingNoun}</h2>
+        <p className="sd-body mt-2 max-w-prose text-pretty text-zinc-400">
+          Select at least one{" "}
+          {headingNoun === "teams" ? "team" : headingNoun.slice(0, -1)} to
+          follow across your leagues.
         </p>
       </header>
 
-      <div className="space-y-8">
+      <div className="space-y-10">
         {leagueIds.map((leagueId) => (
           <LeagueSection
             key={leagueId}
@@ -217,6 +250,7 @@ export default function TeamsStep({
             entityNoun={leagueById[leagueId]?.noun ?? "team"}
             selected={teamsByLeague[leagueId] ?? []}
             onToggle={(team) => onToggleTeam(leagueId, team)}
+            onClear={() => onClearLeague(leagueId)}
           />
         ))}
       </div>
@@ -226,7 +260,7 @@ export default function TeamsStep({
           Back
         </button>
         <div className="flex items-center gap-3">
-          <span className="text-sm tabular-nums text-zinc-400">
+          <span className="sd-meta tabular-nums text-zinc-400">
             {totalSelected === 1
               ? `1 ${headingNoun === "teams" ? "team" : headingNoun.slice(0, -1)} selected`
               : `${totalSelected} ${headingNoun} selected`}

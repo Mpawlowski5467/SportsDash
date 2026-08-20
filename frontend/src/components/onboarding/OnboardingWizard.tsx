@@ -218,6 +218,10 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
     });
   };
 
+  const clearLeagueTeams = (leagueId: string) => {
+    setTeamsByLeague((prev) => ({ ...prev, [leagueId]: [] }));
+  };
+
   const confirmFollow = async () => {
     setFollowPending(true);
     setFollowError(null);
@@ -322,6 +326,7 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
               leagueIds={pickTeamLeagueIds}
               teamsByLeague={teamsByLeague}
               onToggleTeam={toggleTeam}
+              onClearLeague={clearLeagueTeams}
               totalSelected={totalSelected}
               onBack={() => setStep("leagues")}
               onContinue={() => setStep("review")}
