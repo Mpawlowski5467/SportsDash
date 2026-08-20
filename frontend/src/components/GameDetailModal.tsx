@@ -611,7 +611,7 @@ function EmptyState({ message }: { message: string }) {
         fill="none"
         stroke="currentColor"
         strokeWidth="1.5"
-        className="h-8 w-8 text-zinc-600"
+        className="h-8 w-8 text-zinc-500"
         aria-hidden="true"
       >
         <rect x="3" y="4" width="18" height="16" rx="2" />

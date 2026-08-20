@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from app import useragent
 from app.models.domain import Sport
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ async def fetch_league_leaders(
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(15.0),
-            headers={"User-Agent": "SportsDash/1.0"},
+            headers=useragent.headers(),
             follow_redirects=True,
         ) as client:
             response = await client.get(url, params=params)

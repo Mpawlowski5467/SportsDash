@@ -193,7 +193,7 @@ export default function LeadersView() {
                 </span>{" "}
                 <span className="text-xs text-zinc-500">{row.stat_label}</span>
                 {row.detail && (
-                  <p className="text-[11px] text-zinc-600">{row.detail}</p>
+                  <p className="text-[11px] text-zinc-500">{row.detail}</p>
                 )}
               </div>
             </li>

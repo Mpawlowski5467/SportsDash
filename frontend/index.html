@@ -20,17 +20,39 @@
       very first frame (no flash of the dark default). Mirrors the values in
       src/lib/theme.ts (localStorage key, allowed ids, default). Kept inline
       and dependency-free on purpose.
+
+      `THEMES` below maps id -> is-dark, so adding a theme is ONE edit here
+      rather than two: the id list and the dark-based test used to be
+      separate expressions, and a new dark theme that was added to the first
+      but not the second booted with the wrong `dark` class for a frame.
     -->
     <script>
       (function () {
         try {
-          var allowed = { dark: 1, light: 1, newsprint: 1, stadium: 1 };
+          var THEMES = { dark: 1, light: 0, custom: 1, contrast: 1 };
+          // Retired/renamed ids still sitting in a returning user's storage.
+          // Mirrors LEGACY_THEME_IDS in src/lib/theme.ts; without it the
+          // first paint would use the default while React later applied the
+          // migrated theme, which is the flash this script exists to avoid.
+          var LEGACY = {
+            stadium: "custom",
+            floodlight: "dark",
+            ember: "dark",
+            newsprint: "light",
+          };
           var stored = window.localStorage.getItem("sportsdash.theme");
-          var theme = allowed[stored] ? stored : "dark";
+          // hasOwnProperty, not `in` / truthiness: a stored value of
+          // "constructor" or "toString" hits Object.prototype and would
+          // otherwise be accepted as a theme id.
+          var own = Object.prototype.hasOwnProperty;
+          var theme = "dark";
+          if (stored !== null) {
+            if (own.call(THEMES, stored)) theme = stored;
+            else if (own.call(LEGACY, stored)) theme = LEGACY[stored];
+          }
           var root = document.documentElement;
           root.setAttribute("data-theme", theme);
-          var darkBased = theme === "dark" || theme === "stadium";
-          root.classList.toggle("dark", darkBased);
+          root.classList.toggle("dark", THEMES[theme] === 1);
         } catch (e) {
           /* storage blocked — leave the dark default from <html class="dark"> */
         }

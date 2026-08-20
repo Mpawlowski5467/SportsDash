@@ -522,10 +522,23 @@ export interface CatalogLeague {
   supports_follow_all: boolean; // offer "follow the whole competition"
   entity_noun: string; // "team" | "player" | "fighter" | "golfer" | "driver"
   logo_url: string | null; // league logo for the picker
+  // Country this league is grouped under in setup, as a code into
+  // `CatalogLeaguesResponse.countries`. Null for a confederation competition
+  // (UEFA, FIFA) or a sport organised globally.
+  country_code: string | null;
+}
+
+export interface CatalogCountry {
+  code: string; // ESPN's league-code prefix, e.g. "eng" — NOT an ISO code
+  name: string;
+  league_count: number;
 }
 
 export interface CatalogLeaguesResponse {
   leagues: CatalogLeague[];
+  // Only countries that actually have leagues — one that opens an empty
+  // list is worse than none.
+  countries: CatalogCountry[];
 }
 
 export interface CatalogTeam {

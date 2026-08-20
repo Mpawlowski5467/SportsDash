@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from app import timeutil
+from app import timeutil, useragent
 from app.config import get_settings
 from app.providers.http_util import TransientProviderError, get_with_retry
 from app.models.domain import (
@@ -135,7 +135,7 @@ class EspnProvider:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(get_settings().provider_timeout_seconds),
-                headers={"User-Agent": "SportsDash/1.0"},
+                headers=useragent.headers(),
                 follow_redirects=True,
             )
         return self._client

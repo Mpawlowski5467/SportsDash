@@ -466,6 +466,9 @@ export function useSetupTeams(
   });
 }
 
+// No component calls this today: the preferences UI was removed from
+// SettingsView on 2026-08-19 pending an end-to-end test of the notification
+// path (see ROADMAP). The endpoint and this typed client both still work.
 export function useNotificationPrefs(): UseQueryResult<NotificationPrefsResponse> {
   return useQuery({
     queryKey: ["notification-prefs"],

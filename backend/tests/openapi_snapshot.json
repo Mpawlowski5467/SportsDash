@@ -115,8 +115,42 @@
         "title": "BracketSideOut",
         "type": "object"
       },
+      "CatalogCountryOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "league_count": {
+            "title": "League Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "league_count"
+        ],
+        "title": "CatalogCountryOut",
+        "type": "object"
+      },
       "CatalogLeagueOut": {
         "properties": {
+          "country_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country Code"
+          },
           "entity_noun": {
             "default": "team",
             "title": "Entity Noun",
@@ -171,6 +205,14 @@
       },
       "CatalogLeaguesOut": {
         "properties": {
+          "countries": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CatalogCountryOut"
+            },
+            "title": "Countries",
+            "type": "array"
+          },
           "leagues": {
             "items": {
               "$ref": "#/components/schemas/CatalogLeagueOut"

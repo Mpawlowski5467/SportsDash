@@ -14,7 +14,7 @@ import {
   useTeams,
 } from "../hooks";
 import type { Game, League, Sport, SportEvent, Team } from "../types";
-import { leagueFallbackColor } from "../components/GameCard";
+import { leagueFallbackColor } from "../components/GameRow";
 import EventLeaderboardModal from "../components/EventLeaderboardModal";
 import GameDetailModal from "../components/GameDetailModal";
 import { wmoEmoji } from "../components/WeatherInline";
@@ -445,8 +445,10 @@ export default function CalendarView() {
     selectedEventId !== null ? eventsById[selectedEventId] : undefined;
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    // A month grid genuinely needs the width a reading column would deny it,
+    // so the calendar takes the wide measure rather than the 940px one.
+    <div className="sd-measure-wide space-y-4 py-2">
+      <div className="sd-rule flex flex-wrap items-center justify-between gap-2 pb-3">
         <div className="flex min-w-0 items-center gap-2">
           <Select
             options={teamOptions}
@@ -455,7 +457,7 @@ export default function CalendarView() {
             ariaLabel="Filter by team"
           />
           {omitsLeaderboardFollows && (
-            <p className="min-w-0 max-w-xs text-[11px] leading-snug text-zinc-500">
+            <p className="sd-micro min-w-0 max-w-xs leading-snug text-zinc-500">
               A tournament belongs to no team, so those follows aren&apos;t
               listed — All teams is the view that shows them.
             </p>

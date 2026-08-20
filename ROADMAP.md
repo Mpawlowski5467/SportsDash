@@ -57,6 +57,109 @@ for a live sighting.
 
 ## ✅ Recently shipped
 
+- **Setup asks "where?" before "which?"** (2026-08-20) — soccer is 40 of the
+  catalog's 55 leagues, and a flat list of all 40 was the worst way to find
+  the two you actually watch. ESPN's own league codes carry the country
+  (`soccer/eng.1`), so the wizard now opens on a grid of the 21 countries
+  that have leagues. Pick England and Spain, and the league step narrows to
+  their six; everything belonging to no country (Champions League, World
+  Cup, NBA, the tours) is offered either way, and skipping shows everything
+  exactly as before. A league already selected survives unpicking its
+  country, so going back never silently drops a choice. The step is derived,
+  not hardcoded to soccer — a catalog that gains a second country for any
+  sport turns it on by itself.
+  This shipped as an **OpenStreetMap pin map first, and that was the wrong
+  answer**: nine of the twenty-one countries sit within a few degrees of
+  each other, so pins overlapped, names had to hide below a zoom threshold,
+  and the result was a world map of anonymous dots you had to hover to read
+  — worse at the actual question ("which countries can I pick?") than a list
+  that answers it at a glance, and it dragged MapLibre (~1.1MB) into the
+  onboarding bundle. Replaced same day. The Map view is still where a map
+  earns its place: there, position IS the information.
+
+- **The UI has a type scale** (2026-08-19) — the flatness was measurable:
+  26 distinct text styles on a page but only **four font sizes**, with 149
+  of 150 text elements between 11px and 14px, so page titles, section
+  headings, team names and footnotes all sat within 3px of each other.
+  Themes remap COLOR only, so no amount of palette work could have fixed
+  it. `index.css` now carries a Column layer — a six-step scale, a 940px
+  reading measure (1180px where a month grid or a map earns it), two rule
+  weights and a listing row — and the seven views compose those classes
+  instead of inventing `text-[11px]` locally. Cards and fills give way to
+  rules and gutters: Today and Results became listings on a time/date
+  gutter, News became a headline listing rather than an image-led grid,
+  the Matchup view's empty Upset Radar moved off the top of the screen,
+  and Standings lost two of its three stacked league titles (ESPN labels
+  an ungrouped table with a restatement of the competition, and ships the
+  season as a sentence — both are now suppressed or trimmed). `GameCard`
+  is `GameRow`. Applied at the view level: **58 `sd-*` usages in, 58
+  ad-hoc pixel sizes still in inner components** (modals, panels, roster,
+  bracket) awaiting the same treatment.
+- **The separator glyphs were failing WCAG AA in every theme**
+  (2026-08-19) — `·`, `@`, `vs` and `Bench:` were painted with
+  `text-zinc-600`, a token documented as "muted icon / track", which put
+  them at **2.58:1** on the stock dark base. 29 usages across 17 files
+  moved to `zinc-500`, the AA-tuned faint-label step; the stock dark
+  theme's separators now measure **5.09:1** and every view audited in the
+  browser reports zero AA failures.
+- **Four themes, one of them yours** (2026-08-19) — the picker is Dark,
+  Light, **Custom** and **High contrast**. Custom is the old Stadium
+  renamed for what it does: the dark base with the accent driven by a
+  followed team's color, lifted toward readability by `accentOnDark` (a
+  navy club lands at 9.3:1, not the 1.3:1 its raw hex would give). High
+  contrast is an accessibility option rather than a look — true black,
+  white headings, every text tone at AAA. Newsprint, Floodlight and Ember
+  were retired; `LEGACY_THEME_IDS` maps a stored id from any of them onto
+  a survivor in both `lib/theme.ts` and the no-FOUC bootstrap, so a
+  returning choice migrates instead of silently resetting.
+- **The setup wizard says where you are** (2026-08-19) — the league step
+  was a wrapping row of pills that sized themselves by name length, so
+  the rows came out ragged and the nested "Follow all" pill read as part
+  of the same control. Leagues are now cards in a fixed grid with
+  "Follow all" as a separate secondary line, and the header reads
+  "Step 1 of 4 · Leagues" instead of one lit dot.
+
+- **Every ESPN call was failing with 403, and nothing said so** (2026-08-19)
+  — the outbound `User-Agent` was the bare product token `SportsDash/1.0`,
+  and ESPN's edge had begun rejecting it: measured that day, every request
+  to `site.api.espn.com` came back `403 Forbidden`, deterministically, 5/5
+  by curl from the same address that got `200` seconds later for a
+  different string. `sports.core.api.espn.com` never blocked; only the
+  `site.api` host did. What passes is a User-Agent naming the project's
+  repository — `(self-hosted)` was **not** enough, nor was
+  `(+https://example.com)`, so it is the URL specifically and not merely the
+  presence of a comment. On a real startup the damage was total and silent:
+  standings for all five leagues, every roster, the team catalogs for
+  `euros` and `worldcup`, and every schedule fetch failed, each one
+  degrading to a logged error while the hermetic suite stayed green. The
+  string now lives in one place (`app/useragent.py`), reads from
+  `app/version.py`, takes an optional note that rides *inside* the same
+  comment as the URL, and is overridable outright with
+  `SPORTSDASH_USER_AGENT` — because this is a rule on someone else's edge
+  and it can move again. `tests/test_user_agent.py` pins the composition and
+  greps `app/` for any module that hardcodes a `User-Agent` of its own,
+  which is the test that was missing when the same literal sat in eleven
+  files. After the fix the same startup ran 35/35 ESPN calls `200` with zero
+  errors.
+- **A competition team keeps its stadium too** (2026-08-19) — closing the
+  loose end below. `repository.most_common_home_venue_by_name(session,
+  league_id, team_name)` tallies a named side's stored home fixtures the way
+  `most_common_home_venue` tallies a followed team's, and
+  `scheduler/stadium_cache.py` now falls back to it when the provider knows
+  no ground. A national side has no `teams` row, so the id-keyed query could
+  never see it; it now gets the same fallback everyone else gets. Names
+  compare through SQL's own `lower()` on both sides so a match never depends
+  on whether the backend's `lower()` is ASCII-only. Four cases pinned: the
+  side with no `teams` row, casing drift, a name that only ever played away,
+  and a same-named side in another league.
+- **"finished 18 (DNF)" is no longer the verb** (2026-08-19) — the
+  final-event alert now says a driver *retired* or *was disqualified*, and
+  carries the board's position as a classification rather than a finish
+  ("Nico Vantage retired (classified 18)"). Keyed on the two `score` tokens
+  a racing board actually emits; golf's to-par strings can never match, and
+  a test asserts that. Five cases in
+  `backend/tests/test_final_event_alert.py`.
+
 - **Race leaderboards carry constructors and race times** (2026-07-29) —
   taking the deferral in the motorsport item below: the per-driver times
   that live on ESPN's core API only are now fetched, so a finished race
@@ -272,6 +375,37 @@ The desktop app exists; making it *easy to get and trust* is the next step.
 Known gaps inside features that already ship, rather than new directions.
 Most are small; the ones that are not say so.
 
+- **Notifications have never been sent to a real device** (2026-08-19) —
+  the whole path exists and none of it has been exercised end to end:
+  `services/notify.py` POSTs to `{ntfy_url}/{ntfy_topic}`,
+  `scheduler/live.py` decides what fires, `services/notify_prefs.py`
+  resolves the scope precedence (team overrides league overrides global),
+  and `backend/tests/` covers the payload shape, the preference
+  resolution and the re-send window — all against fixtures. What has NOT
+  happened is a single notification arriving on a phone. The default
+  `ntfy_url` is `http://localhost:8090`, and there is no evidence an ntfy
+  server has ever run beside this app.
+  Because of that the **preferences UI was removed from Settings**
+  (2026-08-19): a settings panel for a feature nobody has seen work
+  implies a working feature. `GET/PUT /api/notifications/prefs`, the
+  scheduler and the typed client (`useNotificationPrefs`) are all
+  untouched and still run — only the panel is gone, and it comes back
+  with the tick below.
+  *Verify:* stand up an ntfy server (`docker run -p 8090:80 binwiederhier/ntfy serve`),
+  subscribe a phone to the `sportsdash` topic, and leave the app running
+  through a followed team's game. The four that matter, in order of how
+  easily they hide: a **game_start** on a game you are watching kick off;
+  a **final** exactly ONCE (the re-send window in
+  `resend_final_lookback_hours` is meant to retry a failed send, not to
+  double up — a duplicate means the dedupe key is not doing its job);
+  a **starting_soon** at the right lead time rather than at poll time;
+  and a scope **mute** that actually silences, since precedence is the
+  part with the most branches and the least real evidence. Watch the log
+  for `notify:` lines and confirm each one has a matching arrival —
+  `notify.py` never raises, so a silently-failing server and a working
+  one look identical from the app's side, which is the whole reason this
+  needs a device and not a test.
+
 - **NHL intermission, verified live** — the between-periods mapping in
   `providers/espn/common.py` is a defensive heuristic that has never been
   checked against a live NHL feed, and the code says so in a comment. It
@@ -314,7 +448,12 @@ Most are small; the ones that are not say so.
   stock-car/IndyCar cars sampled, and `…/competitions/{c}/situation` returns
   a body containing only `$ref`.
   *Verify:* two dated probes, each the same 7-URL set fired three times
-  ~15 min apart once the scoreboard shows `state == "in"` (~21 calls each) —
+  ~15 min apart once the scoreboard shows `state == "in"` (~21 calls each).
+  **The first date has passed unobserved** — nobody ran it on 2026-08-08 —
+  so the F1 pair below is now the whole window, and it is days away: the
+  FP1 warm-up on **2026-08-21T10:30Z** and the race on
+  **2026-08-23T13:00Z**. Miss those and the next chance is the following
+  race weekend. The probes:
   **2026-08-08T21:00Z**, NASCAR Xfinity @ Iowa (`nascar-secondary`, event =
   competition `202608080747`), the soonest observable live session anywhere;
   and **2026-08-23T13:00Z**, the F1 Dutch GP race (event `600057441`,
@@ -351,7 +490,11 @@ Most are small; the ones that are not say so.
   at first paint, compare one against the broadcast timing screen since a
   stale gap and a live one look identical, and watch `/api/metrics` for a
   per-car fan-out that is not actually capped.
-- **"finished 18 (DNF)" is the wrong verb** — a knock-on of the DSQ/DNF
+- ~~**"finished 18 (DNF)" is the wrong verb**~~ — ✅ shipped (2026-08-19,
+  above): `_final_event` now picks the verb from the score token, and
+  `tests/test_final_event_alert.py` asserts a `DNF` row is never described
+  as having finished. The original note follows, for the record. A knock-on
+  of the DSQ/DNF
   rendering above, left alone because it lives in a file that pass did not
   touch: `scheduler/live.py` builds the final-event alert as
   `f"{best.name} finished {best.position_label} ({best.score})"`, so a
@@ -398,11 +541,36 @@ Most are small; the ones that are not say so.
   venue. Click a pin for a team whose ground is genuinely unknown: the panel
   heading must read "Unknown venue" with the area listed separately as
   *Location*.
-- **The two frontend fixes, seen in a running browser** — the marker names
-  and the Calendar team filter both shipped against unit tests and the
-  installed MapLibre source, with the app not running (the dev server and
-  API were not up, and standing the live stack up mid-edit would have hit
-  the upstream providers). Neither has been looked at.
+- **The two frontend fixes, seen in a running browser** — ✅ **both looked
+  at, 2026-08-19**, against the live stack (API on the IPv6 loopback the
+  vite proxy resolves, real ESPN data). What was confirmed:
+  **markers** — 74 pins in Stadiums mode and 2–4 in Upcoming games mode,
+  **zero** `null` or `"Map marker"` names; Stadiums mode reads club-plus-
+  ground ("Arsenal, Emirates Stadium, Holloway, London, England"), Upcoming
+  games mode reads `"<venue>, N upcoming games"` with correct singular/
+  plural; and, the half the unit tests cannot reach, **names track data**:
+  driving the day range through four datasets moved "Chase Field, 1 upcoming
+  game" to "…, 15 upcoming games" to "…, 8 upcoming games" with no marker
+  left holding a stale name, and a `MutationObserver` recorded **zero**
+  marker nodes added or removed across four minutes of steady state.
+  **Filter** — with a golfer followed (Justin Thomas, added and then removed
+  again), the team filter listed the six game-side clubs and no golfer, the
+  note rendered beside it, the Subscribe menu agreed and carried its own
+  note, 30 tournament span cells still drew under "All teams", and at 900px
+  the header row stayed on one line with no overflow.
+  Four sub-checks were **not reachable** and stay open, none of them a
+  defect: the *timed* poll never fires in an embedded pane (the document
+  reports `visibilityState: "hidden"`, so React Query suspends the 30s
+  `refetchInterval` by design) — the data-change path above is the closest
+  available proof; the **pulse-continuity** check needs a live game, and
+  there were none (`getAnimations()` returns empty, so there is no animation
+  to restart); the **cluster** labels need 80 pins and this follow set makes
+  74 (`CLUSTER_MIN_MARKERS`); and no **plane/fan** elements exist to be
+  `aria-hidden` without a followed club in flight. The original note
+  follows. The marker names and the Calendar team filter both shipped
+  against unit tests and the installed MapLibre source, with the app not
+  running (the dev server and API were not up, and standing the live stack
+  up mid-edit would have hit the upstream providers).
   *Verify (markers):* open the Map view and run
   `[...document.querySelectorAll('.maplibregl-marker')].map(e => e.getAttribute('aria-label'))`
   in the devtools console — no entry may be `null` or `"Map marker"`. In
@@ -423,7 +591,19 @@ Most are small; the ones that are not say so.
   a second line (the row is `flex-wrap`, so a wrap is expected, an overflow
   is not). With **no** golfer followed the UI is byte-identical to before,
   so that case proves nothing.
-- **A competition team should keep its stadium too** — a followed team with
+- **A competition team should keep its stadium too** — ✅ **backend shipped
+  2026-08-19** (above); the live half is what is left. The query and the
+  fallback exist and are pinned by four unit tests, but the pins have not
+  been seen coming back at a real ground: TheSportsDB answered `429`
+  (Cloudflare `error code: 1015`) to every stadium lookup for the whole
+  session on 2026-08-19, so all eight unresolved sides — Czechia, Portugal,
+  Türkiye, Ukraine, Bosnia-Herzegovina, Congo DR, Jordan, United States —
+  stayed unresolved for reasons that had nothing to do with the fallback.
+  *Verify:* on a run where TheSportsDB answers, watch
+  `refresh_competition_stadiums: <league> — N/M team stadium(s) located`
+  climb, then check the recovered pins land at a plausible coordinate for
+  the ground their fixtures name rather than at a city centre. The original
+  note follows. A followed team with
   no upstream venue falls back to its most-common stored home-game venue; a
   whole-competition team (a national side) cannot, because
   `repository.most_common_home_venue()` is keyed by `team_id` and
@@ -445,7 +625,9 @@ Most are small; the ones that are not say so.
   the same confident pin on screen.
 - **Keyboard-reachable map pins** — MapLibre gives every marker
   `role="button"` but never a `tabindex`, so the pins are now *named* but
-  still cannot be reached or activated by keyboard alone. A blanket
+  still cannot be reached or activated by keyboard alone. Confirmed
+  unchanged in the browser on 2026-08-19: every rendered marker reported
+  `role="button"` and `tabindex: null`. A blanket
   `tabindex="0"` is the wrong fix: a "follow all" user would meet 700+ tab
   stops. It wants a design decision — a roving tabindex over the visible
   set, or a parallel list view of the plotted teams and venues.

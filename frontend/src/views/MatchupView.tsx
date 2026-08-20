@@ -84,20 +84,18 @@ export default function MatchupView() {
 
   if (upcoming.length === 0) {
     return (
-      <div className="flex flex-col gap-4">
-        <UpsetRadar games={upcoming} />
+      <div className="sd-measure flex flex-col gap-8 py-2">
         <EmptyState
           title="No upcoming games"
           message="Previews appear here as soon as your followed teams have games on the schedule."
         />
+        <UpsetRadar games={upcoming} />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <UpsetRadar games={upcoming} />
-
+    <div className="sd-measure flex flex-col gap-8 py-2">
       <Select
         options={options}
         value={selectedId}
@@ -115,6 +113,11 @@ export default function MatchupView() {
       ) : (
         <Preview matchup={matchupQuery.data} />
       )}
+
+      {/* The radar sits UNDER the preview you asked for. It is empty most of
+          the time, and an empty state should not hold the top of the screen
+          ahead of the thing the view exists to show. */}
+      <UpsetRadar games={upcoming} />
     </div>
   );
 }
@@ -207,18 +210,18 @@ function Preview({ matchup }: { matchup: Matchup }) {
 /** Away / home logos + names, the status badge, and the formatted start time. */
 function PreviewHeader({ game }: { game: Game }) {
   return (
-    <header className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-4">
-      <div className="flex items-center justify-between gap-3">
+    <header className="sd-rule flex flex-col gap-4 pb-4">
+      <div className="flex items-center justify-between gap-4">
         <SideHeader side={game.away} align="start" />
-        <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-zinc-600">
-          vs
-        </span>
+        <span className="sd-eyebrow shrink-0 text-zinc-500">vs</span>
         <SideHeader side={game.home} align="end" />
       </div>
-      <div className="flex items-center justify-center gap-2 text-xs text-zinc-500">
+      <div className="sd-meta flex items-center gap-2 text-zinc-500">
         <StatusBadge game={game} />
-        <span className="text-zinc-600">·</span>
-        <span className="tabular-nums">{formatDateTime(game.start_time)}</span>
+        <span className="text-zinc-500" aria-hidden="true">
+          ·
+        </span>
+        <span className="sd-figure">{formatDateTime(game.start_time)}</span>
       </div>
     </header>
   );
@@ -325,7 +328,7 @@ function HeadToHeadRow({ game }: { game: Game }) {
           size="xs"
         />
         <span className="text-zinc-300">{sideLabel(game.away)}</span>
-        <span className="text-zinc-600">v</span>
+        <span className="text-zinc-500">v</span>
         <TeamLogo
           logoUrl={game.home.logo_url}
           name={game.home.name}
@@ -398,7 +401,7 @@ function Section({
 }) {
   return (
     <section>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+      <h3 className="sd-eyebrow sd-rule mb-3.5 pb-2.5 text-zinc-500">
         {title}
       </h3>
       {children}
@@ -414,7 +417,7 @@ function EmptyState({ title, message }: { title: string; message: string }) {
         fill="none"
         stroke="currentColor"
         strokeWidth="1.5"
-        className="h-8 w-8 text-zinc-600"
+        className="h-8 w-8 text-zinc-500"
         aria-hidden="true"
       >
         <rect x="3" y="4" width="18" height="16" rx="2" />

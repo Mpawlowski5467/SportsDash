@@ -29,12 +29,13 @@ from dataclasses import dataclass
 
 import httpx
 
+from app import useragent
 from app.config import get_settings
 from app.services import cache
 
 logger = logging.getLogger(__name__)
 
-_HEADERS = {"User-Agent": "SportsDash/1.0 (self-hosted; club info enrichment)"}
+_HEADERS = useragent.headers("self-hosted; club info enrichment")
 _TIMEOUT = httpx.Timeout(15.0)
 _MAX_INFLIGHT = asyncio.Semaphore(4)
 

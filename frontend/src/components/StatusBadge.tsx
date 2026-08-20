@@ -69,7 +69,7 @@ export default function StatusBadge({ game }: { game: Game }) {
 
   // postponed | canceled — deliberately muted, the game isn't happening.
   return (
-    <span className="sd-status inline-flex items-center rounded-full bg-zinc-800/50 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-zinc-600">
+    <span className="sd-status inline-flex items-center rounded-full bg-zinc-800/50 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-zinc-500">
       {game.phase === "postponed" ? "PPD" : "CANC"}
     </span>
   );
