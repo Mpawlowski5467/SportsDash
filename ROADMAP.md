@@ -57,6 +57,24 @@ for a live sighting.
 
 ## ✅ Recently shipped
 
+- **Setup asks "where?" before "which?"** (2026-08-20) — soccer is 40 of the
+  catalog's 55 leagues, and a flat list of all 40 was the worst way to find
+  the two you actually watch. ESPN's own league codes carry the country
+  (`soccer/eng.1`), so the wizard now opens on an OpenStreetMap map — the
+  same OpenFreeMap tiles the Map view uses — with a pin per country that has
+  leagues (21 of them). Pick England and Spain, and the league step narrows
+  to their six; everything belonging to no country (Champions League, World
+  Cup, NBA, the tours) is offered either way, and skipping the step shows
+  everything exactly as before. Pins are real buttons, so they tab and take
+  Enter — affordable at 21, which is precisely why the Map view's 700+
+  markers still cannot (see the keyboard loose end). Two details worth
+  keeping: names appear only above zoom 3.2 because nine of the countries
+  sit inside a few degrees of Europe and label rectangles simply stack, and
+  a league already selected survives unpicking its country, so going back
+  never silently drops a choice the user made. The step is derived, not
+  hardcoded to soccer — a catalog that gains a second country for any sport
+  turns it on by itself.
+
 - **The UI has a type scale** (2026-08-19) — the flatness was measurable:
   26 distinct text styles on a page but only **four font sizes**, with 149
   of 150 text elements between 11px and 14px, so page titles, section

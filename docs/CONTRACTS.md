@@ -1102,6 +1102,31 @@ and re-theme automatically. Only targeted files change.
 - `src/calendar.css`: change the hardcoded `--fc-*` hex values to reference
   the palette vars (e.g. `--fc-page-bg-color: var(--color-zinc-950)`), so
   FullCalendar re-themes with the rest.
+### Setup: the country drill-down
+
+`GET /api/setup/leagues` carries two things the wizard's first step needs:
+each league's `country_code`, and a `countries[]` list of `{code, name, lat,
+lon, league_count}`.
+
+- `code` is **ESPN's league-code prefix, not an ISO code**. ESPN's soccer
+  keys are `soccer/eng.1`, `soccer/sco.1`, `soccer/ned.1` — "eng", "sco" and
+  "ned" are not ISO-3166, which is exactly why the mapping is a written
+  table in `espn_catalog.COUNTRIES` rather than a derivation. Guessing would
+  be wrong for the countries a soccer fan cares most about.
+- A code absent from that table (`uefa`, `fifa`, `conmebol`, `concacaf`) is
+  a confederation, so its leagues carry `country_code: null` and are offered
+  regardless of what the map has selected. So does every sport not organised
+  by country.
+- `countries[]` lists ONLY countries with at least one league — a pin that
+  opens an empty list is worse than no pin — and `league_count` must equal
+  the number of leagues actually carrying that code.
+- `lat`/`lon` are a representative point for a map pin, not a centroid, and
+  are display hints: nothing keys on them.
+- The wizard shows the step only when some sport spans MORE than one country
+  (`countryStepApplies`), so the step turns itself on when a catalog gains a
+  second country for a sport and off again when it does not — today soccer
+  alone qualifies. Selecting nothing is valid and means "no narrowing".
+
 - Theme switcher: persisted in localStorage `sportsdash.theme` (values
   `dark|light|custom|contrast`, default `dark`). Apply `data-theme` to
   `document.documentElement` as early as possible (an inline script in
