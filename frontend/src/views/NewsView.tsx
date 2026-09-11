@@ -222,8 +222,8 @@ export default function NewsView() {
   const newsQuery = useNews(scope);
   const refresh = useRefreshNews(scope);
 
-  const teams = teamsQuery.data?.teams ?? [];
-  const leagues = teamsQuery.data?.leagues ?? [];
+  const teams = useMemo(() => teamsQuery.data?.teams ?? [], [teamsQuery.data?.teams]);
+  const leagues = useMemo(() => teamsQuery.data?.leagues ?? [], [teamsQuery.data?.leagues]);
   // Whole-competition follows (e.g. World Cup) get their own pill — they have
   // no team rows, so their news is keyed by league instead.
   const competitions = useMemo(

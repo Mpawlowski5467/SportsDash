@@ -4,7 +4,7 @@ name: Release desktop app
 # in the app's Resources + Tauri shell) and attaches it to the GitHub
 # Release for the tag.
 #
-# NOTE: without an Apple Developer ID the app is unsigned — users must
+# NOTE: without an Apple Developer ID the app is ad-hoc signed — users must
 # right-click → Open past Gatekeeper (see docs/desktop.md, and the
 # code-signing item on ROADMAP.md).
 
@@ -21,7 +21,7 @@ jobs:
     runs-on: macos-latest
     # Signing/notarization turn on automatically once the repo secrets
     # exist (see docs/desktop.md "Code signing"); until then the build
-    # stays unsigned and everything else works as before. The secrets are
+    # uses an ad-hoc signature. The secrets are
     # wired into the build step's own env below, never job-wide.
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +33,9 @@ jobs:
           # that shares this cache, so the lock must be in the key.
           cache-dependency-path: backend/requirements*
       - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.node-version
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -47,7 +50,7 @@ jobs:
         # post-steps that setup-bun/rust-cache register at job cleanup.
         # GitHub cannot omit an env key conditionally, so these arrive as
         # empty strings when the secrets are unset; build-desktop.sh drops
-        # the empty ones so the build stays unsigned, exactly as before.
+        # the empty ones so the ad-hoc fallback applies.
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}

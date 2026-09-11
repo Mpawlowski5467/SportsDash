@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import httpx
+import pytest
+
 from app.models.domain import Sport
 from app.providers import espn_leaders
 
@@ -35,3 +38,47 @@ def test_supports_only_us_team_sports() -> None:
     assert espn_leaders.supports(Sport.BASEBALL)
     assert espn_leaders.supports(Sport.HOCKEY)
     assert not espn_leaders.supports(Sport.SOCCER)
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity", None, {}, "bad"])
+def test_nonfinite_or_invalid_statistics_are_skipped(value):
+    assert (
+        espn_leaders._value_at(
+            {"categories": [{"name": "offensive", "totals": [value]}]}, "offensive", 0
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("categories", [None, 12, "bad", {}])
+def test_malformed_category_lists_are_skipped(categories):
+    assert espn_leaders._value_at({"categories": categories}, "offensive", 0) is None
+
+
+async def test_leaders_include_provider_headshots_and_skip_bad_records(monkeypatch):
+    payload = {
+        "categories": [{"name": "offensive", "labels": ["PTS"]}],
+        "athletes": [
+            {
+                "athlete": {
+                    "id": "101",
+                    "displayName": "Rowan Vale",
+                    "headshot": {"href": "https://img.example/rowan.png"},
+                },
+                "categories": [{"name": "offensive", "totals": [25]}],
+            },
+            {"athlete": {"id": "102", "displayName": "Sable Marsh"}, "categories": 42},
+        ],
+    }
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(
+        espn_leaders.httpx,
+        "AsyncClient",
+        lambda **kwargs: client_type(
+            **kwargs,
+            transport=httpx.MockTransport(lambda req: httpx.Response(200, json=payload)),
+        ),
+    )
+    rows = await espn_leaders.fetch_league_leaders("basketball/harbor", Sport.BASKETBALL)
+    assert len(rows) == 1
+    assert rows[0].photo_url == "https://img.example/rowan.png"

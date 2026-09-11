@@ -3055,13 +3055,11 @@ knobs.
 - Trade-following is still deferred: a traded player's follow keeps its
   original `team_id`, and the re-sync only diffs statuses on rosters it
   fetches.
-- Pre-existing and deliberately left alone: on the **daily** soccer path
-  `_attach_player_photos` only backfills the first
-  `_PHOTO_BACKFILL_MAX_PLAYERS` (15) photoless players in the fetched
-  roster, and `replace_roster` then writes NULL for the rest — so ESPN
-  roster-order churn can still blank a stored TheSportsDB headshot there.
-  Carrying enrichment forward on the daily path too would fix it, at the
-  cost of changing the daily job's behavior.
+- Daily photo preservation was fixed in the September 2026 audit: stored
+  headshots are carried forward before choosing the bounded photo batch.
+  Missing candidates rotate daily so persistent misses do not starve later
+  squad members. Only cheap status refreshes preserve missing stat lines;
+  full season refreshes may clear old statistics.
 
 ### Tests
 
@@ -3550,3 +3548,42 @@ than "not retired"), and the `_core_status` builder takes
 `kind="classified"|"retired"|"dsq"`. The four-car finished-race stub also
 gained the `pitsTaken` stat that every real classified car publishes (529 of
 529), so the fixture is faithful to the payload the inference reads.
+
+
+## September 2026 audit — player images and map figures
+
+- `StatLeaderOut` / `StatLeader` now include nullable `photo_url`. The league
+  provider passes through an available ESPN headshot; roster-derived leaders
+  use the stored player's photo. The leaders cache key is `leaders:v2:{id}`.
+- TheSportsDB player photos require a matching normalized full name. Explicitly
+  wrong sports and unresolved namesakes return no image. The `tsdbphoto:v2`
+  cache includes name, club and sport. URLs must be HTTP(S).
+- Map figures are original SVG artwork in `views/map/figures.ts`: detailed
+  airliners and varied supporters, with no emoji or external image dependency.
+  Plane orientation uses the projected route; walking fans account for the
+  camera bearing and individual arrival times. Map pins are native buttons.
+- Motion stops or parks when the map is hidden; manual navigation interrupts
+  the camera cinematic, and reduced motion suppresses flights and crowds.
+
+Photo backfill also runs against the stored soccer roster when its provider
+is unavailable. That path fills missing photo columns only; squad membership,
+injury status, statistics and `roster_updated_at` remain authoritative to the
+last successful roster fetch.
+
+September 10 follow-up:
+
+- HTTP 401/403 raises `ProviderAccessError` without retrying. Adapters must
+  not convert access denial to an empty successful refresh. Split schedule
+  requests stop on denial; the registry records failure and its circuit
+  breaker limits subsequent requests.
+- `FlightCinematic` owns its intro listener, camera frames, arrival crowd,
+  aircraft, route, and cleanup timer. `stop()` releases all of them, including
+  an intro cancelled before its first animation frame.
+- Missing basemap sprites use a related existing icon or a neutral place
+  marker. This runs synchronously on `styleimagemissing`, before rendering.
+- The map renderer has a separate cacheable chunk. The build checks the
+  static entry dependency graph and fails if MapLibre enters the initial
+  bundle; `onlyExplicitManualChunks` keeps shared bundler helpers outside it.
+- The desktop build removes obsolete generated onefile resources, uses
+  ad-hoc signing when Developer ID is unavailable, and verifies the complete
+  bundle. Ad-hoc signing does not provide Apple notarization.

@@ -106,7 +106,7 @@ async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) 
 
     # --- League-wide leaders (NBA/MLB/NHL) from the ESPN athlete stats feed ---
     if league.provider == "espn" and espn_leaders.supports(sport):
-        cache_key = f"leaders:{league_id}"
+        cache_key = f"leaders:v2:{league_id}"
         cached = await cache.cache_get_json(cache_key)
         if cached is not None:
             return _stamp_followed(StatLeadersOut(**cached), followed_ids)
@@ -122,6 +122,7 @@ async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) 
                         player_id=entry.athlete_id,
                         name=entry.player,
                         position=entry.position,
+                        photo_url=entry.photo_url,
                         team_id=followed_team.id if followed_team else "",
                         team_name=followed_team.name if followed_team else entry.team,
                         team_logo_url=followed_team.logo_url if followed_team else None,
@@ -163,6 +164,7 @@ async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) 
                         player_id=player.id,
                         name=player.name,
                         position=player.position,
+                        photo_url=player.photo_url,
                         team_id=team.id,
                         team_name=team.name,
                         team_logo_url=team.logo_url,

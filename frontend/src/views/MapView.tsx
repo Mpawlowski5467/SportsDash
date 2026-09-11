@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import Supercluster from "supercluster";
@@ -6,7 +6,7 @@ import type { FeatureCollection, LineString } from "geojson";
 
 import { useMap, useSchedule, useTeams } from "../hooks";
 import { localDayOffset } from "../lib/time";
-import { greatCircle, hasCoords, haversineKm } from "../lib/geo";
+import { hasCoords, haversineKm } from "../lib/geo";
 import {
   COMPETITION_RING,
   DEFAULT_COLOR,
@@ -42,7 +42,9 @@ import {
 import { diffKeptMarker, type MarkerSignature } from "./map/reconcile";
 import { CameraOrbit } from "./map/orbit";
 import { FanCrowd } from "./map/fans";
-import { warmTilesAlong, warmTilesAround } from "./map/tilewarm";
+import { screenHeading } from "./map/motion";
+import { installMissingSprites } from "./map/sprites";
+import { FlightCinematic } from "./map/cinematic";
 import "./map/map.css";
 import type { Game, MapGame, MapTeam } from "../types";
 import MapTeamPanel from "../components/MapTeamPanel";
@@ -152,7 +154,7 @@ interface MapMarker extends MarkerSignature {
  */
 interface LiveMarker {
   marker: maplibregl.Marker;
-  host: HTMLDivElement;
+  host: HTMLButtonElement;
   spec: MapMarker;
 }
 
@@ -296,15 +298,6 @@ const ALL_GROUPS = "__all__";
 const ARCS_SOURCE = "sd-travel-arcs";
 const ARCS_LAYER = "sd-travel-arcs";
 
-/**
- * Source/layer ids for the ONE-SHOT cinematic arc — the route a clicked
- * game's flight follows. Kept separate from ARCS_SOURCE so Effect 3's
- * Stadiums-mode re-sync can never wipe a flight mid-air, and so a games-mode
- * flight can draw a route at all (arcDataRef is empty in games mode).
- */
-const CINE_ARC_SOURCE = "sd-cine-arc";
-const CINE_ARC_LAYER = "sd-cine-arc";
-
 /** Amber dashed line — matches the SportsDash accent. */
 const ARC_COLOR = "#f59e0b"; // amber-500
 
@@ -395,7 +388,7 @@ function clusterForViewport(
             zoom: target,
             pitch: DEFAULT_PITCH,
             duration: 600,
-            essential: true,
+            essential: false,
           });
         },
       });
@@ -720,14 +713,7 @@ export default function MapView() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<Map<string, LiveMarker>>(new window.Map());
   const planesRef = useRef<maplibregl.Marker[]>([]);
-  // The one-shot "follow the plane to the away game" cinematic. Its arrival
-  // fan crowd lives in `crowd` so cancelCinematic tears down the whole show.
-  const cinematicRef = useRef<{
-    raf: number;
-    plane: maplibregl.Marker | null;
-    crowd: FanCrowd | null;
-    cleanupTimer: number;
-  }>({ raf: 0, plane: null, crowd: null, cleanupTimer: 0 });
+  const cinematicRef = useRef<FlightCinematic | null>(null);
   const hoverPopupRef = useRef<maplibregl.Popup | null>(null);
   // The slow flyover orbit that starts after a pin-click fly-in lands (and
   // after the flight cinematic's dive). Created with the map; stopped by user
@@ -835,93 +821,11 @@ export default function MapView() {
     [],
   );
 
-  // Draw (or clear) the one-shot cinematic arc: the great-circle route the
-  // clicked game's flight follows. Guards every style lookup (the style may
-  // be mid-load or already torn down during unmount).
-  const setCineArc = (route: [number, number][] | null): void => {
-    const map = mapRef.current;
-    if (map === null || !map.isStyleLoaded()) return;
-    try {
-      if (route === null) {
-        if (map.getLayer(CINE_ARC_LAYER)) map.removeLayer(CINE_ARC_LAYER);
-        if (map.getSource(CINE_ARC_SOURCE)) map.removeSource(CINE_ARC_SOURCE);
-        return;
-      }
-      const data: FeatureCollection<LineString> = {
-        type: "FeatureCollection",
-        features: [
-          {
-            type: "Feature",
-            properties: {},
-            geometry: { type: "LineString", coordinates: route },
-          },
-        ],
-      };
-      const source = map.getSource(CINE_ARC_SOURCE) as
-        | maplibregl.GeoJSONSource
-        | undefined;
-      if (source !== undefined) {
-        source.setData(data);
-      } else {
-        map.addSource(CINE_ARC_SOURCE, { type: "geojson", data });
-        map.addLayer({
-          id: CINE_ARC_LAYER,
-          type: "line",
-          source: CINE_ARC_SOURCE,
-          layout: { "line-cap": "round", "line-join": "round" },
-          paint: {
-            "line-color": ARC_COLOR,
-            "line-width": 2.5,
-            "line-opacity": 0.9,
-          },
-        });
-      }
-    } catch {
-      // Style already gone — the map teardown removes everything anyway.
-    }
-  };
-
-  // Ref mirror: cancelCinematic clears the arc through this so it only ever
-  // touches refs — keeping it non-reactive for the mount-once effects that
-  // call it (same convention as syncArcsRef / syncMarkersRef below).
-  const setCineArcRef = useRef(setCineArc);
-  setCineArcRef.current = setCineArc;
-
-  // Tear down a running cinematic (rAF, the plane, its route arc, and the
-  // arrival fan crowd) plus any flyover orbit — every caller is about to move
-  // the camera somewhere else.
-  const cancelCinematic = (): void => {
-    const c = cinematicRef.current;
-    if (c.raf) cancelAnimationFrame(c.raf);
-    if (c.cleanupTimer) window.clearTimeout(c.cleanupTimer);
-    c.plane?.remove();
-    c.crowd?.stop();
-    cinematicRef.current = {
-      raf: 0,
-      plane: null,
-      crowd: null,
-      cleanupTimer: 0,
-    };
-    setCineArcRef.current(null);
+  const cancelCinematic = useCallback((): void => {
+    cinematicRef.current?.stop();
     orbitRef.current?.stop();
-  };
-  useEffect(() => cancelCinematic, []); // stop the cinematic on unmount
-
-  // Fans pouring into the destination stadium as the plane arrives: clumps
-  // walking street-like routes to the gates (the shared crowd mechanic in
-  // map/fans.ts). Replaces any previous arrival crowd.
-  const burstFansAt = (lon: number, lat: number, color: string): void => {
-    const map = mapRef.current;
-    if (map === null) return;
-    cinematicRef.current.crowd?.stop();
-    cinematicRef.current.crowd = new FanCrowd({
-      map,
-      lon,
-      lat,
-      color,
-      isVisible: () => mapVisibleRef.current,
-    }).start();
-  };
+  }, []);
+  useEffect(() => cancelCinematic, [cancelCinematic]);
 
   // Click-to-celebrate: a one-shot crowd walking into the stadium of a team
   // whose game is happening — the SAME shared mechanic as the flight
@@ -929,10 +833,10 @@ export default function MapView() {
   // repeated clicks never stack and it never collides with the cinematic's
   // crowd (which lives in cinematicRef).
   const celebrateCrowdRef = useRef<FanCrowd | null>(null);
-  const stopCelebrate = (): void => {
+  const stopCelebrate = useCallback((): void => {
     celebrateCrowdRef.current?.stop();
     celebrateCrowdRef.current = null;
-  };
+  }, []);
   const celebrateFansAt = (lon: number, lat: number, color: string): void => {
     const map = mapRef.current;
     if (map === null) return;
@@ -942,7 +846,7 @@ export default function MapView() {
       lon,
       lat,
       color,
-      isVisible: () => mapVisibleRef.current,
+      isVisible: () => mapVisibleRef.current && !document.hidden,
     }).start();
   };
   // Fired from the marker click handler (via a ref, so it reads fresh live data
@@ -957,129 +861,14 @@ export default function MapView() {
     if (color) celebrateFansAt(lon, lat, color);
   };
 
-  // The marquee: a plane departs home, the camera follows it along the
-  // great-circle to the away venue, and fans pour in as it lands.
-  const runFlightCinematic = (
-    home: [number, number],
-    dest: [number, number],
-    color: string,
-  ): void => {
-    const map = mapRef.current;
-    if (map === null) return;
-    cancelCinematic();
-    const route = greatCircle(home[0], home[1], dest[0], dest[1]);
-    if (route === null) {
-      map.flyTo({
-        center: dest,
-        zoom: SINGLE_TEAM_ZOOM,
-        pitch: DEFAULT_PITCH,
-        essential: true,
-      });
-      return;
-    }
-    const { el, glyph } = createPlaneElement();
-    el.classList.add("sd-map-plane-cine");
-    const plane = new maplibregl.Marker({ element: el })
-      .setLngLat(route[0])
-      .addTo(map);
-    cinematicRef.current.plane = plane;
-    // Draw the route the plane is about to fly (cleared on landing/cancel).
-    setCineArc(route);
-    // Sweep over to the home stadium instead of cutting to it — the viewer
-    // follows the whole trip from takeoff to touchdown. The flight itself
-    // starts once the sweep lands (see beginFlight below).
-    map.flyTo({
-      center: home,
-      zoom: 5.5,
-      pitch: 30,
-      bearing: -10,
-      duration: 1400,
-    });
-    let start = 0;
-    let lastCam = 0;
-    let fansStarted = false;
-    // 12s cruise: slower than the original 9s so new-city tiles keep up,
-    // and the destination's detail tiles are pre-warmed into the HTTP
-    // cache below (the flight's stutter was tile fetch+parse bursts,
-    // measured p95 ~140ms — not the camera math).
-    const DURATION = 12000;
-    warmTilesAround(map, dest[0], dest[1]); // dive detail tiles
-    warmTilesAlong(map, route); // cruise route tiles at z5/z6
-    // Camera-update cadence during the flight — matches the flyover orbit's
-    // throttle (the 3D-building re-render per jumpTo is the whole cost).
-    const CAMERA_UPDATE_MS = 1000 / 24;
-    const tick = (ts: number) => {
-      const map = mapRef.current; // re-read live; bail if the map went away
-      if (map === null) {
-        cinematicRef.current.raf = 0;
-        return;
-      }
-      if (start === 0) start = ts;
-      const p = Math.min(1, (ts - start) / DURATION);
-      const e = p * p * (3 - 2 * p); // smoothstep along the route
-      const fi = e * (route.length - 1);
-      const idx = Math.floor(fi);
-      const frac = fi - idx;
-      const a = route[idx];
-      const b = route[Math.min(idx + 1, route.length - 1)];
-      const pos: [number, number] = [
-        a[0] + (b[0] - a[0]) * frac,
-        a[1] + (b[1] - a[1]) * frac,
-      ];
-      plane.setLngLat(pos);
-      const ang = (Math.atan2(b[0] - a[0], b[1] - a[1]) * 180) / Math.PI;
-      glyph.style.transform = `rotate(${ang}deg)`;
-      // Camera follows the plane; zoom holds at 5.5 (MapLibre renders z5
-      // tiles there — 4x fewer mid-flight tile loads than z6), then dives
-      // into the stadium (from 80% — later than before, so the detail
-      // tiles that were pre-warmed at flight start are only needed at the
-      // end). Throttled to ~24fps: every jumpTo is a full style render,
-      // while the plane marker itself stays buttery at full frame rate.
-      const zoom =
-        p < 0.8 ? 5.5 : 5.5 + (SINGLE_TEAM_ZOOM - 5.5) * ((p - 0.8) / 0.2) ** 1.4;
-      // Cruise at pitch 30 (a near-top-down travel view): at pitch 55 the
-      // horizon puts hundreds of extra tiles in frame — that tile count,
-      // not tile fetches, is the cruise's per-render cost. The dive eases
-      // back to DEFAULT_PITCH for the stadium reveal.
-      const pitch =
-        p < 0.8 ? 30 : 30 + (DEFAULT_PITCH - 30) * ((p - 0.8) / 0.2);
-      if (ts - lastCam >= CAMERA_UPDATE_MS || p === 1) {
-        lastCam = ts;
-        map.jumpTo({ center: pos, zoom, pitch, bearing: -10 });
-      }
-      // Fans start gathering "while the plane is coming in".
-      if (!fansStarted && p > 0.62) {
-        fansStarted = true;
-        burstFansAt(dest[0], dest[1], color);
-      }
-      if (p < 1) {
-        cinematicRef.current.raf = requestAnimationFrame(tick);
-      } else {
-        cinematicRef.current.raf = 0;
-        map.easeTo({
-          center: dest,
-          zoom: SINGLE_TEAM_ZOOM,
-          pitch: DEFAULT_PITCH,
-          duration: 700,
-        });
-        // The dive eases out, then the slow flyover orbit takes over.
-        orbitRef.current?.startAfterSettled(() => !reducedMotionRef.current);
-        // Let the plane land, then remove it (the fans keep arriving a bit).
-        cinematicRef.current.cleanupTimer = window.setTimeout(() => {
-          cinematicRef.current.plane?.remove();
-          cinematicRef.current.plane = null;
-          setCineArc(null); // the flight's done — lift its route line
-        }, 1600);
-      }
-    };
-    const beginFlight = (): void => {
-      // A cancel during the intro sweep (another click, mode switch, unmount)
-      // nulls the plane — a stale moveend listener must not start the flight.
-      if (cinematicRef.current.plane !== plane) return;
-      cinematicRef.current.raf = requestAnimationFrame(tick);
-    };
-    map.once("moveend", beginFlight);
+  const runFlightCinematic = (home: [number, number], dest: [number, number], color: string): void => {
+    cinematicRef.current?.start(home, dest, color);
   };
+
+  const celebrateFansRef = useRef(celebrateFansAt);
+  celebrateFansRef.current = celebrateFansAt;
+  const runFlightRef = useRef(runFlightCinematic);
+  runFlightRef.current = runFlightCinematic;
 
   useEffect(() => {
     if (!focusTarget) return;
@@ -1107,7 +896,7 @@ export default function MapView() {
       const color = team?.color ?? DEFAULT_COLOR;
       // Away game with a known home: fly the plane there, fans pour in on
       // arrival. Home game / no home coords / reduced motion: just go there
-      // (a home game's fans come from the ambient Effect 6).
+      // with a one-shot home crowd when motion is enabled.
       if (
         target.isHome ||
         team === undefined ||
@@ -1119,10 +908,11 @@ export default function MapView() {
           center: dest,
           zoom: SINGLE_TEAM_ZOOM,
           pitch: DEFAULT_PITCH,
-          essential: true,
+          essential: false,
         });
+        if (!reducedMotion) celebrateFansRef.current(dest[0], dest[1], color);
       } else {
-        runFlightCinematic([team.lon, team.lat], dest, color);
+        runFlightRef.current([team.lon, team.lat], dest, color);
       }
       return true;
     };
@@ -1143,7 +933,7 @@ export default function MapView() {
         center: [team.lon, team.lat],
         zoom: SINGLE_TEAM_ZOOM,
         pitch: DEFAULT_PITCH,
-        essential: true,
+        essential: false,
       });
     };
 
@@ -1156,7 +946,7 @@ export default function MapView() {
       window.setTimeout(fallback, 3400),
     ];
     clearFocus();
-  }, [focusTarget, clearFocus, reducedMotion]);
+  }, [focusTarget, clearFocus, reducedMotion, cancelCinematic]);
   // --- Games mode: click ANY upcoming game in the venue panel → travel show --
   // Replays the travel visuals for THAT fixture (not just each team's next
   // game): a followed AWAY side flies the plane from its home venue along a
@@ -1187,7 +977,7 @@ export default function MapView() {
       center: dest,
       zoom: SINGLE_TEAM_ZOOM,
       pitch: DEFAULT_PITCH,
-      essential: true,
+      essential: false,
     });
     if (reducedMotion) return false; // no fans, no orbit — just the fly-to
     if (homeTeam !== undefined) {
@@ -1240,6 +1030,7 @@ export default function MapView() {
     const container = containerRef.current;
     if (container === null) return;
 
+    const liveMarkers = markersRef.current;
     const initial = markersStateRef.current;
     const map = new maplibregl.Map({
       container,
@@ -1251,7 +1042,14 @@ export default function MapView() {
       attributionControl: { compact: true },
     });
     mapRef.current = map;
+    const removeMissingSprites = installMissingSprites(map);
     orbitRef.current = new CameraOrbit(map);
+    cinematicRef.current = new FlightCinematic({
+      map, orbit: orbitRef.current,
+      isVisible: () => mapVisibleRef.current && !document.hidden,
+      reducedMotion: () => reducedMotionRef.current,
+      stadiumZoom: SINGLE_TEAM_ZOOM, stadiumPitch: DEFAULT_PITCH,
+    });
     // App.tsx keeps visited views mounted-but-hidden, so unmount never fires
     // on tab switch: stop the flyover orbit when the map leaves the viewport
     // (its rAF would otherwise keep driving a camera nobody can see), and
@@ -1260,10 +1058,27 @@ export default function MapView() {
     const hideObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         mapVisibleRef.current = entry.isIntersecting;
-        if (!entry.isIntersecting) orbitRef.current?.stop();
+        if (!entry.isIntersecting) {
+          cancelCinematic();
+          tourTimersRef.current.forEach((id) => window.clearTimeout(id));
+          tourTimersRef.current = [];
+          setTouring(false);
+        } else {
+          map.resize();
+        }
       }
     });
     hideObserver.observe(container);
+    const onVisibilityChange = () => {
+      if (document.hidden) cancelCinematic();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    const onUserMove = (event: maplibregl.MapLibreEvent) => {
+      if (event.originalEvent) cancelCinematic();
+    };
+    const onKeyDown = () => cancelCinematic();
+    map.on("movestart", onUserMove);
+    map.getCanvas().addEventListener("keydown", onKeyDown);
     hoverPopupRef.current = new maplibregl.Popup({
       closeButton: false,
       closeOnClick: false,
@@ -1392,7 +1207,9 @@ export default function MapView() {
         }
         // The host stays put for the marker's whole life (MapLibre owns its
         // transform); the badge element is its single replaceable child.
-        const host = document.createElement("div");
+        const host = document.createElement("button");
+        host.type = "button";
+        host.className = "sd-map-pin";
         // MapLibre only defaults the name of a marker that arrives unlabeled,
         // so labelling the host BEFORE addTo is what keeps it off "Map marker"
         // (it still supplies role="button", which is what this element is).
@@ -1414,6 +1231,8 @@ export default function MapView() {
         host.addEventListener("click", () => {
           const active = entry.spec;
           hoverPopupRef.current?.remove();
+          cancelCinematic();
+          stopCelebrate();
           active.onSelect();
           // A cluster badge drives its own camera (expand-to-zoom) in onSelect;
           // only an individual pin flies in to street level.
@@ -1422,7 +1241,7 @@ export default function MapView() {
               center: [active.lon, active.lat],
               zoom: SINGLE_TEAM_ZOOM,
               pitch: DEFAULT_PITCH,
-              essential: true,
+              essential: false,
             });
             // Once the fly-in lands, ease into the slow flyover orbit around
             // the stadium (the gate keeps reduced-motion sessions still).
@@ -1450,7 +1269,7 @@ export default function MapView() {
     // jumpTo's every frame too, and its bearing-only sweep never changes
     // which pins merge.
     map.on("moveend", () => {
-      if (cinematicRef.current.raf !== 0) return;
+      if (cinematicRef.current?.flying) return;
       if (orbitRef.current?.orbiting ?? false) return;
       renderViewportRef.current?.(false);
     });
@@ -1465,12 +1284,16 @@ export default function MapView() {
       // Stop any in-flight cinematic BEFORE removing the map, so its rAFs
       // don't fire jumpTo/getZoom on a destroyed MapLibre instance.
       hideObserver.disconnect();
+      removeMissingSprites();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      map.getCanvas().removeEventListener("keydown", onKeyDown);
       orbitRef.current?.stop();
       orbitRef.current = null;
       cancelCinematic();
+      cinematicRef.current = null;
       stopCelebrate(); // and any click-to-celebrate fan burst
-      for (const entry of markersRef.current.values()) entry.marker.remove();
-      markersRef.current.clear();
+      for (const entry of liveMarkers.values()) entry.marker.remove();
+      liveMarkers.clear();
       hoverPopupRef.current?.remove();
       hoverPopupRef.current = null;
       syncMarkersRef.current = null;
@@ -1481,15 +1304,13 @@ export default function MapView() {
       try {
         if (map.getLayer(ARCS_LAYER)) map.removeLayer(ARCS_LAYER);
         if (map.getSource(ARCS_SOURCE)) map.removeSource(ARCS_SOURCE);
-        if (map.getLayer(CINE_ARC_LAYER)) map.removeLayer(CINE_ARC_LAYER);
-        if (map.getSource(CINE_ARC_SOURCE)) map.removeSource(CINE_ARC_SOURCE);
       } catch {
         // Style already gone — nothing to clean up.
       }
       mapRef.current = null;
       map.remove();
     };
-  }, [hasContent]);
+  }, [hasContent, cancelCinematic, stopCelebrate]);
 
   // --- Effect 2: reconcile markers on every payload / filter / mode change --
   // Refit only when the mode changes (incl. the first run, prevMode === null),
@@ -1545,15 +1366,26 @@ export default function MapView() {
 
     if (reducedMotion) {
       for (const p of planes) {
-        p.marker.setLngLat(p.coords[Math.floor(p.coords.length / 2)]);
+        const mid = Math.floor((p.coords.length - 1) / 2);
+        p.marker.setLngLat(p.coords[mid]);
+        p.glyph.style.transform = `rotate(${screenHeading((point) => map.project(point), p.coords[mid], p.coords[mid + 1])}deg)`;
       }
       return cleanup;
     }
 
     let raf = 0;
     let startTs = 0;
+    let parkedTimer = 0;
     const DURATION = 8000; // ms to traverse a whole arc
     const tick = (ts: number) => {
+      if (!mapVisibleRef.current || document.hidden) {
+        const parkedAt = performance.now();
+        parkedTimer = window.setTimeout(() => {
+          if (startTs !== 0) startTs += performance.now() - parkedAt;
+          raf = requestAnimationFrame(tick);
+        }, 500);
+        return;
+      }
       if (startTs === 0) startTs = ts;
       const base = (ts - startTs) / DURATION;
       planes.forEach((p, i) => {
@@ -1567,7 +1399,7 @@ export default function MapView() {
         const lat = a[1] + (b[1] - a[1]) * frac;
         p.marker.setLngLat([lng, lat]);
         // Rotate the glyph to the compass bearing (SVG points north at 0°).
-        const ang = (Math.atan2(b[0] - a[0], b[1] - a[1]) * 180) / Math.PI;
+        const ang = screenHeading((point) => map.project(point), a, b, [lng, lat]);
         p.glyph.style.transform = `rotate(${ang}deg)`;
       });
       raf = requestAnimationFrame(tick);
@@ -1576,6 +1408,7 @@ export default function MapView() {
 
     return () => {
       cancelAnimationFrame(raf);
+      window.clearTimeout(parkedTimer);
       cleanup();
     };
   }, [travelArcs, mode, reducedMotion]);
@@ -1583,6 +1416,13 @@ export default function MapView() {
   // (The old always-on "fans at every home venue" crowd was removed: fans now
   // appear ONLY when you click a team whose game is happening and fly into its
   // stadium — see celebrateFansAt + the marker click handler.)
+
+  useEffect(() => {
+    if (reducedMotion) {
+      cancelCinematic();
+      stopCelebrate();
+    }
+  }, [reducedMotion, cancelCinematic, stopCelebrate]);
 
   // Stop a running tour if the user leaves Stadiums mode; clear timers on
   // unmount. (Effects must precede the early returns below.)
@@ -1601,9 +1441,7 @@ export default function MapView() {
     // in games mode now, not just the Stadiums-mode focus flow.
     cancelCinematic();
     stopCelebrate();
-    // cancelCinematic/stopCelebrate are stable-enough closures; safe to omit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, cancelCinematic, stopCelebrate, closeTeamDetail]);
   useEffect(
     () => () => {
       tourTimersRef.current.forEach((id) => window.clearTimeout(id));
@@ -1626,7 +1464,8 @@ export default function MapView() {
     const map = mapRef.current;
     const stops = teams.filter((t) => t.source === "followed" && hasCoords(t));
     if (map === null || stops.length === 0) return;
-    orbitRef.current?.stop(); // the tour's fly-ins own the camera now
+    cancelCinematic();
+    stopCelebrate();
     // Defensive: never stack a second fleet of timers on top of a running tour.
     tourTimersRef.current.forEach((id) => window.clearTimeout(id));
     tourTimersRef.current = [];
@@ -1647,7 +1486,7 @@ export default function MapView() {
           pitch: DEFAULT_PITCH,
           bearing: TOUR_ORBIT_FROM,
           duration: reducedMotion ? 0 : TOUR_FLY_MS,
-          essential: true,
+          essential: false,
         });
       }, base);
       // 2) Hover: a slow orbit around the stadium (skipped if reduced motion).
@@ -1656,7 +1495,7 @@ export default function MapView() {
           map.easeTo({
             bearing: TOUR_ORBIT_TO,
             duration: TOUR_HOVER_MS,
-            essential: true,
+            essential: false,
           });
         }, base + TOUR_HOVER_AT);
       }
@@ -1709,8 +1548,9 @@ export default function MapView() {
           }
         }
         if (best !== null && bestLngLat !== null) {
-          orbitRef.current?.stop(); // this fly-to owns the camera now
-          map.flyTo({ center: bestLngLat, zoom: 9, essential: true });
+          cancelCinematic();
+          stopCelebrate();
+          map.flyTo({ center: bestLngLat, zoom: 9, essential: false });
           onSelectRef.current(best);
         }
       },
@@ -1788,7 +1628,7 @@ export default function MapView() {
       <div className="relative">
         <div
           ref={containerRef}
-          className="h-[calc(100vh-5rem)] min-h-[420px] w-full overflow-hidden rounded-lg border border-zinc-800"
+          className="h-[calc(100dvh-8rem)] min-h-[420px] w-full overflow-hidden rounded-lg border border-zinc-800 lg:h-[calc(100dvh-5rem)]"
         />
 
         {/* ALL map controls float INSIDE the map box (top-left): mode toggle,
@@ -1815,7 +1655,7 @@ export default function MapView() {
                       : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200")
                   }
                 >
-                  <span aria-hidden="true">🎥</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="5" width="12" height="14" rx="3"/><path d="m15 9 6-3v12l-6-3z"/></svg>
                   {touring ? "Stop tour" : "Tour my teams"}
                 </button>
               )}
@@ -1832,7 +1672,7 @@ export default function MapView() {
                     : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200")
                 }
               >
-                <span aria-hidden="true">📍</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>
                 {geoState === "locating"
                   ? "Locating…"
                   : geoState === "denied"

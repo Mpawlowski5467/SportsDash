@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import date, timedelta
 
+import httpx
 import pytest
 
+from app.models.domain import League, Sport, Team
 from app.providers import registry
-from app.providers.http_util import TransientProviderError
+from app.providers.espn import EspnProvider
+from app.providers.http_util import ProviderAccessError, TransientProviderError
 from app.services.circuit_breaker import (
     CircuitBreaker,
     CircuitState,
@@ -265,3 +268,39 @@ async def test_guard_records_failure_on_transient_provider_error() -> None:
     # And now it fails fast without touching upstream.
     with pytest.raises(ProviderUnavailable):
         await guard.get_standings(None)
+
+
+async def test_denied_schedule_is_not_a_successful_empty_refresh() -> None:
+    """Exercise the real adapter's HTTPError fallback through its guard."""
+    provider = EspnProvider()
+    attempts = []
+
+    def deny(request: httpx.Request) -> httpx.Response:
+        attempts.append(request.url)
+        return httpx.Response(403)
+
+    league = League(
+        id="coastal",
+        name="Coastal League",
+        sport=Sport.SOCCER,
+        provider="espn",
+        provider_key="coastal",
+    )
+    team = Team(
+        id="harbor",
+        name="Harbor United",
+        abbreviation="HBU",
+        league_id=league.id,
+        provider_key="17",
+    )
+    breaker = CircuitBreaker(name="espn", failure_threshold=2)
+    guard = registry._GuardedProvider(provider, breaker)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(deny)) as client:
+        provider._client = client
+        for _ in range(2):
+            with pytest.raises(ProviderAccessError):
+                await guard.get_schedule(league, team, date(2026, 9, 1), date(2026, 9, 10))
+        with pytest.raises(ProviderUnavailable):
+            await guard.get_schedule(league, team, date(2026, 9, 1), date(2026, 9, 10))
+    assert len(attempts) == 2
+    assert breaker.state is CircuitState.OPEN

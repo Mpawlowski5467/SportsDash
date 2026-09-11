@@ -67,8 +67,9 @@ export default function NewsDetailPanel({
         // `pointer-events-none` only stops the mouse.
         inert={!open}
         className={
-          // top-12 clears the sticky 48px app header (it's portaled to body).
-          "fixed bottom-0 right-0 top-12 z-40 flex w-[26rem] max-w-[92vw] flex-col " +
+          // Clear the desktop header; mobile drawers keep their close button
+          // above the navigation, even when its controls wrap onto two rows.
+          "fixed bottom-0 right-0 top-0 z-[60] flex w-[26rem] max-w-[92vw] flex-col lg:top-12 lg:z-40 " +
           "border-l border-zinc-800 bg-zinc-900 shadow-2xl outline-none transition-transform " +
           "duration-300 ease-out motion-reduce:transition-none " +
           (open ? "translate-x-0" : "pointer-events-none translate-x-full")

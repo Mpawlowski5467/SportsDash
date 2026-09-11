@@ -69,6 +69,22 @@ async def test_does_not_retry_404() -> None:
     assert attempts["n"] == 1
 
 
+@pytest.mark.parametrize("status", [401, 403])
+async def test_access_denial_raises_without_retrying(status: int) -> None:
+    attempts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(request.url)
+        return httpx.Response(status, text="access denied")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(http_util.ProviderAccessError, match=str(status)):
+            await http_util.get_with_retry(
+                client, "https://example.test/roster", max_retries=3, backoff_base=0.01
+            )
+    assert len(attempts) == 1
+
+
 async def test_gives_up_after_max_retries_on_persistent_5xx() -> None:
     attempts = {"n": 0}
 

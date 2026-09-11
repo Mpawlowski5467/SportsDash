@@ -8,6 +8,7 @@ aiosqlite engine, and seeds fictional data directly via the ORM.
 from __future__ import annotations
 
 import json
+import tomllib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -245,7 +246,18 @@ async def seed(db: async_sessionmaker[AsyncSession]) -> Seed:
 
 
 @pytest.fixture
-async def app(db: async_sessionmaker[AsyncSession], seed: Seed) -> FastAPI:
+async def app(
+    db: async_sessionmaker[AsyncSession], seed: Seed, monkeypatch: pytest.MonkeyPatch
+) -> FastAPI:
+    # Route tests replace request sessions, but scheduler jobs open their own
+    # sessions. Keep every map request (including parameter-validation tests)
+    # from starting a worker against the real application database. Individual
+    # tests can replace these no-ops with spies when they assert a kick.
+    from app.scheduler import jobs
+
+    monkeypatch.setattr(jobs, "kick_locations_if_pending", lambda: None)
+    monkeypatch.setattr(jobs, "kick_competition_stadiums", lambda: None)
+    monkeypatch.setattr(jobs, "kick_game_venue_coords", lambda: None)
     application = FastAPI()
     application.include_router(api_router, prefix="/api")
 
@@ -300,8 +312,8 @@ def test_app_version_has_one_source_of_truth() -> None:
     ``test_meta`` reads the constant to check the /meta *contract*, which
     makes it blind to the version itself — it would pass with the constant
     set to anything.  This is the counterpart: pin the constant against the
-    two independent copies that ship, so a release that bumps one and
-    forgets the other fails here instead of in the wild.
+    independent copies that ship, so a release that bumps one and
+    forgets another fails here instead of in the wild.
     """
     # Imported lazily: this is the only test that needs the real application
     # object (and with it the scheduler), the rest build their own app.
@@ -315,6 +327,13 @@ def test_app_version_has_one_source_of_truth() -> None:
     if not tauri_conf.exists():  # backend-only checkout (e.g. the API image)
         pytest.skip(f"{tauri_conf} not present")
     assert json.loads(tauri_conf.read_text())["version"] == meta_route.APP_VERSION
+    frontend = tauri_conf.parent.parent
+    assert json.loads((frontend / "package.json").read_text())["version"] == meta_route.APP_VERSION
+    cargo = tomllib.loads((tauri_conf.parent / "Cargo.toml").read_text())
+    assert cargo["package"]["version"] == meta_route.APP_VERSION
+    lock = tomllib.loads((tauri_conf.parent / "Cargo.lock").read_text())
+    crate = next(p for p in lock["package"] if p["name"] == cargo["package"]["name"])
+    assert crate["version"] == meta_route.APP_VERSION
 
 
 async def test_teams(client: AsyncClient) -> None:

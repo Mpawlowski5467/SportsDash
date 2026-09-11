@@ -122,10 +122,17 @@ declares. Drag the `.app` to `/Applications`, or share the `.dmg`.
 
 Signing and notarization are **fully wired** — locally and in the release
 workflow — and turn on automatically once an Apple Developer ID
-certificate exists. Until then builds are unsigned: on first launch macOS
+certificate exists. Until then the build script applies an **ad-hoc signature**
+to seal the complete app and its bundled resources, then verifies it with
+`codesign --verify --deep --strict`. This does not establish an Apple-verified
+developer identity or notarize the app: on first launch macOS
 Gatekeeper warns that the app is from an unidentified developer;
 right-click → **Open** (or `xattr -dr com.apple.quarantine
 SportsDash.app`) gets past it.
+
+The fallback uses Tauri's documented [ad-hoc signing identity](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing).
+The script also clears obsolete generated onefile backend executables before
+staging the current backend folder, so older local builds do not break upgrades.
 
 ### One-time setup (requires an Apple Developer account, $99/yr)
 

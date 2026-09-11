@@ -95,9 +95,9 @@ export default function MapTeamPanel({
       aria-hidden={!open}
       inert={!open}
       className={
-        // top-12 clears the sticky 48px app header so the panel's own header
-        // (crest + name + close) isn't hidden behind the nav.
-        "fixed bottom-0 right-0 top-12 z-40 flex w-[20rem] max-w-[88vw] flex-col " +
+        // Desktop clears the 48px app header; mobile uses a full-height drawer
+        // so the crest, name, and close button stay reachable above the nav.
+        "fixed bottom-0 right-0 top-0 z-[60] flex w-[20rem] max-w-[88vw] flex-col lg:top-12 lg:z-40 " +
         "border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform " +
         "duration-300 ease-out motion-reduce:transition-none sm:w-[22rem] " +
         (open ? "translate-x-0" : "pointer-events-none translate-x-full")

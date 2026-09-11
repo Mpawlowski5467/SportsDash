@@ -286,7 +286,7 @@ export default function StandingsView() {
   const setupLeaguesQuery = useSetupLeagues();
   const [selected, setSelected] = useState<string | undefined>(undefined);
 
-  const leagues = teamsQuery.data?.leagues ?? [];
+  const leagues = useMemo(() => teamsQuery.data?.leagues ?? [], [teamsQuery.data?.leagues]);
   // Ignore a selection that no longer exists — re-running setup replaces
   // the followed leagues, which would leave `selected` pointing at a 404.
   const leagueId = leagues.some((league) => league.id === selected)

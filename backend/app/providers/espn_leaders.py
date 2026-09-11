@@ -16,6 +16,7 @@ value at that index.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 import httpx
@@ -42,6 +43,7 @@ class LeaderEntry:
     position: str | None
     value: float
     stat_label: str  # unit shown (e.g. "PPG", "HR")
+    photo_url: str | None = None
 
 
 def supports(sport: Sport) -> bool:
@@ -60,12 +62,16 @@ def _label_index(categories_def, category: str, label: str) -> int | None:
 
 
 def _value_at(athlete_block, category: str, index: int) -> float | None:
-    for cat in athlete_block.get("categories") or []:
+    categories = athlete_block.get("categories")
+    if not isinstance(categories, list) or index < 0:
+        return None
+    for cat in categories:
         if isinstance(cat, dict) and cat.get("name") == category:
             totals = cat.get("totals")
             if isinstance(totals, list) and index < len(totals):
                 try:
-                    return float(str(totals[index]).replace(",", ""))
+                    value = float(str(totals[index]).replace(",", ""))
+                    return value if math.isfinite(value) else None
                 except (ValueError, TypeError):
                     return None
             return None
@@ -107,7 +113,10 @@ async def fetch_league_leaders(
         return []
 
     out: list[LeaderEntry] = []
-    for block in data.get("athletes") or []:
+    athletes = data.get("athletes")
+    if not isinstance(athletes, list):
+        return []
+    for block in athletes:
         if not isinstance(block, dict):
             continue
         athlete = block.get("athlete")
@@ -123,6 +132,8 @@ async def fetch_league_leaders(
         position = athlete.get("position")
         pos_abbr = position.get("abbreviation") if isinstance(position, dict) else None
         team = athlete.get("teamShortName")
+        headshot = athlete.get("headshot")
+        photo = headshot.get("href") if isinstance(headshot, dict) else headshot
         out.append(
             LeaderEntry(
                 athlete_id=athlete_id,
@@ -131,6 +142,9 @@ async def fetch_league_leaders(
                 position=pos_abbr if isinstance(pos_abbr, str) else None,
                 value=value,
                 stat_label=unit,
+                photo_url=photo
+                if isinstance(photo, str) and photo.startswith("https://")
+                else None,
             )
         )
     return out

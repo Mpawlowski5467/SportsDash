@@ -398,6 +398,7 @@ class StatLeaderOut(BaseModel):
     player_id: str
     name: str
     position: str | None = None
+    photo_url: str | None = None
     team_id: str = ""  # internal slug when on a followed team, else ""
     team_name: str
     team_logo_url: str | None = None

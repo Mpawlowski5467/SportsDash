@@ -73,7 +73,7 @@ export interface MapVenueGroup {
  * returns true when a flight cinematic starts, so the modal never covers
  * the flight). Mirrors MapTeamPanel's drawer chrome (always mounted so it
  * animates both ways; portaled to body so the view's transform doesn't
- * trap it; `top-12` clears the sticky header).
+ * trap it; the desktop panel clears the header, while mobile uses a full-height drawer).
  */
 export default function MapVenueGamesPanel({
   venue,
@@ -106,7 +106,7 @@ export default function MapVenueGamesPanel({
   // listener would close both layers on one keypress).
   useTopmostEsc(onClose, open);
 
-  const games = shown?.games ?? [];
+  const games = useMemo(() => shown?.games ?? [], [shown?.games]);
 
   // Pre-game / live lines for the listed games (favorite chip per row). Only
   // scheduled & in-progress games carry a meaningful line, so we skip finals.
@@ -134,7 +134,7 @@ export default function MapVenueGamesPanel({
           aria-hidden={!open}
           inert={!open}
           className={
-            "fixed bottom-0 right-0 top-12 z-40 flex w-[20rem] max-w-[88vw] flex-col " +
+            "fixed bottom-0 right-0 top-0 z-[60] flex w-[20rem] max-w-[88vw] flex-col lg:top-12 lg:z-40 " +
             "border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform " +
             "duration-300 ease-out motion-reduce:transition-none sm:w-[22rem] " +
             (open ? "translate-x-0" : "pointer-events-none translate-x-full")

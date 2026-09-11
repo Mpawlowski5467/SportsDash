@@ -2,9 +2,28 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 
-from app.services import tsdb_client
+from app.providers import registry
+from app.services import cache, http_client, tsdb_client
+
+
+@pytest.fixture(autouse=True)
+async def _close_shared_clients(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
+    """Each test owns a loop; pooled clients must close before that loop does.
+
+    API fixtures do not run the production lifespan. Mirror its outbound
+    client cleanup so a keep-alive socket cannot leak into a later test.
+    Depending on monkeypatch keeps installed test clients in place until
+    after this cleanup.
+    """
+    yield
+    await registry.close_all()
+    await cache.close_cache()
+    await tsdb_client.close_client()
+    await http_client.close_all()
 
 
 @pytest.fixture(autouse=True)

@@ -280,11 +280,15 @@ async def _attach_player_photos(
     we resolve a cutout from TheSportsDB's purpose-built ``searchplayers``
     (passing the club so a shared name resolves to the right player).
     Concurrency + rate are bounded inside :func:`player_photos.lookup_photo`,
-    which retries 429s and — crucially — does NOT cache a transient failure,
+    which skips 429s without caching the transient failure,
     so a squad fills in across a few daily refreshes instead of a brief 429
     storm denying everyone a face.  Best-effort: any miss leaves it ``None``.
     """
-    targets = [p for p in roster.players if not p.photo_url][:_PHOTO_BACKFILL_MAX_PLAYERS]
+    missing = [p for p in roster.players if not p.photo_url]
+    # Rotate the bounded batch daily, including without Redis. Persistent
+    # misses near the front of a squad must not starve its remaining players.
+    offset = utcnow().date().toordinal() % len(missing) if missing else 0
+    targets = (missing[offset:] + missing[:offset])[:_PHOTO_BACKFILL_MAX_PLAYERS]
     if not targets:
         return roster
 
@@ -412,7 +416,9 @@ async def _notify_player_status(team_id: str, league_id: str, updates: list[_Sta
         logger.exception("roster sync: player-status notify failed for %r", team_id)
 
 
-def _carry_forward_enrichment(stored: list[PlayerORM], fetched: domain.Roster) -> domain.Roster:
+def _carry_forward_enrichment(
+    stored: list[PlayerORM], fetched: domain.Roster, *, preserve_stats: bool = True
+) -> domain.Roster:
     """Keep stored stat lines / headshots a cheap fetch didn't ask for.
 
     ``replace_roster`` deletes and reinserts every player column, so a fetch
@@ -436,10 +442,12 @@ def _carry_forward_enrichment(stored: list[PlayerORM], fetched: domain.Roster) -
             return player
         return replace(
             player,
-            stat_line=player.stat_line if player.stat_line is not None else row.stat_line,
+            stat_line=(
+                row.stat_line if preserve_stats and player.stat_line is None else player.stat_line
+            ),
             career_stat_line=(
                 player.career_stat_line
-                if player.career_stat_line is not None
+                if not preserve_stats or player.career_stat_line is not None
                 else row.career_stat_line
             ),
             photo_url=player.photo_url or row.photo_url,
@@ -473,17 +481,29 @@ async def _sync_team_roster(
     if provider is None:
         return
     try:
-        roster = await provider.get_roster(league, team, with_stat_lines=with_stat_lines)
+        try:
+            roster = await provider.get_roster(league, team, with_stat_lines=with_stat_lines)
+        except Exception:
+            logger.exception("roster source unavailable for %r — keeping stored roster", team.id)
+            if backfill_photos and league.sport is Sport.SOCCER:
+                await _backfill_stored_photos(team, league.sport.value)
+            return
+        # Retain proven headshots BEFORE selecting the next photo batch. A
+        # full ESPN fetch often omits these, and a TSDB outage must not erase
+        # them. Only cheap status fetches also retain missing stat lines;
+        # a full season refresh must be free to clear last season's stats.
+        async with session_scope() as session:
+            roster = _carry_forward_enrichment(
+                await repository.get_roster(session, roster.team_id),
+                roster,
+                preserve_stats=not with_stat_lines,
+            )
         # Soccer-only photo fallback: ESPN gives soccer clubs headshots for
         # ~2 of 38 players, so backfill the rest from TheSportsDB (capped +
         # cached) before storing.
         if backfill_photos and league.sport is Sport.SOCCER:
             roster = await _attach_player_photos(roster, team, league.sport.value)
         async with session_scope() as session:
-            if not (with_stat_lines and backfill_photos):
-                roster = _carry_forward_enrichment(
-                    await repository.get_roster(session, roster.team_id), roster
-                )
             await repository.replace_roster(session, roster)
         logger.info("roster sync: %s — %d player(s)", team.id, len(roster.players))
         # Diff the FETCHED roster against each follow's own last-notified
@@ -495,6 +515,32 @@ async def _sync_team_roster(
             await _notify_player_status(team.id, league.id, updates)
     except Exception:
         logger.exception("roster sync: failed for team %r — skipping", team.id)
+
+
+async def _backfill_stored_photos(team: domain.Team, sport: str) -> None:
+    """Photos can recover independently of the roster provider.
+
+    Only fill still-empty photo columns after the network calls. Do not
+    replace the squad, change injury status, or mark an old roster fresh.
+    """
+    async with session_scope() as session:
+        stored = await repository.get_roster(session, team.id)
+        snapshot = domain.Roster(
+            team_id=team.id,
+            fetched_at=utcnow(),
+            players=tuple(
+                domain.Player(id=p.id, team_id=team.id, name=p.name, photo_url=p.photo_url)
+                for p in stored
+            ),
+        )
+    enriched = await _attach_player_photos(snapshot, team, sport)
+    photos = {p.id: p.photo_url for p in enriched.players if p.photo_url}
+    if not photos:
+        return
+    async with session_scope() as session:
+        for player in await repository.get_roster(session, team.id):
+            if not player.photo_url and player.id in photos:
+                player.photo_url = photos[player.id]
 
 
 async def _followed_players_by_team() -> dict[str, dict[str, str | None]]:

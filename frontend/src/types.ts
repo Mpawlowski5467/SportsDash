@@ -370,6 +370,7 @@ export interface StatLeader {
   player_id: string;
   name: string;
   position: string | null;
+  photo_url: string | null;
   team_id: string;
   team_name: string;
   team_logo_url: string | null;

@@ -4,6 +4,9 @@
  * markers take a plain element, so these are document.createElement
  * builders, not React components.
  */
+import { PLANE_SVG, fanSvg } from "./figures";
+export { PLANE_SVG } from "./figures";
+
 import type { MapTeam } from "../../types";
 import type { MapVenueGroup } from "../../components/MapVenueGamesPanel";
 import { formatShortDate } from "../../lib/time";
@@ -76,9 +79,10 @@ export function createMarkerElement(
   wrap.appendChild(el);
   const badge = document.createElement("div");
   // Same airliner as the map planes, shrunk to badge size (static markup).
-  badge.innerHTML = PLANE_SVG.replace('width="22" height="27"', 'width="11" height="14"');
+  badge.innerHTML = PLANE_SVG.replace('width="30" height="35"', 'width="16" height="19"');
   badge.title = "Traveling to an away game";
   badge.style.cssText =
+    `color:${pinFill};` +
     "position:absolute;top:-7px;right:-7px;line-height:0;" +
     "filter:drop-shadow(0 0 2px rgba(0,0,0,0.75));" +
     "pointer-events:none;";
@@ -230,100 +234,20 @@ export function createClusterTooltipElement(
   return root;
 }
 
-// A top-down airliner planform pointing NORTH (up); rotate by the compass
-// bearing to aim it along the route. The airframe is vertically centered so
-// the CSS rotate pivot (50% 50%) stays on the body, and the three fading
-// dashes south of the tail are a contrail that trails behind it in flight.
-// Two-tone wings + a dark outline keep it legible on any basemap.
-export const PLANE_SVG =
-  '<svg viewBox="0 0 32 40" width="22" height="27" aria-hidden="true">' +
-  '<g stroke="rgba(9,9,11,0.72)" stroke-width="0.75">' +
-  '<path fill="#e7e7ea" d="M17.4 12.3 27.9 20.7c.6.5.6 1.4-.2 1.6l-10.1-2.6z"/>' +
-  '<path fill="#e7e7ea" d="M14.6 12.3 4.1 20.7c-.6.5-.6 1.4.2 1.6l10.1-2.6z"/>' +
-  '<path fill="#e7e7ea" d="M17.3 23.1l5.3 4.2c.4.4.3 1.1-.3 1.2l-4.8-1z"/>' +
-  '<path fill="#e7e7ea" d="M14.7 23.1l-5.3 4.2c-.4.4-.3 1.1.3 1.2l4.8-1z"/>' +
-  '<rect fill="#d4d4d8" x="20.5" y="15.6" width="2.1" height="4.8" rx="1.05"/>' +
-  '<rect fill="#d4d4d8" x="9.4" y="15.6" width="2.1" height="4.8" rx="1.05"/>' +
-  '<path fill="#fafafa" d="M16 3.4c1.4 0 2 1.5 2 3.2l.1 17.2c0 2.5-.8 4.6-2.1 4.6s-2.1-2.1-2.1-4.6l.1-17.2c0-1.7.6-3.2 2-3.2z"/>' +
-  "</g>" +
-  '<g stroke="#fafafa" stroke-width="1.3" stroke-linecap="round">' +
-  '<line x1="16" y1="30" x2="16" y2="31.8" opacity="0.5"/>' +
-  '<line x1="16" y1="32.7" x2="16" y2="34.1" opacity="0.32"/>' +
-  '<line x1="16" y1="35" x2="16" y2="36.1" opacity="0.18"/>' +
-  "</g></svg>";
-
 /** A plane marker element (div + rotatable inner SVG glyph). */
-export function createPlaneElement(): { el: HTMLDivElement; glyph: HTMLElement } {
+export function createPlaneElement(color = DEFAULT_COLOR): { el: HTMLDivElement; glyph: HTMLElement } {
   const el = document.createElement("div");
   el.className = "sd-map-plane";
+  el.style.color = color;
   el.style.pointerEvents = "none";
   // Pure decoration, and unclickable — but MapLibre files every marker it
   // adopts as a role="button", so hide it or a screen reader meets one
   // nameless button per plane in flight.
   el.setAttribute("aria-hidden", "true");
+  el.setAttribute("role", "presentation");
   el.innerHTML = PLANE_SVG;
   return { el, glyph: el.firstElementChild as HTMLElement };
 }
-
-// Side-profile walking figures facing RIGHT (viewBox 0 0 24 30). The jersey,
-// cap, and scarf are `currentColor` so each fan wears its team's colors;
-// head/hands are a warm neutral, pants dark. The `.sd-leg-*` / `.sd-arm`
-// classes let CSS swing the limbs (see map.css) — a real walk cycle, not a
-// sliding icon.
-const FAN_SKIN = "#dfb28c";
-const FAN_PANTS = "#3f3f46";
-
-/** Cap + head shared by the cap-wearing variants. */
-const FAN_HEAD_CAP =
-  '<path fill="currentColor" d="M8.7 5.5c0-2.3 1.5-3.7 3.3-3.7s3.3 1.4 3.3 3.7v.6H8.7z"/>' +
-  '<path fill="currentColor" d="M15.1 5.1l3.4.7c.5.1.5.9 0 1l-3.4-.2z"/>' +
-  `<circle cx="12" cy="8.7" r="2.7" fill="${FAN_SKIN}"/>`;
-
-/** Both legs; CSS alternates them around the hip. */
-const FAN_LEGS =
-  `<path class="sd-leg-b" d="M11.3 17.6 10.8 26.4" stroke="${FAN_PANTS}" stroke-width="2.4" stroke-linecap="round"/>` +
-  `<path class="sd-leg-f" d="M12.7 17.6 13.2 26.4" stroke="${FAN_PANTS}" stroke-width="2.4" stroke-linecap="round"/>`;
-
-/** Team jersey with a sleeve stripe. */
-const FAN_JERSEY =
-  '<path fill="currentColor" d="M9.2 12.6c0-1 .8-1.5 2.8-1.5s2.8.5 2.8 1.5l.3 4.5c0 .7-.5 1.2-1.2 1.2h-3.8c-.7 0-1.2-.5-1.2-1.2z"/>' +
-  '<rect x="9.1" y="13.4" width="6.1" height="1.05" fill="rgba(255,255,255,0.85)"/>';
-
-const FAN_SWING_ARM = `<path class="sd-arm" d="M13.3 12.6c1.4 1.2 2 3 1.9 5.3" stroke="${FAN_SKIN}" stroke-width="2.1" stroke-linecap="round" fill="none"/>`;
-
-// A mixed crowd instead of one repeated figure: walker, scarf held
-// overhead, flag waver, and a kid with a backpack.
-const FAN_GLYPHS = [
-  // walking to the gates
-  FAN_HEAD_CAP + FAN_JERSEY + FAN_SWING_ARM + FAN_LEGS,
-  // scarf up — the scarf owns the top, so this one wears no cap
-  `<circle cx="12" cy="8.2" r="2.7" fill="${FAN_SKIN}"/>` +
-    FAN_JERSEY +
-    `<path d="M13.3 12.2c1.7-1.9 2.6-4 2.9-6.2" stroke="${FAN_SKIN}" stroke-width="1.9" stroke-linecap="round" fill="none"/>` +
-    `<path d="M10.7 12.2C9 10.3 8.1 8.2 7.8 6" stroke="${FAN_SKIN}" stroke-width="1.9" stroke-linecap="round" fill="none"/>` +
-    `<circle cx="7.7" cy="5.2" r="1" fill="${FAN_SKIN}"/>` +
-    `<circle cx="16.3" cy="5.2" r="1" fill="${FAN_SKIN}"/>` +
-    '<rect x="6.1" y="1.4" width="11.8" height="2.5" rx="1.1" fill="currentColor"/>' +
-    '<rect x="9.2" y="1.4" width="1.1" height="2.5" fill="rgba(255,255,255,0.85)"/>' +
-    '<rect x="12.9" y="1.4" width="1.1" height="2.5" fill="rgba(255,255,255,0.85)"/>' +
-    FAN_LEGS,
-  // waving a flag
-  FAN_HEAD_CAP +
-    FAN_JERSEY +
-    `<path d="M10.8 12.6c-1.1 1.4-1.6 3.1-1.4 5.1" stroke="${FAN_SKIN}" stroke-width="1.9" stroke-linecap="round" fill="none"/>` +
-    `<path d="M13.2 12.3c1.6-1.5 2.3-3 2.5-4.7" stroke="${FAN_SKIN}" stroke-width="1.9" stroke-linecap="round" fill="none"/>` +
-    '<line x1="15.8" y1="7.6" x2="16.6" y2="1.6" stroke="#a1a1aa" stroke-width="0.9"/>' +
-    '<path fill="currentColor" d="M16.6 1.6c1.7-.3 3.3.5 5.1.9l-.1 3.3c-1.8-.4-3.4-1.2-5.1-.9z"/>' +
-    FAN_LEGS,
-  // kid with a backpack — the pack juts out behind, lighter than the pants
-  // so it reads against dark basemaps
-  FAN_HEAD_CAP +
-    '<rect x="6.1" y="11.6" width="3.1" height="5" rx="1.3" fill="#71717a"/>' +
-    '<rect x="6.1" y="12.9" width="3.1" height="1" fill="#52525b"/>' +
-    FAN_JERSEY +
-    FAN_SWING_ARM +
-    FAN_LEGS,
-];
 
 /** A "fan" marker element: a small walking figure heading to the stadium.
  *  `variant` picks one of several figures (so the crowd is mixed), `color`
@@ -344,15 +268,13 @@ export function createFanElement(
   // Decoration, like the planes: a crowd of dozens must not become a crowd of
   // buttons in the accessibility tree (see createPlaneElement).
   el.setAttribute("aria-hidden", "true");
-  const glyph =
-    FAN_GLYPHS[((variant % FAN_GLYPHS.length) + FAN_GLYPHS.length) % FAN_GLYPHS.length];
-  const width = Math.round(size * 0.8); // viewBox is 24x30
-  el.innerHTML = `<svg viewBox="0 0 24 30" width="${width}" height="${size}" aria-hidden="true">${glyph}</svg>`;
+  el.setAttribute("role", "presentation");
+  el.innerHTML = fanSvg(variant, size);
   const svg = el.firstElementChild as HTMLElement;
-  svg.style.animationDelay = `${delaySec}s`;
+  svg.style.animationDelay = `${-Math.abs(delaySec)}s`;
   // Desync the limb swing per fan, not just the whole-figure bob.
   for (const part of svg.querySelectorAll<HTMLElement>(".sd-leg-f, .sd-leg-b, .sd-arm")) {
-    part.style.animationDelay = `${delaySec}s`;
+    part.style.animationDelay = `${-Math.abs(delaySec)}s`;
   }
   return el;
 }

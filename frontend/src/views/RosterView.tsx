@@ -123,7 +123,7 @@ export default function RosterView() {
   const teamsQuery = useTeams();
   const [selected, setSelected] = useState<string | undefined>(undefined);
 
-  const teams = teamsQuery.data?.teams ?? [];
+  const teams = useMemo(() => teamsQuery.data?.teams ?? [], [teamsQuery.data?.teams]);
   // Ignore a selection that no longer exists — re-running setup replaces
   // the followed teams, which would leave `selected` pointing at a 404.
   const teamId = teams.some((team) => team.id === selected)

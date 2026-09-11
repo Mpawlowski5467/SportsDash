@@ -3,8 +3,10 @@
 A thin wrapper around an httpx GET that retries *transient* failures —
 connection errors, timeouts, and ``429``/``5xx`` responses — with
 exponential backoff and a little jitter, honoring a ``429``'s
-``Retry-After`` header when present.  Permanent failures (e.g. ``404``) are
-not retried and are returned for the caller to handle, while exhausted
+``Retry-After`` header when present. Access denials (401/403) raise without
+retrying, so a blocked source cannot masquerade as an empty successful
+refresh. Other permanent failures (e.g. ``404``) are not retried and are
+returned for the caller to handle, while exhausted
 retries raise :class:`TransientProviderError` — a non-``httpx`` type the
 providers' ``except httpx.HTTPError`` degrade-blocks do not catch, so a
 sustained outage propagates to the per-provider circuit breaker instead of
@@ -40,6 +42,15 @@ class TransientProviderError(RuntimeError):
     """
 
 
+class ProviderAccessError(RuntimeError):
+    """The source refused access; never treat this as an empty data set.
+
+    Separate from HTTPError so adapters' optional/not-found handlers cannot
+    turn a denial into a successful refresh. Do not retry or change endpoints
+    to get around it; let the circuit breaker and normal refresh cadence act.
+    """
+
+
 async def get_with_retry(
     client: httpx.AsyncClient,
     url: str,
@@ -57,7 +68,8 @@ async def get_with_retry(
     ``Retry-After`` on a ``429``.  On give-up — a connection/timeout error or
     a still-retryable status after the last attempt — it raises
     :class:`TransientProviderError` so the provider's circuit breaker counts
-    the failure.  Non-retryable statuses (e.g. ``404``) are returned
+    the failure. Access denials raise ProviderAccessError immediately.
+    Other non-retryable statuses (e.g. ``404``) are returned
     unchanged; ``raise_for_status`` is intentionally left to the caller so a
     genuine not-found still degrades to ``None`` without tripping the breaker.
     """
@@ -83,6 +95,9 @@ async def get_with_retry(
             await asyncio.sleep(delay)
             attempt += 1
             continue
+
+        if response.status_code in {401, 403}:
+            raise ProviderAccessError(f"{label} GET {url} -> {response.status_code}: access denied")
 
         if response.status_code in _RETRY_STATUS:
             if attempt < max_retries:

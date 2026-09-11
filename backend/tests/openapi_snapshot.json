@@ -2683,6 +2683,17 @@
             "title": "Name",
             "type": "string"
           },
+          "photo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Photo Url"
+          },
           "player_id": {
             "title": "Player Id",
             "type": "string"

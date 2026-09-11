@@ -1206,34 +1206,37 @@ async def test_attach_player_photos_backfills_missing_only_and_caps(
     """Only photoless players are looked up, capped, and a no-match stays None."""
     monkeypatch.setattr(scheduler_refresh, "_PHOTO_BACKFILL_MAX_PLAYERS", 2)
 
+    today = utcnow()
+    first_batch_day = today - timedelta(days=today.date().toordinal() % 3)
+    monkeypatch.setattr(scheduler_refresh, "utcnow", lambda: first_batch_day)
     looked_up: list[str] = []
 
     async def fake_lookup_photo(name, *, team_name=None, sport=None):
         looked_up.append(name)
-        assert team_name == "Chelsea" and sport == "soccer"
+        assert team_name == "Harbor FC" and sport == "soccer"
         return None if name == "No Article" else f"https://img/{name}.jpg"
 
     monkeypatch.setattr(jobs.player_photos, "lookup_photo", fake_lookup_photo)
 
     team = domain.Team(
-        id="chelsea",
-        league_id="eng.1",
-        name="Chelsea",
+        id="harbor-fc",
+        league_id="harbor-league",
+        name="Harbor FC",
         abbreviation="CHE",
         provider_key="363",
     )
     players = (
         domain.Player(
             id="p0",
-            team_id="chelsea",
+            team_id="harbor-fc",
             name="Has Photo",
             photo_url="https://espn/x.jpg",
         ),
-        domain.Player(id="p1", team_id="chelsea", name="No Article"),
-        domain.Player(id="p2", team_id="chelsea", name="Cole Palmer"),
-        domain.Player(id="p3", team_id="chelsea", name="Beyond Cap"),
+        domain.Player(id="p1", team_id="harbor-fc", name="No Article"),
+        domain.Player(id="p2", team_id="harbor-fc", name="Rowan Vale"),
+        domain.Player(id="p3", team_id="harbor-fc", name="Beyond Cap"),
     )
-    roster = domain.Roster(team_id="chelsea", players=players, fetched_at=utcnow())
+    roster = domain.Roster(team_id="harbor-fc", players=players, fetched_at=utcnow())
 
     result = await jobs._attach_player_photos(roster, team, "soccer")
     by_id = {p.id: p.photo_url for p in result.players}
@@ -1242,11 +1245,18 @@ async def test_attach_player_photos_backfills_missing_only_and_caps(
     assert "Has Photo" not in looked_up
     assert by_id["p0"] == "https://espn/x.jpg"
     # First two photoless players are queried; a no-match returns None.
-    assert looked_up == ["No Article", "Cole Palmer"]
+    assert looked_up == ["No Article", "Rowan Vale"]
     assert by_id["p1"] is None
-    assert by_id["p2"] == "https://img/Cole Palmer.jpg"
+    assert by_id["p2"] == "https://img/Rowan Vale.jpg"
     # Beyond the cap — never looked up, stays photoless.
     assert by_id["p3"] is None
+
+    # Advancing the date gives the player beyond the cap a turn, even if
+    # the first candidate never has a photo and Redis is unavailable.
+    monkeypatch.setattr(scheduler_refresh, "utcnow", lambda: first_batch_day + timedelta(days=1))
+    looked_up.clear()
+    await jobs._attach_player_photos(roster, team, "soccer")
+    assert "Beyond Cap" in looked_up
 
 
 # ---------------------------------------------------------------------------

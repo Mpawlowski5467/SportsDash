@@ -298,14 +298,14 @@ export default function Layout({
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <header className="sticky top-0 z-50 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur">
-        <div className="mx-auto flex h-12 max-w-[1600px] items-center gap-4 px-4">
-          <span className="select-none whitespace-nowrap text-base font-bold tracking-tight">
+        <div className="mx-auto flex min-h-12 max-w-[1600px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 lg:h-12 lg:flex-nowrap lg:gap-4 lg:py-0">
+          <span className="shrink-0 select-none whitespace-nowrap text-base font-bold tracking-tight">
             Sports<span className="text-amber-400">Dash</span>
           </span>
 
           <nav
             aria-label="Sections"
-            className="flex min-w-0 items-center gap-1 overflow-x-auto"
+            className="order-last flex w-full min-w-0 items-center gap-1 overflow-x-auto pb-1 lg:order-none lg:w-auto lg:pb-0"
           >
             {TABS.map((tab) => {
               const isActive = tab.id === active;
@@ -317,8 +317,8 @@ export default function Layout({
                   aria-current={isActive ? "page" : undefined}
                   className={
                     isActive
-                      ? "whitespace-nowrap rounded-full bg-zinc-800 px-3 py-1 text-sm font-medium text-zinc-100 transition-colors"
-                      : "whitespace-nowrap rounded-full px-3 py-1 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
+                      ? "shrink-0 whitespace-nowrap rounded-full bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 transition-colors lg:py-1"
+                      : "shrink-0 whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200 lg:py-1"
                   }
                 >
                   {tab.label}
@@ -343,7 +343,7 @@ export default function Layout({
               </span>
               Kiosk
               {secondsLeft !== null && (
-                <span className="tabular-nums text-amber-400/70">
+                <span className="hidden tabular-nums text-amber-400/70 sm:inline">
                   next in {secondsLeft}s
                 </span>
               )}

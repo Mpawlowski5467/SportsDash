@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { leagueFallbackColor } from "./GameCard";
 import TeamLogo from "./TeamLogo";
+import PlayerAvatar from "./PlayerAvatar";
 
 /**
  * Roster-derived, sport-specific projected lineups for a matchup. The backend
@@ -233,12 +234,14 @@ function PlayerChip({ slot, color }: { slot: LineupSlot; color: string }) {
   const shadow = { textShadow: "0 1px 3px rgba(0,0,0,0.9)" };
   return (
     <div className="flex w-16 flex-col items-center gap-0.5 text-center">
-      <span
-        className="mb-0.5 flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold tabular-nums text-white shadow-sm ring-1 ring-black/40"
-        style={{ backgroundColor: color }}
-      >
-        {slot.player.jersey_number ?? slot.role}
-      </span>
+      <div className="relative mb-1 rounded-full ring-2" style={{ color }}>
+        <PlayerAvatar photoUrl={slot.player.photo_url} name={slot.player.name} />
+        {slot.player.jersey_number && (
+          <span className="absolute -bottom-1 -right-1 rounded-full px-1 text-[9px] font-bold text-white ring-1 ring-white/40" style={{ backgroundColor: color }}>
+            {slot.player.jersey_number}
+          </span>
+        )}
+      </div>
       <span
         className="max-w-full truncate text-[11px] font-medium leading-tight text-white"
         style={shadow}

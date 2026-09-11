@@ -576,7 +576,7 @@ async def test_leaders_fresh_board_is_cached_unstamped(
     assert resp.status_code == 200
     assert resp.json()["rows"][0]["followed"] is True
     # The cached copy must NOT carry the per-request flag.
-    assert stored[f"leaders:{LEAGUE_ID}"]["rows"][0]["followed"] is False
+    assert stored[f"leaders:v2:{LEAGUE_ID}"]["rows"][0]["followed"] is False
 
 
 async def test_leaders_roster_board_stamps_followed(
@@ -1440,3 +1440,61 @@ async def test_team_ids_with_games_starting_within_window_only(
             session, utcnow(), timedelta(hours=4)
         )
     assert found == {TEAM_ID}
+
+
+async def test_full_roster_refresh_keeps_photos_and_allows_season_stats_to_reset(
+    db,
+    patched_scope,
+    fake_provider,
+):
+    await _seed_pregame_scenario(db)
+    fake_provider.rosters[TEAM_ID] = _roster(
+        _player(ATHLETE_ID, "Rooke Marshwood", status=PlayerStatus.OUT),
+        _player(OTHER_ATHLETE_ID, "Sable Quillan", photo_url="https://img.example/new.png"),
+    )
+    await scheduler_refresh._sync_team_roster(LEAGUE, TEAM, {})
+    rows = await _stored_players(db)
+    kept = rows[f"espn:{ATHLETE_ID}"]
+    assert kept.photo_url == "https://img.example/rooke.png"
+    assert kept.status == PlayerStatus.OUT.value
+    assert kept.stat_line is None
+    assert kept.career_stat_line is None
+    assert rows[f"espn:{OTHER_ATHLETE_ID}"].photo_url == "https://img.example/new.png"
+
+
+async def test_missing_soccer_photos_backfill_when_roster_provider_is_down(
+    db,
+    patched_scope,
+    fake_provider,
+    monkeypatch,
+):
+    from dataclasses import replace
+
+    await _seed_pregame_scenario(db)
+    await _seed_roster(
+        db,
+        _roster(
+            _player(ATHLETE_ID, "Rooke Marshwood", photo_url="https://img.example/kept.png"),
+            _player(OTHER_ATHLETE_ID, "Sable Quillan", status=PlayerStatus.OUT, stat_line="3 G"),
+        ),
+    )
+    async with db() as session:
+        before = (await session.get(TeamORM, TEAM_ID)).roster_updated_at
+    fake_provider.roster_errors.add(TEAM_ID)
+    requested = []
+
+    async def photo(name, **kwargs):
+        requested.append(name)
+        return "https://img.example/sable.png"
+
+    monkeypatch.setattr(scheduler_refresh.player_photos, "lookup_photo", photo)
+    await scheduler_refresh._sync_team_roster(replace(LEAGUE, sport=domain.Sport.SOCCER), TEAM, {})
+    rows = await _stored_players(db)
+    assert requested == ["Sable Quillan"]
+    assert rows[f"espn:{ATHLETE_ID}"].photo_url == "https://img.example/kept.png"
+    sable = rows[f"espn:{OTHER_ATHLETE_ID}"]
+    assert sable.photo_url == "https://img.example/sable.png"
+    assert sable.status == "out"
+    assert sable.stat_line == "3 G"
+    async with db() as session:
+        assert (await session.get(TeamORM, TEAM_ID)).roster_updated_at == before

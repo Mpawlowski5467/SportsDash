@@ -15,7 +15,7 @@ import httpx
 
 from app import timeutil
 from app.config import get_settings
-from app.providers.http_util import TransientProviderError, get_with_retry
+from app.providers.http_util import ProviderAccessError, TransientProviderError, get_with_retry
 from app.models.domain import (
     INDIVIDUAL_SPORTS,
     LEADERBOARD_SPORTS,
@@ -343,6 +343,10 @@ class EspnProvider:
         for params in param_sets:
             try:
                 data = await self._get_json(url, params=params)
+            except ProviderAccessError:
+                # A denied source is not a missing half-schedule. Preserve
+                # the stored snapshot and let the breaker count the failure.
+                raise
             except Exception as exc:
                 logger.warning(
                     "ESPN schedule call failed for team %s (params=%s): %s",

@@ -41,17 +41,17 @@ export function useTicker(): [boolean, () => void] {
   }, []);
 
   const toggle = useCallback(() => {
-    setVisible((prev) => {
-      const next = !prev;
-      try {
-        window.localStorage.setItem(TICKER_KEY, next ? "1" : "0");
-      } catch {
-        // Private mode / storage disabled — keep the in-memory state.
-      }
-      window.dispatchEvent(new Event(TICKER_EVENT));
-      return next;
-    });
-  }, []);
+    const next = !visible;
+    try {
+      window.localStorage.setItem(TICKER_KEY, next ? "1" : "0");
+    } catch {
+      // Private mode / storage disabled — keep the in-memory state.
+    }
+    // Dispatch from the event handler, never a React state updater: updaters
+    // may run during rendering or twice in StrictMode, updating other views.
+    window.dispatchEvent(new Event(TICKER_EVENT));
+    setVisible(next);
+  }, [visible]);
 
   return [visible, toggle];
 }

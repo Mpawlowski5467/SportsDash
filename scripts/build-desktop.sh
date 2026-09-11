@@ -65,18 +65,30 @@ mkdir -p "$STAGE_DIR"
 cp -R "$ROOT/backend/dist/sportsdash-backend/" "$STAGE_DIR/"
 chmod +x "$STAGE_DIR/sportsdash-backend"
 
+# Old onefile builds left a regular file at Tauri's resource destination.
+# The onedir bundle now needs that path to be a directory; otherwise the
+# Rust build fails with "Not a directory" while copying its first library.
+# Only remove the obsolete generated file, never a current bundle directory.
+for profile in debug release; do
+  LEGACY_RESOURCE="$ROOT/frontend/src-tauri/target/$profile/sportsdash-backend"
+  if [ -f "$LEGACY_RESOURCE" ]; then
+    echo "==> Removing obsolete onefile resource: $LEGACY_RESOURCE"
+    rm -f "$LEGACY_RESOURCE"
+  fi
+done
+
 # GitHub Actions can set a step's env vars but never omit one, so on a repo
 # without the signing secrets the APPLE_* vars arrive as empty strings —
 # which Tauri reads as "configured" and then fails on. Drop the empties so
-# an unsigned build looks exactly like a local one.
+# the ad-hoc fallback works exactly like a local build.
 for var in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
   APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
   [ -n "${!var:-}" ] || unset "$var"
 done
 
 # Sign locally when a Developer ID certificate is in the keychain and no
-# identity was chosen explicitly; otherwise build unsigned (Gatekeeper will
-# warn on other machines — see docs/desktop.md "Code signing").
+# identity was chosen explicitly; otherwise seal the complete bundle with an
+# ad-hoc signature (Gatekeeper still warns — see docs/desktop.md).
 if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
   IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
     | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
@@ -84,7 +96,8 @@ if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
     export APPLE_SIGNING_IDENTITY="$IDENTITY"
     echo "==> Code signing as: $IDENTITY"
   else
-    echo "==> No Developer ID certificate found — building UNSIGNED."
+    export APPLE_SIGNING_IDENTITY="-"
+    echo "==> No Developer ID certificate found — using an ad-hoc signature."
   fi
 fi
 
@@ -92,6 +105,11 @@ echo "==> Building SportsDash.app (Tauri)…"
 cd "$ROOT/frontend"
 bun install --frozen-lockfile
 bun tauri build
+
+# The linker signs only the executable; a distributable bundle also needs
+# its Info.plist and resources sealed. Verify the finished package, including
+# the embedded Python backend, rather than accepting compilation alone.
+codesign --verify --deep --strict "$ROOT/frontend/src-tauri/target/release/bundle/macos/SportsDash.app"
 
 echo "==> Done. Bundles in:"
 echo "    $ROOT/frontend/src-tauri/target/release/bundle/"

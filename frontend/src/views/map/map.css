@@ -2,6 +2,8 @@
    animation glyphs. Extracted from MapView.tsx's inline <style> block. */
 
 .sd-map-marker img { pointer-events: none; }
+.sd-map-pin { padding: 0; border: 0; background: transparent; border-radius: 999px; cursor: pointer; }
+.sd-map-pin:focus-visible { outline: 3px solid #fbbf24; outline-offset: 4px; }
 .sd-map-cluster { transition: transform 0.12s ease; }
 .sd-map-cluster:hover { transform: scale(1.08); }
 @media (prefers-reduced-motion: reduce) {
@@ -34,16 +36,16 @@
 .sd-map-plane svg { display: block; }
 .sd-map-plane-cine { color: var(--color-amber-300); }
 .sd-map-plane-cine svg {
-  width: 26px;
-  height: 33px;
+  width: 44px;
+  height: 51px;
   filter: drop-shadow(0 2px 5px rgba(0,0,0,0.6));
 }
 .sd-map-fan {
   line-height: 0;
-  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.6));
+  filter: drop-shadow(0 0 1px rgba(255,255,255,0.9)) drop-shadow(0 1px 1px rgba(0,0,0,0.45));
   will-change: transform, opacity;
 }
-.sd-map-fan svg { display: block; }
+.sd-map-fan svg { display: block; overflow: visible; }
 /* Facing: figures walk right; flip them for fans east of the stadium so
    everyone walks toward the gates. */
 .sd-map-fan-l svg { transform: scaleX(-1); }

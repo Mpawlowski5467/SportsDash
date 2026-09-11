@@ -40,6 +40,7 @@ import maplibregl from "maplibre-gl";
 import type { Map as MaplibreMap } from "maplibre-gl";
 
 import { createFanElement } from "./markers";
+import { fanArrivalMs } from "./motion";
 
 /** Meters per degree of latitude. Routes span a few hundred meters, so the
  *  equirectangular error is far below a pixel at stadium zooms. */
@@ -202,10 +203,10 @@ export function buildCrowdPlan(
         (WALK_MIN_MPS + rand() * (WALK_MAX_MPS - WALK_MIN_MPS)) *
         (0.85 + rand() * 0.3); // ±15% per fan
       fans.push({
-        lateral: (i - (memberCount - 1) / 2) * 7 + (rand() - 0.5) * 4,
-        along: -i * 9 - rand() * 3,
+        lateral: (i - (memberCount - 1) / 2) * 15 + (rand() - 0.5) * 4,
+        along: -i * 16 - rand() * 3,
         speedMps: walk * TIME_SCALE,
-        sizePx: 12.5 + rand() * 3.5,
+        sizePx: 21 + rand() * 5,
         variant: Math.floor(rand() * 100),
         animDelaySec: rand() * 0.5,
       });
@@ -344,6 +345,7 @@ function queryRoadBearingRad(
 interface FanRuntime {
   marker: maplibregl.Marker;
   el: HTMLDivElement;
+  glyph: SVGSVGElement;
   plan: FanPlan;
   clump: ClumpPlan;
   routeM: RouteM;
@@ -407,13 +409,17 @@ export class FanCrowd {
           fan.variant,
           Math.round(fan.sizePx * 2) / 2,
         );
-        el.style.opacity = "0"; // fade in over the first walked meters
+        // MapLibre owns the outer marker's opacity (terrain visibility).
+        // Fade the artwork inside it so camera updates cannot reset the fade.
+        const glyph = el.firstElementChild as SVGSVGElement;
+        glyph.style.opacity = "0";
         const marker = new maplibregl.Marker({ element: el })
           .setLngLat(clump.route[0])
           .addTo(map);
         this.fans.push({
           marker,
           el,
+          glyph,
           plan: fan,
           clump,
           routeM,
@@ -433,7 +439,7 @@ export class FanCrowd {
 
   /** Begin (idempotent). Returns `this` so callers can assign inline. */
   start(): this {
-    if (this.stopped || this.raf !== 0) return this;
+    if (this.stopped || this.raf !== 0 || this.pauseTimer !== 0) return this;
     this.raf = requestAnimationFrame(this.tick);
     return this;
   }
@@ -462,7 +468,7 @@ export class FanCrowd {
       this.pauseTimer = window.setTimeout(() => {
         this.pauseTimer = 0;
         if (this.stopped) return;
-        this.pausedMs += performance.now() - this.parkedAt;
+        if (this.startTs !== 0) this.pausedMs += performance.now() - this.parkedAt;
         this.raf = requestAnimationFrame(this.tick);
       }, PARK_POLL_MS);
       return;
@@ -496,7 +502,7 @@ export class FanCrowd {
   private updateFan(fan: FanRuntime, elapsed: number, zoomFade: number): boolean {
     const t = elapsed - fan.clump.startDelayMs;
     if (t < 0) return true; // waiting for its clump's staggered start
-    const walkMs = (fan.routeM.total / fan.plan.speedMps) * 1000;
+    const walkMs = fanArrivalMs(fan.routeM.total, fan.plan.speedMps, fan.plan.along);
 
     if (t < walkMs) {
       const d = fan.plan.speedMps * (t / 1000) + fan.plan.along;
@@ -508,7 +514,7 @@ export class FanCrowd {
         p.x - dir.y * fan.plan.lateral,
         p.y + dir.x * fan.plan.lateral,
       );
-      this.writeFacing(fan, faceLeftForDir(dir.x));
+      this.writeFacing(fan, this.screenFacing(dir.x, dir.y));
       // Fade in over the first walked meters so spawns never pop.
       const fadeIn = Math.min(
         1,
@@ -533,12 +539,17 @@ export class FanCrowd {
         gate.x + dirX * step - dirY * fan.plan.lateral,
         gate.y + dirY * step + dirX * fan.plan.lateral,
       );
-      this.writeFacing(fan, faceLeftForDir(dirX));
+      this.writeFacing(fan, this.screenFacing(dirX, dirY));
       this.writeOpacity(fan, 0.9 * (1 - enterT / ENTER_MS) * zoomFade);
       return true;
     }
     this.writeOpacity(fan, 0);
     return false;
+  }
+
+  private screenFacing(x: number, y: number): boolean | null {
+    const bearing = this.map.getBearing() * Math.PI / 180;
+    return faceLeftForDir(x * Math.cos(bearing) - y * Math.sin(bearing));
   }
 
   private writePosition(fan: FanRuntime, x: number, y: number): void {
@@ -567,6 +578,6 @@ export class FanCrowd {
     const q = Math.round(opacity / OPACITY_STEP) * OPACITY_STEP;
     if (q === fan.lastOpacity) return;
     fan.lastOpacity = q;
-    fan.el.style.opacity = String(q);
+    fan.glyph.style.opacity = String(q);
   }
 }

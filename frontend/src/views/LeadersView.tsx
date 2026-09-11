@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useLeaders, useScorers, useSetupLeagues, useTeams } from "../hooks";
 import TeamLogo from "../components/TeamLogo";
+import PlayerAvatar from "../components/PlayerAvatar";
 import Select, { type SelectOption } from "../components/Select";
 import StaleBanner from "../components/StaleBanner";
 
@@ -10,7 +11,7 @@ export default function LeadersView() {
   const setupLeaguesQuery = useSetupLeagues();
   const [selected, setSelected] = useState<string | undefined>(undefined);
 
-  const leagues = teamsQuery.data?.leagues ?? [];
+  const leagues = useMemo(() => teamsQuery.data?.leagues ?? [], [teamsQuery.data?.leagues]);
   const leagueId = leagues.some((league) => league.id === selected)
     ? selected
     : leagues[0]?.id;
@@ -158,6 +159,7 @@ export default function LeadersView() {
                 color={row.team_color}
                 size="sm"
               />
+              <PlayerAvatar name={row.name} photoUrl={row.photo_url} />
               <div className="min-w-0 flex-1">
                 <p
                   className={

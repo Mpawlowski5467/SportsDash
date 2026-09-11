@@ -30,6 +30,8 @@ full coverage a keyed provider (e.g. API-Football) would be required.
 from __future__ import annotations
 
 import logging
+import unicodedata
+from urllib.parse import urlsplit
 
 from app.providers.http_util import TransientProviderError
 from app.services import cache, tsdb_client
@@ -50,10 +52,10 @@ async def lookup_photo(
 ) -> str | None:
     """Resolve a player's headshot URL by name; ``None`` on any miss.
 
-    Searches TheSportsDB for ``name``, prefers the candidate whose club /
-    sport matches (so a shared name resolves to the right player), and
-    returns its cutout (then thumb, then render).  Cached per ``(name,
-    team)``; a transient upstream failure returns ``None`` *without* caching
+    Searches TheSportsDB for an exact normalized ``name``, rejects sport
+    mismatches, and uses the club to disambiguate namesakes. Returns a
+    cutout (then thumb, then render). Cached per ``(name, team, sport)``;
+    a transient upstream failure returns ``None`` *without* caching
     so it retries next refresh, while a hit or a genuine miss is cached.
     Never raises.
     """
@@ -61,7 +63,7 @@ async def lookup_photo(
     if not clean:
         return None
 
-    key = f"tsdbphoto:{clean.casefold()}|{(team_name or '').strip().casefold()}"
+    key = f"tsdbphoto:v2:{_identity(clean)}|{_identity(team_name or '')}|{(sport or '').casefold()}"
     cached = await cache.cache_get_json(key)
     if isinstance(cached, dict) and "url" in cached:
         url = cached.get("url")
@@ -78,7 +80,7 @@ async def lookup_photo(
         logger.warning("player_photos: lookup failed for %r — returning None", clean, exc_info=True)
         return None
 
-    url = _pick_photo(payload, team_name, sport)
+    url = _pick_photo(payload, team_name, sport, name=clean)
     await cache.cache_set_json(key, {"url": url}, _SUCCESS_TTL if url else _MISS_TTL)
     return url
 
@@ -108,25 +110,34 @@ async def _search(name: str) -> object | None:
     return response.json()
 
 
-def _pick_photo(payload: object, team_name: str | None, sport: str | None) -> str | None:
+def _pick_photo(
+    payload: object, team_name: str | None, sport: str | None, *, name: str | None = None
+) -> str | None:
     """Choose the best candidate's image URL from a ``searchplayers`` payload.
 
     Filters to the right sport when known, then prefers the candidate whose
-    club matches ``team_name`` (disambiguating shared names); falls back to
-    the first candidate.  Returns its cutout / thumb / render, or ``None``.
+    club matches ``team_name``. Never guess between namesakes or accept a
+    different sport. A unique exact name may have an old club after a transfer.
     """
     players = payload.get("player") if isinstance(payload, dict) else None
     if not isinstance(players, list) or not players:
         return None
     candidates = [p for p in players if isinstance(p, dict)]
+    if name:
+        candidates = [
+            p for p in candidates if _identity(_clean(p.get("strPlayer")) or "") == _identity(name)
+        ]
     if not candidates:
         return None
 
     label = _SPORT_LABEL.get((sport or "").casefold())
     if label is not None:
-        sport_matches = [p for p in candidates if _clean(p.get("strSport")) == label]
-        if sport_matches:
-            candidates = sport_matches
+        candidates = [
+            p
+            for p in candidates
+            if not _clean(p.get("strSport"))
+            or _clean(p.get("strSport")).casefold() == label.casefold()
+        ]
 
     if team_name:
         wanted = team_name.strip().casefold()
@@ -138,12 +149,24 @@ def _pick_photo(payload: object, team_name: str | None, sport: str | None) -> st
         if team_matches:
             candidates = team_matches
 
+    if len(candidates) != 1:
+        return None
     chosen = candidates[0]
-    return (
-        _clean(chosen.get("strCutout"))
-        or _clean(chosen.get("strThumb"))
-        or _clean(chosen.get("strRender"))
-    )
+    for field in ("strCutout", "strThumb", "strRender"):
+        url = _clean(chosen.get(field))
+        if url:
+            try:
+                parsed = urlsplit(url)
+                if parsed.scheme in {"http", "https"} and parsed.hostname:
+                    return url
+            except ValueError:
+                pass
+    return None
+
+
+def _identity(value: str) -> str:
+    """Compare full names across accents, punctuation and whitespace."""
+    return "".join(c for c in unicodedata.normalize("NFKD", value.casefold()) if c.isalnum())
 
 
 def _team_matches(candidate_team: str, wanted: str) -> bool:

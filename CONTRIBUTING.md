@@ -19,6 +19,12 @@ uvicorn app.main:app --reload      # http://localhost:8000
 
 Frontend (Bun + Vite; the dev server proxies `/api` to `localhost:8000`):
 
+Use Node 22 LTS for the frontend tooling (`frontend/.node-version`), or Node
+24 LTS. CI and desktop release builds select the checked-in Node version.
+On Homebrew with `node@22` installed, use
+`export PATH="$(brew --prefix node@22)/bin:$PATH"` before the commands below.
+Newer non-LTS Node releases may emit dependency deprecation notices.
+
 ```sh
 cd frontend
 bun install
@@ -94,8 +100,8 @@ uv pip compile requirements.txt -o requirements.lock --python-version 3.12
 Releasing is one `git push` of a tag — the [release
 workflow](.github/workflows/release.yml) does the rest. Everything before
 that is getting the version right, and the version is the part that bites:
-**it is written in five files, and only two of them fail the build when you
-forget.**
+**it is written in six files; the version-pin and OpenAPI snapshot tests
+check that they agree.**
 
 ### The version lives here
 
@@ -104,8 +110,9 @@ forget.**
 | `backend/app/routes/meta.py` → `APP_VERSION` | — | **The source of truth.** `main.py` passes it to `FastAPI(version=…)` and `GET /api/meta` returns it. Edit this one first. |
 | `frontend/src-tauri/tauri.conf.json` → `version` | `tests/test_api.py::test_app_version_has_one_source_of_truth` | What the desktop bundle ships as, and what names the artifact: `SportsDash_<version>_aarch64.dmg`. |
 | `backend/tests/openapi_snapshot.json` → `info.version` | `tests/test_openapi_snapshot.py` | **Regenerated, never hand-edited** — see below. |
-| `frontend/package.json` → `version` | *nothing* | Drifts silently. |
-| `frontend/src-tauri/Cargo.toml` → `version` | *nothing* | Drifts silently. Tauri takes the version from `tauri.conf.json`, so this one is cosmetic — but it is the version the Rust crate reports, so keep it honest. |
+| `frontend/package.json` → `version` | version-pin test | Frontend package version. |
+| `frontend/src-tauri/Cargo.toml` → `version` | version-pin test | Native crate version. |
+| `frontend/src-tauri/Cargo.lock` → local `app` version | version-pin test + `cargo check --locked` | Run `cargo check --offline` in `frontend/src-tauri` after changing the crate version. |
 
 Two of those failures are worth knowing in advance, because neither message
 names the file you actually have to edit:
@@ -130,7 +137,7 @@ names the file you actually have to edit:
    pushes to `main` and PRs into it — **not on tags**. Pushing `v1.4.0` runs
    the release build and nothing else, so an untested commit will happily
    become a `.dmg`. Check the run for the exact commit you are about to tag.
-2. **Bump the version** in all five files above, then regenerate the OpenAPI
+2. **Bump the version** in all six files above, then regenerate the OpenAPI
    snapshot.
 3. **Run the gates locally** (the same ones in *Before you open a PR*):
 
@@ -162,7 +169,7 @@ names the file you actually have to edit:
    still says the old number, `tauri.conf.json` was missed and the pin test
    was never run against the tagged commit.
 
-Releases ship **unsigned** unless the six `APPLE_*` repository secrets exist;
+Releases use **ad-hoc signing** unless the six `APPLE_*` repository secrets exist;
 the workflow passes them through as empty strings and `build-desktop.sh`
 drops the empty ones, so nothing needs changing either way. See *Code
 signing / Gatekeeper* in [docs/desktop.md](docs/desktop.md).

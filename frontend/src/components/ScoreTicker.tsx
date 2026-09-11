@@ -146,7 +146,7 @@ export default function ScoreTicker() {
   ));
 
   return (
-    <div className="sticky top-12 z-40 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur">
+    <div className="z-40 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur lg:sticky lg:top-12">
       <div
         className={
           "sd-ticker mx-auto max-w-[1600px] " +
