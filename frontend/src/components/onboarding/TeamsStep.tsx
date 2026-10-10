@@ -3,10 +3,19 @@ import { useSetupLeagues, useSetupTeams } from "../../hooks";
 import type { CatalogTeam } from "../../types";
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from "./buttons";
 import { apiErrorMessage } from "./errors";
+import { mergeSelectedTeams } from "./selection";
+
+// One shared empty list, so a league with no picks hands its section the
+// same array every render instead of a fresh one that defeats its memo.
+const NO_TEAMS: CatalogTeam[] = [];
 
 export interface Props {
   leagueIds: string[];
   teamsByLeague: Record<string, CatalogTeam[]>;
+  // The picks the wizard opened on (manage mode), by league. They keep their
+  // cards whether or not they are still picked, and whether or not the live
+  // catalog still lists them.
+  seededTeamsByLeague?: Record<string, CatalogTeam[]>;
   onToggleTeam: (leagueId: string, team: CatalogTeam) => void;
   onClearLeague: (leagueId: string) => void;
   totalSelected: number;
@@ -69,6 +78,7 @@ function LeagueSection({
   leagueId,
   leagueName,
   entityNoun,
+  seeded,
   selected,
   onToggle,
   onClear,
@@ -76,6 +86,7 @@ function LeagueSection({
   leagueId: string;
   leagueName: string;
   entityNoun: string;
+  seeded: CatalogTeam[];
   selected: CatalogTeam[];
   onToggle: (team: CatalogTeam) => void;
   onClear: () => void;
@@ -84,10 +95,23 @@ function LeagueSection({
   const [search, setSearch] = useState("");
   const nounPlural = pluralize(entityNoun);
   const nounSingular = entityNoun;
-  const total = teamsQuery.data?.teams.length ?? 0;
+
+  // The catalog's teams plus any pick it does not list. With the catalog
+  // down that is the picks alone, under the error row — which is enough to
+  // review them, drop one and carry on: the save needs no catalog for a team
+  // that is already followed.
+  const teams = useMemo(
+    () =>
+      mergeSelectedTeams(
+        teamsQuery.isError ? NO_TEAMS : (teamsQuery.data?.teams ?? NO_TEAMS),
+        seeded,
+        selected,
+      ),
+    [teamsQuery.isError, teamsQuery.data, seeded, selected],
+  );
+  const total = teams.length;
 
   const visible = useMemo(() => {
-    const teams = teamsQuery.data?.teams ?? [];
     const needle = search.trim().toLowerCase();
     if (!needle) {
       return teams;
@@ -97,7 +121,7 @@ function LeagueSection({
         team.name.toLowerCase().includes(needle) ||
         team.abbreviation.toLowerCase().includes(needle),
     );
-  }, [teamsQuery.data, search]);
+  }, [teams, search]);
 
   return (
     <section className="space-y-3">
@@ -131,73 +155,83 @@ function LeagueSection({
 
       {teamsQuery.isPending ? (
         <SectionSkeleton />
-      ) : teamsQuery.isError ? (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-red-900/50 bg-red-950/30 px-4 py-3">
-          <p className="min-w-0 truncate text-sm text-red-300">
-            Couldn&rsquo;t load {nounPlural} — {apiErrorMessage(teamsQuery.error)}
-          </p>
-          <button
-            type="button"
-            onClick={() => void teamsQuery.refetch()}
-            className={`shrink-0 ${SECONDARY_BUTTON}`}
-          >
-            Retry
-          </button>
-        </div>
-      ) : visible.length === 0 ? (
-        <p className="sd-meta py-4 text-zinc-500">
-          No {nounPlural} match &ldquo;{search}&rdquo;.
-        </p>
       ) : (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-          {visible.map((team) => {
-            const isSelected = selected.some(
-              (chosen) => chosen.provider_key === team.provider_key,
-            );
-            return (
+        <>
+          {teamsQuery.isError && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-red-900/50 bg-red-950/30 px-4 py-3">
+              <p className="min-w-0 truncate text-sm text-red-300">
+                Couldn&rsquo;t load {nounPlural} —{" "}
+                {apiErrorMessage(teamsQuery.error)}
+              </p>
               <button
-                key={team.provider_key}
                 type="button"
-                onClick={() => onToggle(team)}
-                aria-pressed={isSelected}
-                className={
-                  "flex cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors " +
-                  (isSelected
-                    ? "border-amber-400/60 bg-amber-500/10"
-                    : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700")
-                }
+                onClick={() => void teamsQuery.refetch()}
+                className={`shrink-0 ${SECONDARY_BUTTON}`}
               >
-                <TeamLogo team={team} />
-                <span
-                  className={
-                    "sd-body min-w-0 flex-1 truncate font-medium " +
-                    (isSelected ? "text-amber-200" : "text-zinc-300")
-                  }
-                >
-                  {team.name}
-                </span>
-                {/* A tick, not a second line of text: the abbreviation
-                    repeated what the crest and name already said, and cost
-                    every card a row of height across thirty of them. */}
-                <svg
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  className={
-                    "h-4 w-4 shrink-0 " +
-                    (isSelected ? "text-amber-400" : "text-transparent")
-                  }
-                >
-                  <path d="m4 10.5 4 4 8-9" />
-                </svg>
+                Retry
               </button>
-            );
-          })}
-        </div>
+            </div>
+          )}
+          {visible.length > 0 ? (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {visible.map((team) => {
+                const isSelected = selected.some(
+                  (chosen) => chosen.provider_key === team.provider_key,
+                );
+                return (
+                  <button
+                    key={team.provider_key}
+                    type="button"
+                    onClick={() => onToggle(team)}
+                    aria-pressed={isSelected}
+                    className={
+                      "flex cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors " +
+                      (isSelected
+                        ? "border-amber-400/60 bg-amber-500/10"
+                        : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700")
+                    }
+                  >
+                    <TeamLogo team={team} />
+                    <span
+                      className={
+                        "sd-body min-w-0 flex-1 truncate font-medium " +
+                        (isSelected ? "text-amber-200" : "text-zinc-300")
+                      }
+                    >
+                      {team.name}
+                    </span>
+                    {/* A tick, not a second line of text: the abbreviation
+                        repeated what the crest and name already said, and cost
+                        every card a row of height across thirty of them. */}
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      className={
+                        "h-4 w-4 shrink-0 " +
+                        (isSelected ? "text-amber-400" : "text-transparent")
+                      }
+                    >
+                      <path d="m4 10.5 4 4 8-9" />
+                    </svg>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            // A failed load with no picks to show has said all there is to
+            // say in the error row above.
+            (!teamsQuery.isError || teams.length > 0) && (
+              <p className="sd-meta py-4 text-zinc-500">
+                No {nounPlural} match &ldquo;{search}&rdquo;.
+              </p>
+            )
+          )}
+        </>
       )}
     </section>
   );
@@ -207,6 +241,7 @@ function LeagueSection({
 export default function TeamsStep({
   leagueIds,
   teamsByLeague,
+  seededTeamsByLeague,
   onToggleTeam,
   onClearLeague,
   totalSelected,
@@ -248,7 +283,8 @@ export default function TeamsStep({
             leagueId={leagueId}
             leagueName={leagueById[leagueId]?.name ?? leagueId}
             entityNoun={leagueById[leagueId]?.noun ?? "team"}
-            selected={teamsByLeague[leagueId] ?? []}
+            seeded={seededTeamsByLeague?.[leagueId] ?? NO_TEAMS}
+            selected={teamsByLeague[leagueId] ?? NO_TEAMS}
             onToggle={(team) => onToggleTeam(leagueId, team)}
             onClear={() => onClearLeague(leagueId)}
           />

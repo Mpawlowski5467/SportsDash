@@ -209,11 +209,19 @@ flavors plus intermission and final.
 async def send_event(event: GameEvent) -> bool
 async def send(title: str, message: str, *, tags: str | None = None, priority: str | None = None) -> bool
 ```
-POST `{settings.ntfy_url}/{settings.ntfy_topic}`, body = message, headers
-`Title`, optional `Tags`/`Priority`, `Authorization: Bearer` when
-`ntfy_token` set. Returns False (never raises) on failure. When
-`notifications_enabled` is False, skip sending and return True (treat as
-handled).
+POST `{settings.ntfy_url}/` — the server root, never the topic URL: this
+is ntfy's publish-as-JSON form (ntfy ≥ 1.18.0). JSON body: `topic` =
+`settings.ntfy_topic`, `title`, `message`; `tags` as a list of strings
+(the comma-separated argument split, stripped, empties dropped; omitted
+when none are left); `priority` as an integer (`min` 1, `low` 2,
+`default` 3, `high` 4, `max`/`urgent` 5; omitted for `None` or any other
+name). The only header set is `Authorization: Bearer` when `ntfy_token`
+set. Nothing provider-derived may travel in a header: httpx encodes
+header values as ASCII, so a `Title` header carrying "Getafe @ Atlético
+Madrid" failed before the request was sent and the notification was
+lost. Returns False (never raises) on failure, a non-2xx response
+included. When `notifications_enabled` is False, skip sending and return
+True (treat as handled).
 
 ### `app/services/news.py` (owner: persistence agent)
 
@@ -282,7 +290,9 @@ and per-team errors so one bad source never kills a whole job. Schedule:
 4. For each match: `prev = state_from_row(row)`, then
    `events = diff_states(prev, new_state, home_name=…, away_name=…)`,
    then `apply_game_state`. For each event not `was_notified`:
-   `send_event` → on success `mark_notified`.
+   `send_event` → on success `mark_notified`. An `apply_game_state` that
+   returns `None` — the row was deleted since step 1, i.e. a follow save
+   landed mid-tick — skips the game: nothing is sent or ledgered for it.
 
 ### `app/seed.py` (owner: scheduler agent)
 
@@ -717,7 +727,11 @@ team ids + league id; skip muted/disabled. starting_soon too.
 followed set, seed prefs: followed teams → all events on (no row needed,
 default is on); whole-competition leagues → store a `league:{id}` pref
 with only `game_start`+`final` enabled (avoid 104-game spam). Do this in
-the route/seed after `replace_followed`.
+the route/seed after `replace_followed`. **Amended 2026-10-10**: the seed
+is written ONCE — when a league first becomes a whole-competition follow
+and has no `league:{id}` row — not on every save, and it is removed again
+when the league stops being one, if the row is still an untouched seed
+(see *Editing the followed set* below).
 
 **Frontend:** `api.ts`/`hooks.ts` add `notificationPrefs()` +
 `updateNotificationPref()`. A new Settings view/panel (reached from the
@@ -824,7 +838,9 @@ by create_all, no migration), `EventOut`/`LeaderRowOut`,
 `TodayOut.events`, TS `SportEvent`/`LeaderRow`/`TodayResponse.events`,
 `SportsProvider.get_events`/`get_event_state`, repository
 `upsert_events`/`get_event`/`events_between`/`active_events` (+ EventORM
-in replace_followed wipe), `serialize.event_to_out`/`events_to_out`,
+among the tables `replace_followed` clears — since 2026-10-10 only the
+events of a league that left the followed set; see *Editing the followed
+set* below), `serialize.event_to_out`/`events_to_out`,
 `/today` returns active events, route derives entity_noun "golfer" for
 golf. (Add "golfer" to the setup.py entity_noun derivation if not
 already — currently only player/fighter/team; ADD golf→"golfer".)
@@ -1453,9 +1469,17 @@ async def get_league_teams(league: CatalogLeague) -> list[CatalogTeam]
 ```python
 async def get_meta(session, key: str) -> str | None
 async def set_meta(session, key: str, value: str) -> None
-async def replace_followed(session, leagues: list[domain.League], teams: list[domain.Team]) -> None
-    # cached sports data is disposable: wipe games, players, news,
-    # standings, notifications_sent, teams, leagues; insert the new set
+async def replace_followed(session, leagues: list[domain.League], teams: list[domain.Team],
+                           competitions: list[tuple[str, str, str]] | None = None) -> None
+    # reconciles, never wipes: afterwards leagues / teams /
+    # team_competitions equal the arguments, and any other row survives
+    # only if the new set still backs it. notifications_sent is never
+    # deleted. (Until 2026-10-10 this wiped every table and left the
+    # refresh to rebuild it — see *Editing the followed set* below.)
+async def prune_unbacked(session) -> None
+    # the same rules against the set as STORED (tested in SQL, per
+    # statement — never against ids read beforehand); a no-op on a
+    # consistent database. Run first by every daily_refresh pass.
 ```
 Onboarded flag: meta key `"onboarded"` = `"1"`.
 
@@ -1463,26 +1487,38 @@ Onboarded flag: meta key `"onboarded"` = `"1"`.
 
 | Route | Response | Notes |
 |---|---|---|
-| `GET /setup/status` | `SetupStatusOut{onboarded, followed_team_count}` | |
+| `GET /setup/status` | `SetupStatusOut{onboarded, followed_team_count, refreshing}` | `refreshing` (2026-10-10): a `daily_refresh` is in flight |
+| `GET /setup/selection` | `CurrentSelectionsOut{selections: [{league_id, follow_all, teams: [CatalogTeamOut]}]}` | added 2026-10-10: the followed set as wizard selections; database only, no network, never commits |
 | `GET /setup/leagues` | `CatalogLeaguesOut{leagues: [{id,name,sport,provider}]}` | static, no network |
 | `GET /setup/teams/{league_id}` | `CatalogTeamsOut{league_id, teams: [CatalogTeamOut]}` | live ESPN fetch; 404 unknown league; 502 on upstream failure |
-| `POST /setup/follow` | `TeamsOut` | body `FollowRequest{selections: [{league_id, team_provider_keys}]}`; 400 on empty/unknown keys; `replace_followed` + set onboarded + commit + `kick_daily_refresh()` |
+| `POST /setup/follow` | `TeamsOut` | body `FollowRequest{selections: [{league_id, team_provider_keys}]}`; 400 on empty/unknown keys; `replace_followed` + set onboarded + commit + `kick_daily_refresh()`. The body is the WHOLE new set and the save reconciles — whatever it still follows keeps its rows |
 
 Internal ids from a follow: league id = catalog id; team id =
-`f"{league_id}-{slugify(team name)}"`. `scheduler/jobs.py` gains
-`def kick_daily_refresh() -> None` (create_task + held reference; routes
-must not import `app.main` — circular).
+`f"{league_id}-{slugify(team name)}"` for a team not followed yet — one
+that already is (same `league_id` and `provider_key`) keeps its stored id,
+whatever the provider calls it now. `scheduler/jobs.py` gains
+`def kick_daily_refresh() -> None` (marks the followed set changed, then
+create_task + held reference; routes must not import `app.main` —
+circular). The reconcile rules, the per-key team resolution, the selection
+route and what the kick does to a refresh already running are all under
+*Editing the followed set* below.
 
 ### Frontend onboarding
 
-`types.ts`/`api.ts`/`hooks.ts` mirror the four routes
+`types.ts`/`api.ts`/`hooks.ts` mirror the five routes
 (`useSetupStatus()` etc.; setup mutations via plain `api.*` calls +
 `queryClient.invalidateQueries()`). `App.tsx`: splash while status
 loads; full-screen `<OnboardingWizard mode="first-run" .../>` when not
-onboarded; gear button in `Layout` reopens it as `mode="manage"`.
+onboarded; the gear button in `Layout` opens `<ManageTeamsWizard>`, which
+loads the followed set and opens the same wizard ON it as `mode="manage"`
+— an editor, never an empty wizard: the save unfollows whatever it does
+not list.
 Wizard (in `src/components/onboarding/`): league multi-select grouped by
 sport → per-league team grid (logo, name, search filter, multi-select) →
-review → POST → syncing screen (poll `useToday` until games or ~20s) →
+review (in manage mode it also lists what the save will unfollow) → POST
+→ syncing screen (poll `useToday` until games or ~20s; after an edit the
+kept follows' games can end that wait at once, and what the refresh loads
+arrives when `App` sees `refreshing` clear and refetches everything) →
 dashboard. Dark kiosk styling consistent with the rest.
 
 ## Infra contracts (infra agent)
@@ -2170,8 +2206,9 @@ rows behind with no league.
 - What it refuses to sweep: a table that some *other* table's foreign key
   points at — `teams` is the only case. Deleting one could violate the very
   constraint this repairs, and no code path can orphan a team anyway
-  (`replace_followed` deletes leagues and teams together), so those rows are
-  **counted and logged at WARNING, then left in place**.
+  (`replace_followed` re-points a kept team at its league before any league
+  is deleted, and deletes removed teams before removed leagues), so those
+  rows are **counted and logged at WARNING, then left in place**.
 - Deletions are logged at WARNING with the row count and both table names.
   Idempotent, and a guaranteed no-op on Postgres, which never allowed the
   rows — it still runs there so both dialects exercise the same SQL.
@@ -2669,16 +2706,22 @@ never commit (callers own transactions).
 
 - **No FKs by design**: rosters are delete+reinserted on every roster
   sync — the daily sweep, and since 2026-07-29 the pre-game re-sync too
-  (never FK the roster table) — and `replace_followed` wipes
-  `player_follows` anyway. Roster data is joined logically at read time
-  via `PlayerORM.id == f"espn:{athlete_id}"`.
+  (never FK the roster table) — and the followed-set rules delete a
+  follow whose team is gone without one (`replace_followed` at save
+  time, `prune_unbacked` at the top of every refresh pass). Roster data
+  is joined logically at read time via
+  `PlayerORM.id == f"espn:{athlete_id}"`.
 - New table ⇒ created by `Base.metadata.create_all` at startup; the
   TABLE needs **no migrations.py entry** (that list is for added
   columns only) — but `last_notified_status`, added after the table
   shipped, has the additive entry `("player_follows",
   "last_notified_status", "VARCHAR(24)")`.
-- `repository.replace_followed` now wipes `PlayerFollowORM` with the
-  other child tables: follows are re-picked after a wizard re-run.
+- `repository.replace_followed` deletes the `PlayerFollowORM` rows of a
+  team that leaves the followed set, and only those: a kept team's
+  follows survive an edit, `last_notified_status` baseline included.
+  (**Amended 2026-10-10** — it used to wipe the table on every save, so
+  follows had to be re-picked after each wizard run. See *Editing the
+  followed set* below.)
 
 ### New repository functions (app/services/repository.py)
 
@@ -2874,7 +2917,8 @@ Shared helper: `services/events.player_status_label()`
 ### Tests
 
 `tests/test_player_follows.py` (fictional names): repository CRUD +
-replace_followed wipe; route validation (unknown team 404, off-roster
+what `replace_followed` keeps (a kept team's follows, baseline included)
+and drops (a removed team's); route validation (unknown team 404, off-roster
 404, cross-league bare-id PUT 409, follow-time baseline seeding — no
 alert at follow, round trip, DELETE 204/404); leaders post-cache
 stamping (warm cache + new follow flips the flag with no refetch;
@@ -3631,3 +3675,489 @@ September 10 follow-up:
 - The desktop build removes obsolete generated onefile resources, uses
   ad-hoc signing when Developer ID is unavailable, and verifies the complete
   bundle. Ad-hoc signing does not provide Apple notarization.
+
+## Editing the followed set (2026-10-10)
+
+The setup wizard is also the editor ("Manage teams"), and until now an edit
+was a reinstall. `POST /setup/follow` wiped every table and left the next
+refresh to rebuild it — which a refresh cannot do: it reaches back seven
+days, so each kept team's older results were gone for good, along with its
+venue and "About" enrichment, its roster, its player follows and its alert
+toggles. The dedupe ledger went too, so a final from that afternoon was
+announced a second time. The wizard opened empty, so adding one team meant
+re-picking all the others from memory; and the refresh the save kicked was
+skipped outright whenever one was already running, which could leave the
+new team without its games until the next cron.
+
+One contract replaces all of that: **editing the followed set keeps what is
+still followed.** It is binding on four modules — the repository (what a
+save deletes), the setup routes (how a submitted pick is matched to a stored
+team, and what an edit starts from), the scheduler (what a kick does to a
+refresh in flight) and the wizard (what it opens on, and what it says before
+it deletes).
+
+The passages this amends are corrected in place: *Phase 3b → Follow
+defaults*, the *Phase 5* foundation list, *Setup & onboarding*, the
+FK-enforcement note under *Audit fixes* and *Player follows*.
+
+### `repository.replace_followed` reconciles
+
+The signature is unchanged (`session, leagues, teams, competitions=None`).
+Afterwards `leagues`, `teams` and `team_competitions` equal the arguments,
+and **any other row survives only if the new set still backs it**: a
+team-keyed row needs its team, a league-keyed row its league, and a game its
+league plus either a followed side or a whole-competition (`follow_all`)
+league. With `T` / `L` the new team / league ids and `FA` the new
+`follow_all` league ids, in this order on both dialects:
+
+1. Upsert `leagues`, flush; upsert `teams`, flush. **Parents first, and
+   upserted rather than re-created**: `upsert_team` writes identity columns
+   only, so a kept team keeps every enrichment column; and a kept team id
+   whose league changed is re-pointed here, before step 5 deletes the old
+   league — delete-first trips the FK the team still holds.
+2. Hand over game tags (`_hand_over_game_tags`): where a removed team has
+   a kept team that is the same team in a game, that team takes the side
+   id — see *Two picks of one team* below. Here, because the heir may be a
+   team step 1 has just inserted (the side columns are FKs) and the removed
+   team's `team_competitions` rows, which step 3 deletes, are what say
+   which leagues it was fetched in.
+3. Delete every `team_competitions` row. They are derived afresh by each
+   save, so this one table is still replaced wholesale.
+4. The child rules
+   (`_drop_unbacked_children(session, team_ids, league_ids, follow_all_ids)`).
+   The SQL statements run top to bottom, with one exception: the two JSON
+   tag clears (`events`, `standings`) run after all three league deletes
+   (`events`, `standings`, `standings_archive`), so the team ids they are
+   judged by are read as late as possible:
+
+   | Table | Rule |
+   |---|---|
+   | `players` | delete `team_id ∉ T` |
+   | `news_items` | delete `team_id ∉ T`; delete `league_id ∉ L`; delete league-level rows (`team_id IS NULL`) whose `league_id ∉ FA` |
+   | `games` | set `home_team_id` to NULL where `∉ T`, the same for `away_team_id`; delete `league_id ∉ L`; **then** delete rows with both sides NULL and `league_id ∉ FA` |
+   | `events` | delete `league_id ∉ L`; in the rest, set a leaderboard row's `player_id ∉ T` to `None` |
+   | `standings` | delete `league_id ∉ L`; in the rest, set a row's `team_id ∉ T` to `None` |
+   | `standings_archive` | delete `league_id ∉ L` |
+   | `player_follows` | delete `team_id ∉ T` |
+   | `notification_prefs` | delete every scope except `global`, `team:{T}`, `league:{L}` |
+   | `notifications_sent`, `stadiums`, `app_meta` | never touched |
+
+5. Delete teams `∉ T`, then leagues `∉ L`.
+6. Insert `competitions`.
+
+What the rules amount to:
+
+- **A game between a kept and a removed team stays**, with the removed side
+  nulled. The sides are nulled before the last delete so that delete can
+  tell a game nobody follows any more from one a kept team still plays in.
+  An untagged game outside `FA` is safe to drop: a per-team fetch always
+  tags a side, so only a whole-competition fetch writes one.
+- **Two picks of one team: the kept pick inherits the removed one's
+  games.** A nation picked under two national competitions is two `teams`
+  rows that fetch the same fixtures (each has the other's league as a
+  sibling competition), and `upsert_games` lets a later non-NULL side id
+  replace an earlier one — so every game they share carries ONE of the two
+  ids, the one fetched last. Nulling that id when its pick is removed would
+  leave the games untagged and the next rule would delete them, with the
+  kept pick still playing in them and a refresh reaching back one week. So
+  a removed team's id is nulled **unless a kept team is fetched in the
+  game's league under the provider key the removed team had there**, in
+  which case step 2 moves the tag to it first. What a team is fetched as
+  is its own `(league_id, provider_key)` plus its `team_competitions`
+  triples — the removed team's as stored, the kept teams' as passed in.
+  Both halves of the match are
+  required: a provider key is unique only within a league (ESPN reuses ids
+  across sports), and a kept team that is not fetched in that league never
+  tags a game there. Where several kept teams qualify, the heir is the one
+  whose id sorts last — `refresh_schedules` walks teams in id order, so
+  that is the id the next pass would write anyway. A removed team with no
+  heir is untagged as before. `prune_unbacked` has no such step and needs
+  none: after a save a removed team is not stored, so no side names one.
+- **A removed team's highlight is cleared, not its row.** The standings row
+  and the leaderboard row stay; only the follow tag inside the JSON goes.
+  The edited list is REASSIGNED (SQLAlchemy does not change-track in-place
+  JSON mutation), and `events.state_updated_at` is deliberately not
+  re-stamped — it is the recency signal of
+  `event_finals_missing_notification`, and clearing a tag is not news.
+- **`notifications_sent` is never deleted, by any save.** It is what stops a
+  game that survives the edit, or returns with the next refresh, from being
+  announced twice.
+- **NULL is never "outside" a set.** `_outside(column, ids)` is
+  `column IS NOT NULL AND column NOT IN (ids)`, with the empty set spelled
+  out as `column IS NOT NULL` rather than left to each dialect's
+  empty-`IN`: an untagged game or a league-level article must not vanish
+  because no team happens to be followed. `ids` may also be a query
+  (`NOT IN (SELECT …)`, see `prune_unbacked`) and keeps the same guard — a
+  subquery that returns no row is the empty list again.
+- First run, an identical re-save, a `follow_all`-only set and an empty set
+  all go through the same statements; an identical re-save changes no row
+  in any table.
+
+### `repository.prune_unbacked` — the same rules, at the top of every pass
+
+```python
+async def prune_unbacked(session) -> None
+```
+
+Runs `_drop_unbacked_children` against the team ids, league ids and
+`follow_all` league ids **as stored** — one implementation of the rules, so
+a save and the sweep can never disagree about what is a leftover.
+
+**The stored set is handed over as queries, not as ids read into Python.**
+`replace_followed` passes sets (the removed teams and leagues still exist
+while its rules run, so only the new ids can say what is kept);
+`prune_unbacked` passes `select(TeamORM.id)`, `select(LeagueORM.id)` and
+the `follow_all` subset, and every statement then tests
+`NOT IN (SELECT id FROM teams)` and the like — the pref scopes against
+`SELECT 'team:' || id FROM teams` and `SELECT 'league:' || id FROM leagues`,
+with `global` always kept. Each statement therefore judges by the set as it
+stands when that statement runs. The sweep starts every pass, the cron's
+and the startup one included, so a save can commit in the middle of it;
+swept against ids read beforehand, a league that save had just made
+`follow_all` lost the headline-only `league:{id}` pref seeded for it and
+then notified on every event type. Only the JSON follow tags cannot be
+judged in SQL: for those the team ids are read once, **after** the rows
+they are compared with, so a tag on a row always names a team that existed
+when the row was read.
+
+It exists because a refresh pass or live tick that read the OLD set can
+commit a write just after the save's deletes — an untagged fixture or a
+league article for a competition that has just stopped being followed in
+whole, a table still tagged with a team that is gone — and nothing else
+would ever remove such a row. With foreign keys enforced it can only reach
+what no FK guards: untagged games and league-level news of a league that is
+not `follow_all`, player follows and prefs whose team or league is gone,
+and stale JSON follow tags. **On a consistent database it changes
+nothing.**
+
+`_daily_refresh` calls it in its own `session_scope`, first, before
+`refresh_schedules`, inside a `try/except` that logs and continues: a prune
+failure must never cost the pass its refresh. A save's kick is always
+followed by a pass, so a save's leftovers are gone within seconds; anything
+else waits at most a day.
+
+### `POST /setup/follow` — a stored pick keeps its row
+
+The route reads the stored teams and the stored `follow_all` leagues
+**before** it writes anything, then resolves each submitted provider key on
+its own. "Stored" means a `TeamORM` with the same `(league_id,
+provider_key)` — the provider's own identity for the team, where the id is a
+slug of a display name the provider is free to change.
+
+- **`id` and `rss_feeds`** come from the stored row when the key is stored.
+  Otherwise the id is the slug rule and `rss_feeds` is empty, as before.
+  Every row a team owns hangs off its id, and the feeds exist nowhere but
+  on its row (`upsert_team` writes that column).
+- **Display fields** (`name`, `abbreviation`, `logo_url`, `color`) come from
+  the catalog entry when the fetched catalog lists the key — so a rebrand
+  or a new crest reaches a team that is already followed — and from the
+  stored row otherwise.
+- **The catalog is fetched only when the selection holds a key that is not
+  stored** (502 on upstream failure, as before). A selection made only of
+  stored keys makes no provider call, so an edit that adds nothing saves
+  with ESPN down.
+- **The 400 lists only keys that are neither stored nor in the fetched
+  catalog.** A followed pick the catalog has since dropped is routine, not
+  an error: the golf catalog is the current tournament's field, and the
+  tennis and MMA catalogs are capped rankings a followed athlete slides out
+  of. `by_key[key]` is never indexed unguarded.
+
+**The headline-only `league:{id}` pref** (*Phase 3b → Follow defaults*) is no
+longer written by every save — `replace_followed` now keeps the prefs of
+everything still followed and the upsert merges, so re-seeding would switch
+back off whatever the user had switched on:
+
+- It is **seeded** when a league is `follow_all` in the new set, was not
+  before this save, and has no `league:{id}` row.
+- It is **removed** when a kept league stops being `follow_all` and the row
+  is still an untouched seed. Left behind it would go on silencing every
+  alert but `game_start` and `final` for that league's teams — in
+  `notify_prefs.decide` the league row decides for any team with no row of
+  its own.
+- **Untouched seed** (`_is_untouched_seed`): not muted, `events` non-empty,
+  and every stored key equal to `follow_all_default_events()`'s value for
+  that key. Key by key, not equality with today's seed: older builds seeded
+  five keys and today's seed has six. A muted row, or one with any toggle
+  off the seed's value, is the user's own and is kept.
+
+Everything stays in the save's one transaction; then commit, then
+`jobs.kick_daily_refresh()`, as before.
+
+### `GET /setup/selection` and `SetupStatusOut.refreshing`
+
+```python
+class SetupStatusOut(BaseModel):
+    onboarded: bool
+    followed_team_count: int
+    refreshing: bool = False
+
+class CurrentSelectionOut(BaseModel):
+    league_id: str
+    follow_all: bool = False
+    teams: list[CatalogTeamOut] = []
+
+class CurrentSelectionsOut(BaseModel):
+    selections: list[CurrentSelectionOut]
+```
+```ts
+export interface SetupStatus { onboarded: boolean; followed_team_count: number; refreshing: boolean }
+export interface CurrentSelection { league_id: string; follow_all: boolean; teams: CatalogTeam[] }
+export interface CurrentSelectionsResponse { selections: CurrentSelection[] }
+```
+
+`GET /setup/selection` → `CurrentSelectionsOut`: the followed set read back
+as the selections that would produce it. **Database only** — no provider
+call, and it never commits — because the editor has to open while ESPN is
+down, and has to show a pick the live catalog no longer lists.
+
+- One entry per stored league whose id is in `espn_catalog.CATALOG` **and**
+  which is `follow_all` or owns at least one stored team. Membership of
+  `CATALOG` itself, not `get_catalog_league`, which also resolves the
+  internal sibling leagues the picker never lists.
+- So the sibling competitions a national-team pick attaches on its own are
+  omitted: they are neither, every save re-derives them, and posted back
+  they would be rejected as empty selections.
+- A `follow_all` league reads back with `teams: []` even when teams are
+  stored under it (the follow route merges two selections of one league).
+  The wizard's two modes are exclusive, and whole-competition wins.
+- A team entry is a `CatalogTeamOut` built from the stored row.
+- Deterministic order: leagues as `repository.list_leagues` returns them,
+  teams as `repository.list_teams` does.
+- Posted back as it stands — each team by its `provider_key` — it changes
+  nothing.
+
+`SetupStatusOut.refreshing` is `jobs.daily_refresh_running()`: the
+`daily_refresh` lock is held. It is true for ANY pass — the cron's and the
+startup spawn's as much as a save's — and across a restart inside one run,
+so after a save it clears only once a whole pass has run against the set as
+it now stands. Its clearing is the client's cue to refetch.
+
+Both scheduler hooks are called through the module (`jobs.…`), like the
+catalog accessor, so tests can patch them at the source.
+
+### Scheduler: a kick restarts the pass instead of being dropped
+
+`daily_refresh` stays single-flight — its upserts are SELECT-then-insert, so
+two overlapping runs double-insert — and an overlapping caller still skips
+and never queues. That is right for the cron and the startup spawn, whose
+work the run in flight is already doing. It is wrong for the wizard's kick:
+the run in flight read the OLD set.
+
+```python
+# app/scheduler/refresh.py — in-process state, like the lock (one worker)
+def note_follow_change() -> None      # _follow_generation += 1; synchronous
+def daily_refresh_running() -> bool   # _daily_refresh_lock.locked()
+def _superseded() -> bool             # a pass is running AND its generation is stale
+# app/scheduler/jobs.py
+def kick_daily_refresh() -> None      # note_follow_change(), then spawn daily_refresh()
+```
+
+- **The kick marks, then spawns.** `kick_daily_refresh()` (still zero-arg)
+  bumps the generation synchronously, before the spawn, so the mark cannot
+  trail the save by a task switch. The spawned task then skips like any
+  overlapping caller — the mark is what makes the kick count. Its log line
+  says so: an overlapping caller that finds the running pass superseded
+  logs "a refresh is already running and will restart for the new followed
+  set — skipping", not the bare "skipping" of a cron or startup overlap,
+  which for a save read like the kick being dropped.
+- **The lock holder loops.** Each pass records the generation it started
+  from; after it, `daily_refresh` runs another pass if that generation is
+  stale. Nothing may await between that check and the lock's release, or a
+  kick landing in the gap would find the lock held, skip, and leave nobody
+  to run the pass it asked for. However many saves land during one pass,
+  that is one more pass.
+- **A stale pass stops at its next checkpoint** (`if _superseded(): return`):
+  after each stage in `_daily_refresh`; at the top of the team loop, the
+  sibling-competition loop and the `follow_all` loop in `refresh_schedules`;
+  at the top of the league loops in `_refresh_events` and
+  `refresh_standings` and of the team loop in `refresh_rosters`; and
+  **between a schedule or event fetch and its write**, so games or a tagged
+  leaderboard asked for on behalf of the old set are discarded, not stored.
+- **Nothing is cancelled.** The provider call in flight completes and is
+  thrown away. A cron-started run has no task handle, and a cancel landing
+  inside a session keeps the lock held while the close unwinds, so the
+  replacement would skip itself. A roster sync in flight finishes its team;
+  a write for a team that is gone fails its FK and is caught like any other
+  per-team error.
+- **A superseded pass skips its remaining stages**, including the closing
+  `prune_stale_games`, which is only safe once schedules are fresh. The next
+  pass starts from the top — `prune_unbacked` first.
+- Outside a pass `_superseded()` is always false (`_running_generation` is
+  `None`), so every checkpoint is inert for a stage run on its own —
+  `refresh_news` on its interval, the startup `refresh_locations`.
+
+### Frontend
+
+- **`ManageTeamsWizard`** (`components/onboarding/`) is what the gear's
+  "Manage teams" mounts. It runs `useSetupSelection()` (queryKey
+  `["setup-selection"]`, `staleTime: 0`, `gcTime: 0` — never served from an
+  earlier open) and **latches** the seed once the query is
+  `isSuccess && isFetchedAfterMount`, then renders
+  `<OnboardingWizard mode="manage" initial={seed}>`. The wizard copies the
+  seed into its own state on mount; the query refetches whenever the app
+  invalidates its cache, the save included, and a later value must neither
+  reset nor remount a wizard the user is editing.
+- **A failed selection fetch never falls through to an empty seed.** The
+  wizard would open as if nothing were followed, and saving one pick from
+  there would unfollow everything else. Until the latch, a loading panel
+  stands in (spinner and Close; on error the message and Retry), and only
+  Retry or Close leave the error state. The panel has its OWN
+  `useModalChrome` and is never mounted beside the wizard — the Tab trap,
+  unlike ESC, is not stack-aware. Both render inside `WizardFrame`, the
+  shared full-screen shell, so the editor opens as one screen whose body
+  fills in.
+- **Seeding** (`seedFromSelection`): the step is `"leagues"` when anything
+  is followed, else `"countries"` as in a first run; `selectedCountryCodes`
+  is always `[]` — empty means no narrowing, where a filter derived from the
+  follows would open the editor with every other country's leagues hidden;
+  every `league_id` is selected in response order, `follow_all` entries are
+  flagged, and the others bring their `teams`.
+- **`onboarding/selection.ts` holds the selection and every way it can
+  change, as pure functions** (`toggleLeague`, `toggleFollowAll`,
+  `toggleTeam`, `clearLeagueTeams`), because these rules now decide what a
+  save deletes and the repo has no component-test harness. **The state
+  remembers more than it follows**: deselecting a league keeps its picks,
+  its whole-league flag and its place in the order (`leagueOrder`), and
+  switching a league to whole-league keeps its picks, so each toggle is
+  undone by toggling again. Toggling a league off and on, and follow-all on
+  and off, each return the identical `FollowRequest`. Only "Clear" forgets.
+- **Nothing reads the raw fields as if remembered were followed.** The
+  effective view is the only reading — `isFollowAll` (selected AND
+  flagged), `followAllIds`, `pickTeamLeagueIds`, `totalSelected`,
+  `followedLeagues` and `toFollowRequest(state)` — and the steps are handed
+  it, so a deselected league's chip never shows an active follow-all pill
+  and its picks are never counted or posted.
+- One sequence is deliberately not a round trip: marking then unmarking
+  follow-all on a DESELECTED league that still remembers picks leaves it
+  selected with them. It errs towards following, never towards deleting.
+- **A remembered league keeps its card under the country filter.**
+  `offeredLeagues(leagues, countryCodes, rememberedLeagueIds(state))` is
+  what `LeagueStep` renders: the chosen countries' leagues, those with no
+  country, and every league selected at any point this run (`leagueOrder`)
+  — selected or not. No chosen country means no narrowing. The card is the
+  only undo a deselect has, and manage mode opens with no country chosen,
+  so every followed league outside the countries picked later is on the
+  grid only by this rule: keyed on "selected", a stray click removed the
+  card with the selection and left nothing to click to put it back. A
+  league that was never selected is still hidden.
+- **The team grid shows three sources**: `mergeSelectedTeams(catalog,
+  seeded, selected)` is the catalog in its own order, then any seeded or
+  selected team it does not list, once each by `provider_key`. A seeded pick
+  keeps its card after it is unpicked or cleared — the only way back to a
+  follow the catalog has dropped. If the catalog fails to load, the error
+  row and Retry stay and the picks render beneath as normal cards; Continue
+  is gated on the picks alone, never on the catalog having loaded, since
+  the save needs no catalog for a stored key.
+- **Manage mode says what it will unfollow.** `removedFromSeed(seed, state)`
+  returns one `RemovedFollow` per seeded league the save would touch:
+  `leagueRemoved` (it leaves the set), `followAllRemoved` (dropped, or
+  narrowed to picked teams) and the seeded `teams` no longer followed as
+  teams (unpicked, or their league dropped or switched to whole-league).
+  `ReviewStep` lists them above Confirm under "Will be unfollowed — their
+  stored games, rosters and alert settings are deleted" whenever the list
+  is non-empty. Intro copy: manage — "SportsDash will follow exactly these.
+  Everything you kept stays as it is."; first run — "SportsDash will follow
+  these."
+- **Closing is off while the save is in flight**: ESC hits a no-op and the
+  X is disabled. The POST cannot be recalled, so a wizard closed then would
+  leave a save that lands with nobody to show its error or its syncing
+  step. And `confirmFollow` calls `queryClient.invalidateQueries()` itself,
+  right after the POST resolves and before the syncing step — that line
+  runs whether or not the wizard is still mounted.
+- **`App.tsx` refetches everything, once, when `refreshing` goes from true
+  to false.** `useSetupStatus` polls on `statusRefetchInterval(data)`
+  (`5_000` while `data?.refreshing`, else `false`). With games kept, the
+  syncing step's `/today` wait can pass before the refresh has fetched
+  anything, so this — not that wait — is what brings in a newly followed
+  team's data. Because `refreshing` covers every pass, a status fetched
+  during the startup or cron refresh starts the same watch, and the
+  dashboard refetches when that pass ends too.
+
+### Known limits
+
+- **Nothing age-prunes `notifications_sent` or the news of a kept follow.**
+  The wipe was the only delete either table ever had; both now grow for as
+  long as their team or league stays followed.
+- **A league from outside the picker catalog** (possible only through a
+  hand-authored `teams.yaml`) is absent from `GET /setup/selection`, so
+  the first manage save removes it with its teams — and the review step
+  cannot list it as unfollowed, since it was never in the seed. The
+  README's `teams.yaml` note says so.
+- **An individual-sport league's ESPN feed is stored under one athlete.**
+  Tennis, MMA, golf and racing have no per-athlete news scope on ESPN, so
+  every followed athlete's fetch returns the same league feed and
+  `upsert_news` keeps the first copy of each url: the rows belong to the
+  followed athlete whose id sorts first. Unfollowing that athlete deletes
+  them with the rest of its news; the next news stage stores the feed's
+  current 20 items under the next athlete of that league, and older
+  articles are not fetched again.
+- **The news, team-info, location and stadium stages have no checkpoint
+  inside**; whichever is running finishes before a stale pass stops. The
+  interval `refresh_news` runs outside any pass and can write league-level
+  news once for a league that has just left `follow_all` —
+  `prune_unbacked` removes it at the next pass to start after that write.
+- **Postgres, reasoned rather than reproduced by a test:** a stale pass's
+  insert for a removed team that commits between the save's child deletes
+  and its team delete fails that delete on the foreign key. The save rolls
+  back whole and a retry succeeds. The old wipe had the same window.
+- The close-while-saving guard and the seed latch have no automated test:
+  the repo has no DOM test harness.
+
+### Tests
+
+`tests/test_repository.py` (a `followed` fixture holding one of every row a
+follow can own, plus the rows no follow keys): a partial removal keeps
+every row of the kept follows; an identical re-save changes nothing; a
+kept-v-removed game stays with the
+removed side nulled while an unbacked one goes; removed tags are cleared in
+standings and leaderboard rows; both `follow_all` flips; a team re-pointed
+before its old league is deleted; a removed league's children all go while
+a kept league's archive stays; a `follow_all`-only set and an empty set
+spare what they should; a removed pick's game tags pass to a kept pick
+fetched under the same league and provider key (never the key alone, the
+last-sorted heir, none where no kept pick is fetched, and a pick the same
+save adds — a swap, which fails on the foreign key if step 2 runs before
+step 1); and
+`prune_unbacked` as a no-op on a consistent database, removing exactly the
+leftovers on an inconsistent one, on an empty database, with no team
+followed at all, and sparing what a save commits from a second session
+while the sweep runs, one test per query it is handed: a league added
+(before its first delete, and before the prefs delete), a league switched
+to whole-competition whose games are now untagged, and a team added along
+with a game, a pref and a player follow keyed by it. For the JSON tags, a
+team followed and tagged just before the read of `standings`, and of
+`events`, keeps its tag — which holds the team ids after both reads.
+`tests/test_setup_api.py`: a re-save of the same selection changes no row
+and makes no catalog fetch; a ledgered recent final is not re-notified; a
+mixed selection (a stored key plus a new one) keeps the team id through a
+catalog rename and accepts a stored key the catalog has dropped; an
+all-stored selection skips the fetch; the seed pref is written once and
+only an untouched one — today's six keys or an older build's five — is
+removed; `GET /setup/selection` omits siblings and non-picker leagues (and the
+next save removes such a league),
+lists no teams under a whole-competition follow, and round-trips;
+`refreshing` is read through `jobs`; unfollowing either of two picks of
+one nation keeps every stored result; the same provider key in two leagues
+is two teams; and the three conditions on the seed pref each hold alone
+(a seed-like row on a league followed by team all along survives, a
+league already followed in whole is not re-seeded, an empty row is not a
+seed).
+`tests/test_scheduler.py`: two more kicks landing during a kicked pass
+re-run it exactly once (was
+`test_kick_daily_refresh_is_single_flight_across_kicks`, which pinned the
+overlapping kicks being dropped); a superseded pass skips its remaining
+stages, discards the schedule fetch a save landed in (through
+`jobs.daily_refresh()`, with a different game id per call), makes no
+further fetch and does not go on to leaderboard events; the mark is seen
+before the kicked task runs; the prune runs before `refresh_schedules` and
+a raising prune does not stop the pass; `daily_refresh_running()` stays
+true across a restart; an overlapping caller's log line says whether the
+running pass will restart; and `live_tick` sends and ledgers nothing for
+games deleted while it was fetching.
+`tests/test_player_follows.py`: `replace_followed` keeps a kept team's
+follows (was `test_replace_followed_wipes_player_follows`).
+Frontend: `components/onboarding/selection.test.ts` (seeding and its round
+trip, the effective view, every transition and its round trips, purity,
+`offeredLeagues`, `removedFromSeed`, `mergeSelectedTeams`) and `hooks.test.ts`
+(`statusRefetchInterval`). `tests/openapi_snapshot.json` gained the route
+and the three schema changes.

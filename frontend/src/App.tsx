@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ComponentType,
 } from "react";
@@ -15,6 +16,7 @@ import {
   MapFocusContext,
   type MapFocusTarget,
 } from "./components/MapFocusContext";
+import ManageTeamsWizard from "./components/onboarding/ManageTeamsWizard";
 import OnboardingWizard from "./components/onboarding/OnboardingWizard";
 import { useSetupStatus } from "./hooks";
 import type { SetupStatus } from "./types";
@@ -136,6 +138,22 @@ function AppContent() {
     }
   }, [firstRunActive, setup.data]);
 
+  // A save answers as soon as the followed set is written; the schedules,
+  // standings and rosters of anything newly followed arrive with the refresh
+  // it kicks, anywhere from seconds to minutes later. Most queries never
+  // refetch by themselves, and the views stay mounted, so without this they
+  // would show the moment of the save until a reload. The status poll (see
+  // `statusRefetchInterval`) watches the refresh; when it ends, refetch
+  // everything, once.
+  const refreshing = setup.data?.refreshing ?? false;
+  const wasRefreshingRef = useRef(false);
+  useEffect(() => {
+    if (wasRefreshingRef.current && !refreshing) {
+      void queryClient.invalidateQueries();
+    }
+    wasRefreshingRef.current = refreshing;
+  }, [refreshing, queryClient]);
+
   if (firstRunActive || (setup.data !== undefined && !setup.data.onboarded)) {
     return (
       <OnboardingWizard
@@ -233,8 +251,7 @@ function AppContent() {
         })}
       </Layout>
       {manageOpen && (
-        <OnboardingWizard
-          mode="manage"
+        <ManageTeamsWizard
           onComplete={() => {
             setManageOpen(false);
             void queryClient.invalidateQueries();

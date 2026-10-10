@@ -15,8 +15,8 @@ from typing import AsyncIterator, Iterator
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select
+from httpx import ASGITransport, AsyncClient, Response
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -26,10 +26,13 @@ from app.db import get_session
 from tests.db_engine import create_test_schema, make_test_engine
 from app.models import domain
 from app.models.orm import (
+    Base,
     GameORM,
     LeagueORM,
     NewsORM,
+    NotificationPrefORM,
     NotificationSentORM,
+    PlayerFollowORM,
     PlayerORM,
     StandingsArchiveORM,
     StandingsORM,
@@ -40,6 +43,7 @@ from app.providers.espn_catalog import CatalogLeague, CatalogTeam, EspnCatalogEr
 from app.routes import router as api_router
 from app.scheduler import jobs
 from app.services import repository
+from app.services.notify_prefs import follow_all_default_events
 from app.timeutil import utcnow
 
 # Fictional stand-ins for the live ESPN catalog fetch, keyed by catalog
@@ -161,9 +165,39 @@ async def _count(session: AsyncSession, table: type) -> int:
     return (await session.execute(select(func.count()).select_from(table))).scalar_one()
 
 
+async def _dump(db: async_sessionmaker[AsyncSession]) -> dict[str, list[dict[str, object]]]:
+    """Every row of every table — to assert that a save changed nothing at
+    all, not merely the columns a test thought to look at."""
+    tables: dict[str, list[dict[str, object]]] = {}
+    async with db() as session:
+        for table in Base.metadata.sorted_tables:
+            rows = (await session.execute(select(table))).mappings().all()
+            tables[table.name] = sorted((dict(row) for row in rows), key=repr)
+    return tables
+
+
+async def _follow(client: AsyncClient, *selections: dict[str, object]) -> Response:
+    return await client.post("/api/setup/follow", json={"selections": list(selections)})
+
+
+def _as_follow_request(selection: dict[str, list[dict]]) -> dict[str, object]:
+    """``GET /setup/selection`` turned back into a save, as the wizard does it."""
+    return {
+        "selections": [
+            {
+                "league_id": entry["league_id"],
+                "follow_all": entry["follow_all"],
+                "team_provider_keys": [team["provider_key"] for team in entry["teams"]],
+            }
+            for entry in selection["selections"]
+        ]
+    }
+
+
 async def _seed_existing_followed_set(db: async_sessionmaker[AsyncSession]) -> None:
     """A pre-existing followed set plus its cached sports data — every row of
-    which must vanish when the user follows a fresh set via /setup/follow."""
+    which must vanish when the user follows a disjoint set via /setup/follow,
+    bar the dedupe-ledger row, which no save ever deletes."""
     now = utcnow()
     async with db() as session:
         await repository.replace_followed(
@@ -268,7 +302,18 @@ async def _seed_existing_followed_set(db: async_sessionmaker[AsyncSession]) -> N
 async def test_status_before_onboarding(client: AsyncClient) -> None:
     resp = await client.get("/api/setup/status")
     assert resp.status_code == 200
-    assert resp.json() == {"onboarded": False, "followed_team_count": 0}
+    assert resp.json() == {"onboarded": False, "followed_team_count": 0, "refreshing": False}
+
+
+async def test_status_reports_running_refresh(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``refreshing`` is the scheduler's flag, read at the module the route
+    calls through — the app polls it to know when a save's data has landed."""
+    monkeypatch.setattr(jobs, "daily_refresh_running", lambda: True)
+    resp = await client.get("/api/setup/status")
+    assert resp.status_code == 200
+    assert resp.json() == {"onboarded": False, "followed_team_count": 0, "refreshing": True}
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +589,8 @@ async def test_follow_happy_path_replaces_existing_set(
     assert pelicans["logo_url"] == "https://img.example.test/hlp.png"
     assert pelicans["color"] == "#38bdf8"
 
-    # Old demo leagues/teams and every cached row are gone; new set written.
+    # Nothing of the old set is still followed, so its leagues/teams and
+    # every cached row are gone; new set written.
     async with db() as session:
         league_ids = {row.id for row in (await session.execute(select(LeagueORM))).scalars()}
         assert league_ids == {"nba", "epl"}
@@ -563,9 +609,11 @@ async def test_follow_happy_path_replaces_existing_set(
             StandingsArchiveORM,
             PlayerORM,
             NewsORM,
-            NotificationSentORM,
         ):
             assert await _count(session, table) == 0
+        # The ledger outlives every save: it is what keeps a game that
+        # returns with the next refresh from being announced twice.
+        assert await _count(session, NotificationSentORM) == 1
         assert await repository.get_meta(session, "onboarded") == "1"
 
     # One fetch per selected league; exactly one refresh kicked.
@@ -574,7 +622,7 @@ async def test_follow_happy_path_replaces_existing_set(
 
     # Status reflects the new followed set.
     resp = await client.get("/api/setup/status")
-    assert resp.json() == {"onboarded": True, "followed_team_count": 3}
+    assert resp.json() == {"onboarded": True, "followed_team_count": 3, "refreshing": False}
 
 
 async def test_follow_all_competition_no_teams(
@@ -772,6 +820,898 @@ async def test_follow_unknown_provider_key_400(
     async with db() as session:
         assert await _count(session, TeamORM) == 0
         assert await repository.get_meta(session, "onboarded") is None
+
+
+# ---------------------------------------------------------------------------
+# Editing the followed set — a later save reconciles, it does not start over
+# ---------------------------------------------------------------------------
+#
+# The wizard is also the editor, so every change to the followed set comes
+# through /setup/follow as the WHOLE new set.  What that set still follows
+# must come out the other side untouched.
+
+
+async def test_resave_same_selection_changes_nothing(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+) -> None:
+    """Saving the set that is already followed leaves every row as it was.
+
+    The save used to wipe each table and leave the refresh to rebuild it,
+    which a refresh cannot fully do: it reaches back a week, so older
+    results were gone for good, along with the venue enrichment, the
+    rosters, the player follows and the user's alert toggles.
+    """
+    selections: list[dict[str, object]] = [
+        {"league_id": "nba", "team_provider_keys": ["101", "102"]},
+        {"league_id": "ucl", "team_provider_keys": [], "follow_all": True},
+    ]
+    assert (await _follow(client, *selections)).status_code == 200
+    assert fake_catalog["count"] == 1
+
+    now = utcnow()
+    async with db() as session:
+        # Enrichment and feeds exist nowhere but on the team's own row.
+        await repository.set_team_location(
+            session, "nba-harborlight-pelicans", "Harborlight Arena", 12.5, -45.25, capacity=18000
+        )
+        pelicans = await repository.get_team(session, "nba-harborlight-pelicans")
+        assert pelicans is not None
+        pelicans.rss_feeds = ["https://example.test/pelicans.rss"]
+        session.add_all(
+            [
+                # Older than any refresh would fetch again.
+                GameORM(
+                    id="espn:9001",
+                    league_id="nba",
+                    home_team_id="nba-harborlight-pelicans",
+                    away_team_id="nba-stonegate-drifters",
+                    home_name="Harborlight Pelicans",
+                    away_name="Stonegate Drifters",
+                    start_time=now - timedelta(days=30),
+                    phase="final",
+                    home_score=101,
+                    away_score=96,
+                ),
+                # Untagged: stored only because the whole competition is followed.
+                GameORM(
+                    id="espn:9002",
+                    league_id="ucl",
+                    home_name="Wrenfield Athletic",
+                    away_name="Saltmarsh Rovers",
+                    start_time=now + timedelta(days=2),
+                    phase="scheduled",
+                ),
+                StandingsORM(
+                    league_id="nba",
+                    season="2026",
+                    rows=[
+                        {
+                            "rank": 1,
+                            "team_name": "Harborlight Pelicans",
+                            "team_id": "nba-harborlight-pelicans",
+                            "wins": 9,
+                            "losses": 3,
+                        }
+                    ],
+                    fetched_at=now,
+                ),
+                StandingsArchiveORM(
+                    league_id="nba",
+                    season="2025",
+                    season_label="2024-25",
+                    rows=[{"rank": 1, "team_name": "Larkspur Brigade", "wins": 50, "losses": 32}],
+                    fetched_at=now,
+                ),
+                PlayerORM(
+                    team_id="nba-harborlight-pelicans",
+                    id="espn:77",
+                    name="Juno Hollyfield",
+                    position="G",
+                    jersey_number="11",
+                    status="active",
+                ),
+                PlayerFollowORM(
+                    athlete_id="77",
+                    name="Juno Hollyfield",
+                    team_id="nba-harborlight-pelicans",
+                    league_id="nba",
+                    followed_at=now,
+                ),
+                NewsORM(
+                    id="team-article",
+                    team_id="nba-harborlight-pelicans",
+                    title="Pelicans clinch home stand",
+                    url="https://example.test/pelicans",
+                    source="Harborlight Gazette",
+                    published_at=now,
+                    fetched_at=now,
+                ),
+                NewsORM(
+                    id="league-article",
+                    league_id="ucl",
+                    title="Draw made for the last sixteen",
+                    url="https://example.test/draw",
+                    source="Continental Wire",
+                    published_at=now,
+                    fetched_at=now,
+                ),
+                NotificationSentORM(dedupe_key="espn:9001:final", sent_at=now),
+            ]
+        )
+        await session.commit()
+    # The user has since switched period alerts back on for the competition
+    # (the follow-all seed has them off) and muted one of the teams.
+    for update in (
+        {"scope": "league:ucl", "events": {"period_start": True}},
+        {"scope": "team:nba-stonegate-drifters", "muted": True},
+    ):
+        assert (await client.put("/api/notifications/prefs", json=update)).status_code == 200
+
+    before = await _dump(db)
+    assert {name: len(rows) for name, rows in before.items() if rows} == {
+        "leagues": 2,
+        "teams": 2,
+        "games": 2,
+        "standings": 1,
+        "standings_archive": 1,
+        "players": 1,
+        "player_follows": 1,
+        "news_items": 2,
+        "notifications_sent": 1,
+        "notification_prefs": 2,
+        "app_meta": 1,
+    }
+
+    assert (await _follow(client, *selections)).status_code == 200
+
+    after = await _dump(db)
+    for name, rows in before.items():
+        assert after[name] == rows, name
+    # Nothing new was picked, so the provider was not asked for anything —
+    # but the save still kicks its refresh.
+    assert fake_catalog["count"] == 1
+    assert kick_spy == ["kicked", "kicked"]
+
+
+async def test_recent_final_not_renotified_after_resave(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+) -> None:
+    """A final that was announced stays announced across an edit.
+
+    The live tick re-sends any recent final with no ledger row.  A save that
+    dropped the ledger therefore pushed every final of the last six hours a
+    second time, as soon as the refresh it kicked stored the game again.
+    """
+    selection = {"league_id": "nba", "team_provider_keys": ["101"]}
+    assert (await _follow(client, selection)).status_code == 200
+
+    final = domain.Game(
+        id="espn:9001",
+        league_id="nba",
+        home_name="Harborlight Pelicans",
+        away_name="Stonegate Drifters",
+        start_time=utcnow() - timedelta(hours=1),
+        home_team_id="nba-harborlight-pelicans",
+        state=domain.GameState(
+            game_id="espn:9001",
+            phase=domain.GamePhase.FINAL,
+            home_score=101,
+            away_score=96,
+        ),
+    )
+    lookback = timedelta(hours=6)
+    async with db() as session:
+        await repository.upsert_games(session, [final])
+        await session.commit()
+        # Unannounced, it is exactly what the resend query is for...
+        missing = await repository.finals_missing_notification(session, utcnow(), lookback)
+        assert [game.id for game in missing] == ["espn:9001"]
+        # ...and announcing it takes it out.
+        await repository.mark_notified(session, "espn:9001:final")
+        await session.commit()
+        assert await repository.finals_missing_notification(session, utcnow(), lookback) == []
+
+    assert (await _follow(client, selection)).status_code == 200
+
+    # The refresh the save kicked fetches the same game again.
+    async with db() as session:
+        await repository.upsert_games(session, [final])
+        await session.commit()
+        stored = await repository.get_game(session, "espn:9001")
+        assert stored is not None and stored.phase == "final"
+        assert await repository.finals_missing_notification(session, utcnow(), lookback) == []
+
+
+@pytest.mark.parametrize(
+    ("kept_league", "tagged_afterwards"),
+    [
+        # The pick that holds the tags goes: the kept one takes them over.
+        ("euros", "euros-verdania"),
+        # The other pick goes: nothing about the games changes.
+        ("worldcup", "worldcup-verdania"),
+    ],
+)
+async def test_unfollowing_one_of_two_picks_of_a_nation_keeps_its_games(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    kept_league: str,
+    tagged_afterwards: str,
+) -> None:
+    """Whichever duplicate pick is removed, the kept one keeps every result.
+
+    The picker lets one nation be followed under two national competitions.
+    Each pick has the other's league in its slate, so both fetch the same
+    fixtures, and every game carries the id of whichever is fetched last —
+    ``worldcup-…`` sorts after ``euros-…``.  Removing that pick used to
+    untag the games and then delete them as nobody's, though the nation
+    was still followed; and a refresh only reaches back a week.
+    """
+    monkeypatch.setitem(CATALOG_TEAMS, "worldcup", [CATALOG_TEAMS["euros"][0]])
+    resp = await _follow(
+        client,
+        {"league_id": "euros", "team_provider_keys": ["478"]},
+        {"league_id": "worldcup", "team_provider_keys": ["478"]},
+    )
+    assert resp.status_code == 200
+    assert [team["id"] for team in resp.json()["teams"]] == ["euros-verdania", "worldcup-verdania"]
+
+    game_ids = {f"espn:{league_id}-final" for league_id in ("euros", "friendly", "worldcup")}
+    async with db() as session:
+        await repository.upsert_games(
+            session,
+            [
+                domain.Game(
+                    id=f"espn:{league_id}-final",
+                    league_id=league_id,
+                    home_name="Verdania",
+                    away_name="Mistralia",
+                    start_time=utcnow() - timedelta(days=40),
+                    # As the refresh leaves it: the last pick fetched.
+                    home_team_id="worldcup-verdania",
+                    state=domain.GameState(
+                        game_id=f"espn:{league_id}-final",
+                        phase=domain.GamePhase.FINAL,
+                        home_score=2,
+                        away_score=1,
+                    ),
+                )
+                for league_id in ("euros", "friendly", "worldcup")
+            ],
+        )
+        await session.commit()
+
+    resp = await _follow(client, {"league_id": kept_league, "team_provider_keys": ["478"]})
+    assert resp.status_code == 200
+    assert [team["id"] for team in resp.json()["teams"]] == [tagged_afterwards]
+
+    async with db() as session:
+        tags = dict(
+            (await session.execute(select(GameORM.id, GameORM.home_team_id))).tuples().all()
+        )
+        assert tags == {game_id: tagged_afterwards for game_id in game_ids}
+        results = await repository.results_for_team(session, tagged_afterwards)
+        assert {game.id for game in results} == game_ids
+
+
+async def test_follow_same_provider_key_in_two_leagues_is_two_teams(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stored team is its league AND its provider key, never the key alone.
+
+    ESPN's team ids are per sport, so two leagues routinely share one (the
+    NBA's team 2 and the NFL's).  Matched on the key alone, the second pick
+    would resolve to the first one's stored row and re-point it to the
+    other league — taking its id, feeds and every row it owns along.
+    """
+    monkeypatch.setitem(
+        CATALOG_TEAMS,
+        "epl",
+        [CatalogTeam(provider_key="101", name="Wrenfield Athletic", abbreviation="WRA")],
+    )
+    assert (
+        await _follow(client, {"league_id": "nba", "team_provider_keys": ["101"]})
+    ).status_code == 200
+    async with db() as session:
+        pelicans = await repository.get_team(session, "nba-harborlight-pelicans")
+        assert pelicans is not None
+        pelicans.rss_feeds = ["https://example.test/pelicans.rss"]
+        pelicans.description = "Harborlight Pelicans are a fictional basketball club."
+        await session.commit()
+
+    resp = await _follow(
+        client,
+        {"league_id": "nba", "team_provider_keys": ["101"]},
+        {"league_id": "epl", "team_provider_keys": ["101"]},
+    )
+    assert resp.status_code == 200
+    assert [(team["id"], team["league_id"]) for team in resp.json()["teams"]] == [
+        ("nba-harborlight-pelicans", "nba"),
+        ("epl-wrenfield-athletic", "epl"),
+    ]
+
+    async with db() as session:
+        rows = {row.id: row for row in await repository.list_teams(session)}
+    assert set(rows) == {"nba-harborlight-pelicans", "epl-wrenfield-athletic"}
+    kept = rows["nba-harborlight-pelicans"]
+    assert (kept.league_id, kept.name) == ("nba", "Harborlight Pelicans")
+    assert kept.rss_feeds == ["https://example.test/pelicans.rss"]
+    assert kept.description == "Harborlight Pelicans are a fictional basketball club."
+    assert rows["epl-wrenfield-athletic"].rss_feeds == []
+
+
+async def test_follow_keeps_team_id_when_catalog_name_changes(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A followed team is the provider's key, not the slug of its name.
+
+    The id is minted from the display name when a team is first followed.
+    Minted again on a later save it would move with a provider rename, and
+    the team would be unfollowed and re-added as a stranger — losing every
+    row that hangs off the old id.
+    """
+    assert (
+        await _follow(client, {"league_id": "nba", "team_provider_keys": ["101"]})
+    ).status_code == 200
+    async with db() as session:
+        await repository.set_team_location(
+            session, "nba-harborlight-pelicans", "Harborlight Arena", 12.5, -45.25
+        )
+        pelicans = await repository.get_team(session, "nba-harborlight-pelicans")
+        assert pelicans is not None
+        pelicans.rss_feeds = ["https://example.test/pelicans.rss"]
+        await session.commit()
+
+    # The provider rebrands the club; its key stays 101.
+    monkeypatch.setitem(
+        CATALOG_TEAMS,
+        "nba",
+        [
+            CatalogTeam(
+                provider_key="101",
+                name="Harborlight Pelicans BC",
+                abbreviation="HPB",
+                logo_url="https://img.example.test/hpb.png",
+                color="#0ea5e9",
+            ),
+            *CATALOG_TEAMS["nba"][1:],
+        ],
+    )
+    # Adding 102 is what sends this save to the catalog at all.
+    resp = await _follow(client, {"league_id": "nba", "team_provider_keys": ["101", "102"]})
+    assert resp.status_code == 200
+    assert fake_catalog["count"] == 2
+
+    teams = resp.json()["teams"]
+    assert [team["id"] for team in teams] == ["nba-harborlight-pelicans", "nba-stonegate-drifters"]
+    # Same team, shown as the provider now shows it.
+    assert teams[0]["name"] == "Harborlight Pelicans BC"
+    assert teams[0]["abbreviation"] == "HPB"
+    assert teams[0]["logo_url"] == "https://img.example.test/hpb.png"
+    assert teams[0]["color"] == "#0ea5e9"
+
+    async with db() as session:
+        rows = {row.id: row for row in await repository.list_teams(session)}
+        assert set(rows) == {"nba-harborlight-pelicans", "nba-stonegate-drifters"}
+        kept = rows["nba-harborlight-pelicans"]
+        assert kept.provider_key == "101"
+        assert kept.name == "Harborlight Pelicans BC"
+        # What only the stored row held is still on it.
+        assert kept.rss_feeds == ["https://example.test/pelicans.rss"]
+        assert (kept.home_venue, kept.venue_lat, kept.venue_lon) == (
+            "Harborlight Arena",
+            12.5,
+            -45.25,
+        )
+
+
+async def test_follow_accepts_stored_key_missing_from_catalog(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A followed pick the catalog no longer lists does not block the save.
+
+    Routine for individual sports: the golf catalog is the current
+    tournament's field and the tennis/MMA ones are capped rankings, so a
+    followed athlete drops out of it while the user is adding another.
+    """
+    assert (
+        await _follow(client, {"league_id": "nba", "team_provider_keys": ["101", "102"]})
+    ).status_code == 200
+
+    monkeypatch.setitem(CATALOG_TEAMS, "nba", CATALOG_TEAMS["nba"][1:])  # 101 is gone
+    # 103 is new, so the catalog IS fetched — and has no entry for 101.
+    resp = await _follow(client, {"league_id": "nba", "team_provider_keys": ["101", "103"]})
+    assert resp.status_code == 200
+    assert fake_catalog["count"] == 2
+
+    teams = resp.json()["teams"]
+    assert [team["id"] for team in teams] == ["nba-harborlight-pelicans", "nba-larkspur-brigade"]
+    # With no catalog entry to go by, the kept team is shown as it was saved.
+    assert teams[0] == {
+        "id": "nba-harborlight-pelicans",
+        "league_id": "nba",
+        "name": "Harborlight Pelicans",
+        "abbreviation": "HLP",
+        "logo_url": "https://img.example.test/hlp.png",
+        "color": "#38bdf8",
+    }
+    async with db() as session:
+        rows = {row.id: row.provider_key for row in await repository.list_teams(session)}
+        assert rows == {"nba-harborlight-pelicans": "101", "nba-larkspur-brigade": "103"}
+
+    # A key that is neither followed nor listed is still refused — and it is
+    # the only one named, though the catalog lacks 101 just the same.
+    resp = await _follow(client, {"league_id": "nba", "team_provider_keys": ["101", "999"]})
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Unknown team key(s) for league 'nba': 999"
+    assert kick_spy == ["kicked", "kicked"]
+    async with db() as session:
+        assert {row.id for row in await repository.list_teams(session)} == {
+            "nba-harborlight-pelicans",
+            "nba-larkspur-brigade",
+        }
+
+
+async def test_follow_all_stored_keys_skips_catalog_fetch(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A save that picks nothing new never touches the provider.
+
+    So unfollowing a team works while ESPN is down, where it used to fail
+    on a catalog it had no use for.
+    """
+    assert (
+        await _follow(
+            client,
+            {"league_id": "nba", "team_provider_keys": ["101", "102"]},
+            {"league_id": "epl", "team_provider_keys": ["201"]},
+        )
+    ).status_code == 200
+    assert fake_catalog["count"] == 2
+
+    resp = await _follow(
+        client,
+        {"league_id": "nba", "team_provider_keys": ["102"]},
+        {"league_id": "epl", "team_provider_keys": ["201"]},
+    )
+    assert resp.status_code == 200
+    assert [team["id"] for team in resp.json()["teams"]] == [
+        "nba-stonegate-drifters",
+        "epl-wrenfield-athletic",
+    ]
+    assert fake_catalog["count"] == 2
+
+    async def boom(league: CatalogLeague) -> list[CatalogTeam]:
+        raise EspnCatalogError("upstream down")
+
+    monkeypatch.setattr(espn_catalog, "get_league_teams", boom)
+    # Still only stored picks: saved with the provider down.
+    resp = await _follow(client, {"league_id": "epl", "team_provider_keys": ["201"]})
+    assert resp.status_code == 200
+    # A new pick does need the catalog, and fails as it always has — before
+    # anything is written.
+    resp = await _follow(client, {"league_id": "epl", "team_provider_keys": ["201", "202"]})
+    assert resp.status_code == 502
+    async with db() as session:
+        assert {row.id for row in await repository.list_teams(session)} == {
+            "epl-wrenfield-athletic"
+        }
+    assert kick_spy == ["kicked", "kicked", "kicked"]
+
+
+async def test_follow_all_off_removes_only_untouched_seed_pref(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Leaving whole-competition follow takes the headline-only seed with it,
+    but never a row the user has changed.
+
+    Left on a league that is now followed by team, the seed would keep
+    silencing all but the start and final alerts of those teams.
+    """
+    for league_id, key, name in (
+        ("mlb", "301", "Quarry Bay Anglers"),
+        ("nhl", "401", "Frostmere Lanterns"),
+    ):
+        monkeypatch.setitem(
+            CATALOG_TEAMS,
+            league_id,
+            [CatalogTeam(provider_key=key, name=name, abbreviation=name[:3].upper())],
+        )
+    whole = ("nba", "epl", "mlb", "nhl", "ucl")
+    assert (
+        await _follow(
+            client,
+            *(
+                {"league_id": league_id, "team_provider_keys": [], "follow_all": True}
+                for league_id in whole
+            ),
+        )
+    ).status_code == 200
+
+    seed = follow_all_default_events()
+    async with db() as session:
+        prefs = await repository.prefs_by_scope(session)
+        assert {scope: pref.events for scope, pref in prefs.items()} == {
+            f"league:{league_id}": seed for league_id in whole
+        }
+        # epl was seeded by a build that knew five event types, not six.
+        prefs["league:epl"].events = {
+            event_type: enabled
+            for event_type, enabled in seed.items()
+            if event_type != "player_status"
+        }
+        await session.commit()
+    # The user muted one competition and changed a toggle on another.
+    for update in (
+        {"scope": "league:mlb", "muted": True},
+        {"scope": "league:nhl", "events": {"period_start": True}},
+    ):
+        assert (await client.put("/api/notifications/prefs", json=update)).status_code == 200
+
+    # Four of the five become team follows; ucl stays a whole competition.
+    resp = await _follow(
+        client,
+        {"league_id": "nba", "team_provider_keys": ["101"]},
+        {"league_id": "epl", "team_provider_keys": ["201"]},
+        {"league_id": "mlb", "team_provider_keys": ["301"]},
+        {"league_id": "nhl", "team_provider_keys": ["401"]},
+        {"league_id": "ucl", "team_provider_keys": [], "follow_all": True},
+    )
+    assert resp.status_code == 200
+
+    async with db() as session:
+        prefs = await repository.prefs_by_scope(session)
+    # nba (today's seed) and epl (the five-key one) were never touched: gone.
+    assert set(prefs) == {"league:mlb", "league:nhl", "league:ucl"}
+    assert prefs["league:mlb"].muted is True
+    assert prefs["league:mlb"].events == seed
+    assert prefs["league:nhl"].muted is False
+    assert prefs["league:nhl"].events == {**seed, "period_start": True}
+    # Still followed in whole, so its seed is still what it should have.
+    assert prefs["league:ucl"].muted is False
+    assert prefs["league:ucl"].events == seed
+
+
+async def test_follow_all_on_seeds_only_a_league_without_a_pref_row(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+) -> None:
+    """The headline-only seed is a default, so it yields to a row that exists.
+
+    The pref upsert merges: seeding over the user's row would turn their
+    explicit choices back into the seed's.
+    """
+    assert (
+        await _follow(
+            client,
+            {"league_id": "nba", "team_provider_keys": ["101"]},
+            {"league_id": "epl", "team_provider_keys": ["201"]},
+        )
+    ).status_code == 200
+    chosen = {"period_start": True, "final": False}  # the reverse of the seed
+    resp = await client.put(
+        "/api/notifications/prefs", json={"scope": "league:nba", "events": chosen}
+    )
+    assert resp.status_code == 200
+
+    assert (
+        await _follow(
+            client,
+            {"league_id": "nba", "team_provider_keys": [], "follow_all": True},
+            {"league_id": "epl", "team_provider_keys": [], "follow_all": True},
+        )
+    ).status_code == 200
+
+    async with db() as session:
+        prefs = await repository.prefs_by_scope(session)
+    assert {scope: pref.events for scope, pref in prefs.items()} == {
+        "league:nba": chosen,
+        "league:epl": follow_all_default_events(),
+    }
+
+
+async def test_seed_like_pref_on_a_pick_teams_league_survives_saves(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+) -> None:
+    """Only a league that just LEFT whole-competition follow can lose a seed.
+
+    A row on a league followed by team all along is the user's own, even
+    when its toggles happen to agree with the seed's — ``period_start``
+    off is the first thing anyone switches.  Judged by its content alone,
+    every save would delete it and switch those alerts back on.
+    """
+    by_team = {"league_id": "nba", "team_provider_keys": ["101"]}
+    selections = (by_team, {"league_id": "epl", "team_provider_keys": [], "follow_all": True})
+    assert (await _follow(client, *selections)).status_code == 200
+    own = {"period_start": False}
+    assert follow_all_default_events()["period_start"] is False
+    resp = await client.put("/api/notifications/prefs", json={"scope": "league:nba", "events": own})
+    assert resp.status_code == 200
+
+    # A plain re-save...
+    assert (await _follow(client, *selections)).status_code == 200
+    async with db() as session:
+        prefs = await repository.prefs_by_scope(session)
+    assert prefs["league:nba"].events == own
+
+    # ...and one in which a DIFFERENT league leaves whole-competition follow.
+    assert (
+        await _follow(client, by_team, {"league_id": "epl", "team_provider_keys": ["201"]})
+    ).status_code == 200
+    async with db() as session:
+        prefs = await repository.prefs_by_scope(session)
+    assert {scope: pref.events for scope, pref in prefs.items()} == {"league:nba": own}
+
+
+async def test_resave_does_not_seed_a_league_that_was_already_followed_in_whole(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+) -> None:
+    """The seed marks a league BECOMING a whole-competition follow, once.
+
+    A league that already was one and has no row is not waiting for its
+    seed — it was followed by a build that wrote none, or the row is gone
+    on purpose — and a re-save must not quietly narrow its alerts to the
+    headline two.
+    """
+    whole = {"league_id": "nba", "team_provider_keys": [], "follow_all": True}
+    assert (await _follow(client, whole)).status_code == 200
+    async with db() as session:
+        await session.execute(delete(NotificationPrefORM))
+        await session.commit()
+
+    assert (await _follow(client, whole)).status_code == 200
+    async with db() as session:
+        assert await repository.prefs_by_scope(session) == {}
+
+
+async def test_follow_all_off_keeps_an_empty_pref_row(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+) -> None:
+    """A row with no toggles at all is nobody's seed.
+
+    Muting a league and unmuting it again leaves one behind.  Every key it
+    holds equals the seed's, vacuously — so "untouched seed" has to ask for
+    at least one key, or leaving whole-competition follow would delete a
+    row the user created.
+    """
+    by_team = {"league_id": "nba", "team_provider_keys": ["101"]}
+    assert (await _follow(client, by_team)).status_code == 200
+    for muted in (True, False):
+        resp = await client.put(
+            "/api/notifications/prefs", json={"scope": "league:nba", "muted": muted}
+        )
+        assert resp.status_code == 200
+
+    # The row exists, so becoming a whole competition seeds nothing over it...
+    assert (
+        await _follow(client, {"league_id": "nba", "team_provider_keys": [], "follow_all": True})
+    ).status_code == 200
+    async with db() as session:
+        prefs = await repository.prefs_by_scope(session)
+    assert (prefs["league:nba"].muted, prefs["league:nba"].events) == (False, {})
+
+    # ...and it is still there when the league goes back to picked teams.
+    assert (await _follow(client, by_team)).status_code == 200
+    async with db() as session:
+        prefs = await repository.prefs_by_scope(session)
+    assert set(prefs) == {"league:nba"}
+    assert (prefs["league:nba"].muted, prefs["league:nba"].events) == (False, {})
+
+
+# ---------------------------------------------------------------------------
+# Current selection — what the wizard reopens on
+# ---------------------------------------------------------------------------
+
+
+async def test_setup_selection_omits_siblings_and_round_trips(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+) -> None:
+    """The followed set reads back as the selections that produced it, and
+    saving what was read back changes nothing."""
+    resp = await _follow(
+        client,
+        {"league_id": "nba", "team_provider_keys": ["102", "101"]},
+        {"league_id": "ucl", "team_provider_keys": [], "follow_all": True},
+        {"league_id": "euros", "team_provider_keys": ["478"]},
+    )
+    assert resp.status_code == 200
+    # The national pick stored its whole slate of sibling competitions as
+    # leagues — two of which the picker offers in their own right.
+    assert {"worldcup", "nations-league", "euroq", "friendly"} <= {
+        league["id"] for league in resp.json()["leagues"]
+    }
+    assert fake_catalog["count"] == 2
+
+    resp = await client.get("/api/setup/selection")
+    assert resp.status_code == 200
+    selection = resp.json()
+    # Only what the user chose, in stored (id) order whatever order it was
+    # picked in: no sibling, and no teams listed under a whole competition.
+    assert selection == {
+        "selections": [
+            {
+                "league_id": "euros",
+                "follow_all": False,
+                "teams": [
+                    {
+                        "provider_key": "478",
+                        "name": "Verdania",
+                        "abbreviation": "VRD",
+                        "logo_url": "https://img.example.test/verdania.png",
+                        "color": "#22d3ee",
+                    }
+                ],
+            },
+            {
+                "league_id": "nba",
+                "follow_all": False,
+                "teams": [
+                    {
+                        "provider_key": "101",
+                        "name": "Harborlight Pelicans",
+                        "abbreviation": "HLP",
+                        "logo_url": "https://img.example.test/hlp.png",
+                        "color": "#38bdf8",
+                    },
+                    {
+                        "provider_key": "102",
+                        "name": "Stonegate Drifters",
+                        "abbreviation": "SGD",
+                        "logo_url": None,
+                        "color": "#f59e0b",
+                    },
+                ],
+            },
+            {"league_id": "ucl", "follow_all": True, "teams": []},
+        ]
+    }
+    # Read from the database alone.
+    assert fake_catalog["count"] == 2
+
+    before = await _dump(db)
+    resp = await client.post("/api/setup/follow", json=_as_follow_request(selection))
+    assert resp.status_code == 200
+    after = await _dump(db)
+    for name, rows in before.items():
+        assert after[name] == rows, name
+    # Sent back as read, every pick is a stored one: no catalog fetch either.
+    assert fake_catalog["count"] == 2
+    assert (await client.get("/api/setup/selection")).json() == selection
+
+
+async def test_setup_selection_whole_competition_lists_no_teams(
+    client: AsyncClient, fake_catalog: dict[str, int], kick_spy: list[str]
+) -> None:
+    """A league followed in whole reads back as that and nothing more.
+
+    The follow route merges two selections of one league, so a league can
+    be stored both ways at once — but the wizard's modes are exclusive, and
+    it could not show team picks under a whole-competition follow.
+    """
+    resp = await _follow(
+        client,
+        {"league_id": "nba", "team_provider_keys": ["101"]},
+        {"league_id": "nba", "team_provider_keys": [], "follow_all": True},
+    )
+    assert resp.status_code == 200
+    assert [league["follow_all"] for league in resp.json()["leagues"]] == [True]
+    assert [team["id"] for team in resp.json()["teams"]] == ["nba-harborlight-pelicans"]
+
+    resp = await client.get("/api/setup/selection")
+    assert resp.status_code == 200
+    assert resp.json() == {"selections": [{"league_id": "nba", "follow_all": True, "teams": []}]}
+
+
+async def test_setup_selection_lists_only_picker_leagues(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    fake_catalog: dict[str, int],
+    kick_spy: list[str],
+) -> None:
+    """Only a league the picker offers can come back as a selection.
+
+    "Offered" is narrower than "known to the catalog": the internal sibling
+    competitions resolve by id but are never shown as picks, so the wizard
+    would have nowhere to put one.
+
+    The cost is a documented limit, pinned at the end: a league the editor
+    cannot show is not in what it posts back, so the first save from it
+    unfollows that league (reachable only through a hand-authored
+    ``teams.yaml``; the README says so).
+    """
+    resp = await client.get("/api/setup/selection")
+    assert resp.status_code == 200
+    assert resp.json() == {"selections": []}
+
+    async with db() as session:
+        await repository.replace_followed(
+            session,
+            [
+                # A league from outside the catalog altogether, with a team.
+                domain.League(
+                    id="pinnacle-basketball",
+                    sport=domain.Sport.BASKETBALL,
+                    name="Pinnacle Basketball League",
+                    provider="espn",
+                    provider_key="basketball/pinnacle",
+                ),
+                # An internal sibling competition, followed in whole.
+                domain.League(
+                    id="friendly",
+                    sport=domain.Sport.SOCCER,
+                    name="International Friendly",
+                    provider="espn",
+                    provider_key="soccer/fifa.friendly",
+                    follow_all=True,
+                ),
+            ],
+            [
+                domain.Team(
+                    id="ashport-comets",
+                    league_id="pinnacle-basketball",
+                    name="Ashport Comets",
+                    abbreviation="ASH",
+                    provider_key="ashport-comets",
+                )
+            ],
+        )
+        await session.commit()
+    assert espn_catalog.get_catalog_league("friendly") is not None
+
+    resp = await client.get("/api/setup/selection")
+    assert resp.status_code == 200
+    assert resp.json() == {"selections": []}
+
+    # The editor opened empty; adding one team from it saves only that team.
+    resp = await _follow(client, {"league_id": "nba", "team_provider_keys": ["101"]})
+    assert resp.status_code == 200
+    async with db() as session:
+        assert [league.id for league in await repository.list_leagues(session)] == ["nba"]
+        assert [team.id for team in await repository.list_teams(session)] == [
+            "nba-harborlight-pelicans"
+        ]
 
 
 # ---------------------------------------------------------------------------

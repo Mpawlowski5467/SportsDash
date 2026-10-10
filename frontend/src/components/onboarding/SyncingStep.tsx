@@ -16,6 +16,12 @@ export interface Props {
  * followed teams just changed underneath them), so invalidate the lot,
  * then poll /today until games appear — or stop waiting after ~20s and
  * let the dashboard fill in live.
+ *
+ * After an edit the wait can end before the refresh has fetched anything:
+ * the follows that were kept still have their games, so the first /today
+ * may already hold one. That is fine — what the refresh loads for anything
+ * newly followed arrives later, when App sees the refresh end and refetches
+ * everything.
  */
 export default function SyncingStep({ onDone }: Props) {
   const queryClient = useQueryClient();

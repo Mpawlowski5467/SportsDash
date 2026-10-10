@@ -10,6 +10,7 @@ import type {
   Bracket,
   CatalogLeaguesResponse,
   CatalogTeamsResponse,
+  CurrentSelectionsResponse,
   FollowRequest,
   Game,
   GameDetail,
@@ -218,6 +219,10 @@ export const api = {
 
   setupFollow: (body: FollowRequest) =>
     post<TeamsResponse>("/setup/follow", body),
+
+  // The followed set as wizard selections — what an edit starts from. Read
+  // from the database alone, so it answers while ESPN is down.
+  setupSelection: () => get<CurrentSelectionsResponse>("/setup/selection"),
 
   notificationPrefs: () =>
     get<NotificationPrefsResponse>("/notifications/prefs"),

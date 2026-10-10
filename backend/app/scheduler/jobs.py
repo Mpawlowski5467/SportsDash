@@ -49,6 +49,8 @@ from app.scheduler.live import (  # noqa: F401
 from app.scheduler.refresh import (  # noqa: F401
     _attach_player_photos,
     daily_refresh,
+    daily_refresh_running,
+    note_follow_change,
     refresh_locations,
     refresh_news,
     refresh_pregame_rosters,
@@ -136,13 +138,20 @@ def setup_scheduler() -> AsyncIOScheduler:
 
 
 def kick_daily_refresh() -> None:
-    """Spawn ``daily_refresh()`` as a fire-and-forget background task.
+    """Mark the followed set changed, then spawn ``daily_refresh()``.
 
     Called by the setup routes right after the followed set changes so
     the new teams' data starts loading immediately — a route can't await
     a multi-source refresh inline (and must not import ``app.main`` for
     its task spawner: circular).
+
+    The mark is what makes the kick count when a refresh is already
+    running: the spawned task then skips like any overlapping caller, but
+    the running one stops its now-stale pass at the next checkpoint and
+    starts over in the same task.  It is made here, synchronously and
+    before the spawn, so it cannot trail the save by a task switch.
     """
+    note_follow_change()
     background.spawn(daily_refresh(), "kicked-daily-refresh")
 
 

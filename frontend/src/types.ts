@@ -512,6 +512,10 @@ export interface Meta {
 export interface SetupStatus {
   onboarded: boolean;
   followed_team_count: number;
+  // A `daily_refresh` is in flight. Every save kicks one, and the flag stays
+  // up until a whole pass has run against the new followed set — so its
+  // clearing is the cue to refetch what that pass loaded.
+  refreshing: boolean;
 }
 
 export interface CatalogLeague {
@@ -563,6 +567,19 @@ export interface FollowSelection {
 
 export interface FollowRequest {
   selections: FollowSelection[];
+}
+
+/** One league of the followed set, as the wizard selection that made it. */
+export interface CurrentSelection {
+  league_id: string;
+  follow_all: boolean;
+  // The followed picks, in catalog shape so the picker can show one the
+  // live catalog no longer lists. Empty for a whole-competition follow.
+  teams: CatalogTeam[];
+}
+
+export interface CurrentSelectionsResponse {
+  selections: CurrentSelection[];
 }
 
 // --- Notification preferences (Phase 3b) ----------------------------------

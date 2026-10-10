@@ -3,6 +3,7 @@ import type { CatalogLeague, Sport } from "../../types";
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from "./buttons";
 import { apiErrorMessage } from "./errors";
 import MiniSpinner from "../loaders/MiniSpinner";
+import { offeredLeagues } from "./selection";
 
 const SPORT_ORDER: Sport[] = [
   "basketball",
@@ -41,7 +42,14 @@ export interface Props {
   // (confederation competitions and every sport not organised by country).
   // Empty means no narrowing at all — skipping the map shows everything.
   countryCodes: string[];
+  // Every league selected at some point this run, deselected ones included.
+  // Their cards outlive the country filter (see `offeredLeagues`), so a
+  // deselected one is still there, unlit, to be clicked back on.
+  rememberedIds: string[];
   selectedIds: string[];
+  // The leagues followed in whole — always a subset of `selectedIds`. A
+  // deselected league may remember that it was one, but must not show it:
+  // its chip has to read as plainly off.
   followAllIds: string[];
   onToggle: (leagueId: string) => void;
   onToggleFollowAll: (leagueId: string) => void;
@@ -159,6 +167,7 @@ function LeagueChip({
 /** League multi-select: cards in a grid, grouped by sport. */
 export default function LeagueStep({
   countryCodes,
+  rememberedIds,
   selectedIds,
   followAllIds,
   onToggle,
@@ -195,20 +204,17 @@ export default function LeagueStep({
   }
 
   // Narrow to the chosen countries, keeping everything that has no country
-  // of its own. A league already SELECTED always survives the filter — going
-  // back and unpicking a country must not silently drop a league the user
-  // chose while it was picked, which would be a change they never made and
-  // would not see until the review step.
-  const chosen = new Set(countryCodes);
-  const leagues =
-    chosen.size === 0
-      ? leaguesQuery.data.leagues
-      : leaguesQuery.data.leagues.filter(
-          (league) =>
-            league.country_code === null ||
-            chosen.has(league.country_code) ||
-            selectedIds.includes(league.id),
-        );
+  // of its own. A league selected at any point this run always survives the
+  // filter — going back and unpicking a country must not silently drop a
+  // league the user chose while it was picked, which would be a change they
+  // never made and would not see until the review step. And it survives
+  // being deselected too: the card stays, unlit, so a second click undoes
+  // a stray one.
+  const leagues = offeredLeagues(
+    leaguesQuery.data.leagues,
+    countryCodes,
+    rememberedIds,
+  );
   // National-team competitions get their own group, separate from club
   // leagues; club leagues stay grouped by sport.
   const nationalLeagues = leagues.filter((league) => league.national);

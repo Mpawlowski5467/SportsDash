@@ -61,7 +61,9 @@ PostgreSQL, which enforces them unconditionally — so the desktop app was
 the one place where deleting something could quietly leave rows pointing at
 a parent that no longer existed. Re-picking your teams in the setup wizard
 did exactly that: it dropped leagues and left their archived standings
-tables behind.
+tables behind. (Editing your teams no longer works that way at all: *Manage
+teams* now keeps everything you still follow, with its data, and removes
+only what you take out.)
 
 Foreign keys are now enforced here too, which means those leftover rows
 have to go — under enforcement, anything that touched one would fail on a
