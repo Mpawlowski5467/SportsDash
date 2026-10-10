@@ -1,12 +1,17 @@
 /**
- * The adaptive polling policy: 30s while a game is live, 60s on a game
- * day, 5 minutes otherwise. TZ pinned to America/New_York by the test
- * script.
+ * The polling policies.
+ *
+ * Today: 30s while a game is live, 60s on a game day, 5 minutes otherwise.
+ * TZ pinned to America/New_York by the test script.
+ *
+ * Setup status: every 5s while the backend reports a refresh in flight,
+ * otherwise never — it is how the app learns that the refresh a save kicked
+ * has finished.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { todayRefetchInterval } from "./hooks";
-import type { Game, TodayResponse } from "./types";
+import { statusRefetchInterval, todayRefetchInterval } from "./hooks";
+import type { Game, SetupStatus, TodayResponse } from "./types";
 
 function makeGame(overrides: Partial<Game>): Game {
   return {
@@ -65,5 +70,25 @@ describe("todayRefetchInterval", () => {
   it("treats finals as idle (5 minutes)", () => {
     const data = response([makeGame({ phase: "final" })]);
     expect(todayRefetchInterval(data)).toBe(300_000);
+  });
+});
+
+describe("statusRefetchInterval", () => {
+  function status(refreshing: boolean): SetupStatus {
+    return { onboarded: true, followed_team_count: 3, refreshing };
+  }
+
+  it("polls every 5s while a refresh is running", () => {
+    expect(statusRefetchInterval(status(true))).toBe(5_000);
+  });
+
+  it("stops polling once the refresh has finished", () => {
+    // `false`, not a long interval: TanStack Query reads it as "no timer",
+    // and an idle app has no reason to ask.
+    expect(statusRefetchInterval(status(false))).toBe(false);
+  });
+
+  it("does not poll before the status has loaded", () => {
+    expect(statusRefetchInterval(undefined)).toBe(false);
   });
 });

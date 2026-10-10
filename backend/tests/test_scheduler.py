@@ -15,11 +15,13 @@ data is fictional.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from typing import AsyncIterator
 
 import pytest
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -28,7 +30,14 @@ from sqlalchemy.ext.asyncio import (
 from app.config import get_settings
 from app.models import domain
 from tests.db_engine import create_test_schema, make_test_engine
-from app.models.orm import EventORM, NotificationPrefORM, TeamCompetitionORM, TeamORM
+from app.models.orm import (
+    EventORM,
+    GameORM,
+    NotificationPrefORM,
+    NotificationSentORM,
+    TeamCompetitionORM,
+    TeamORM,
+)
 from app.providers import registry
 from app import background
 from app.scheduler import common as scheduler_common
@@ -951,10 +960,10 @@ async def test_live_tick_db_error_on_one_game_still_finishes_the_tick(
     ]
     real_apply = repository.apply_game_state
 
-    async def flaky_apply(session: AsyncSession, state: domain.GameState) -> None:
+    async def flaky_apply(session: AsyncSession, state: domain.GameState) -> GameORM | None:
         if state.game_id == doomed:
             raise RuntimeError("simulated DB failure")
-        await real_apply(session, state)
+        return await real_apply(session, state)
 
     monkeypatch.setattr(repository, "apply_game_state", flaky_apply)
 
@@ -969,6 +978,63 @@ async def test_live_tick_db_error_on_one_game_still_finishes_the_tick(
     assert processed is not None and processed.phase == domain.GamePhase.FINAL.value
     # ...and the tick reached its trailing standings kick.
     assert fake_provider.standings_calls == [PRIMARY_LEAGUE]
+
+
+async def test_live_tick_sends_nothing_for_games_deleted_mid_tick(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    fake_provider: FakeProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A game unfollowed while the tick was fetching is not announced.
+
+    The tick loads its games, then awaits the scoreboard — which is when a
+    follow save lands and deletes some of them.  The first deleted game
+    fails on its own (its loaded row no longer matches anything) and rolls
+    the session back, which expires every other loaded row.  From then on
+    a deleted game simply is not there to load: with that not checked, its
+    FINAL was still pushed, for a team unfollowed a second earlier, and
+    ledgered for a game that no longer exists.  Hence two deleted games,
+    either side of one that stays.
+    """
+    kept = f"{PROVIDER_ID}:nsu-kept"
+    gone = [f"{PROVIDER_ID}:nsu-gone-a", f"{PROVIDER_ID}:nsu-gone-b"]
+    polled = (gone[0], kept, gone[1])
+    async with db() as session:
+        await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
+        await repository.upsert_team(session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global"))
+        await session.commit()
+    for game_id in polled:
+        await _seed_in_progress_game(db, game_id, PRIMARY_LEAGUE, team_id=TEAM_ID)
+
+    async def get_live_games(league: domain.League) -> list[domain.Game]:
+        # The save lands while the tick is waiting on the scoreboard.
+        async with db() as other:
+            await other.execute(delete(GameORM).where(GameORM.id.in_(gone)))
+            await other.commit()
+        return [
+            _live_game(game_id, PRIMARY_LEAGUE, phase=domain.GamePhase.FINAL, home_team_id=TEAM_ID)
+            for game_id in polled
+        ]
+
+    monkeypatch.setattr(fake_provider, "get_live_games", get_live_games)
+    sent: list[domain.GameEvent] = []
+
+    async def fake_send_event(event: domain.GameEvent) -> bool:
+        sent.append(event)
+        return True
+
+    monkeypatch.setattr(jobs.notify, "send_event", fake_send_event)
+
+    await jobs.live_tick()
+    await _drain_kicked_tasks()
+
+    async with db() as session:
+        games = (await session.execute(select(GameORM.id))).scalars().all()
+        ledger = (await session.execute(select(NotificationSentORM.dedupe_key))).scalars().all()
+    assert games == [kept]
+    assert {event.game_id for event in sent} == {kept}
+    assert ledger == [f"{kept}:final"]
 
 
 async def test_events_tick_db_error_on_one_event_still_finishes_the_tick(
@@ -1260,14 +1326,54 @@ async def test_attach_player_photos_backfills_missing_only_and_caps(
 
 
 # ---------------------------------------------------------------------------
-# daily_refresh single-flight guard
+# daily_refresh single-flight guard, and its restart when the follows change
 # ---------------------------------------------------------------------------
 #
 # daily_refresh is reachable from the daily cron, the startup spawn, and the
 # setup-wizard kick, and its upserts are SELECT-then-insert — overlapping
 # runs double-insert and the loser logs an IntegrityError.  The module-level
-# lock makes an overlapping caller a no-op; these tests stub the sub-jobs
-# and prove the guard holds across two of the entry points.
+# lock makes an overlapping caller a no-op.  A kick's own task is no
+# exception, but a kick also means the followed set was just replaced, so
+# the run holding the lock abandons its pass at the next checkpoint and runs
+# one more in the same task.  These tests prove both, stubbing whichever
+# sub-jobs they are not about.
+
+# Every daily_refresh stage after schedules, in the order a pass runs them.
+_LATER_STAGES = (
+    "refresh_standings",
+    "refresh_rosters",
+    "refresh_news",
+    "refresh_team_info",
+    "refresh_locations",
+    "refresh_competition_stadiums",
+    "refresh_game_venue_coords",
+)
+
+
+def _stub_later_stages(
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[str] | None = None,
+    *,
+    keep: tuple[str, ...] = (),
+) -> None:
+    """Replace every daily_refresh stage after schedules, bar those in ``keep``.
+
+    No-ops by default, so a test exercises only what it is about — and so
+    the real news stage, which binds its own ``session_scope``, never
+    reaches past the throwaway database.  Given ``calls``, each stage
+    records its name (minus the ``refresh_`` prefix) instead.
+    """
+
+    def stub(name: str):
+        async def stage() -> None:
+            if calls is not None:
+                calls.append(name.removeprefix("refresh_"))
+
+        return stage
+
+    for name in _LATER_STAGES:
+        if name not in keep:
+            monkeypatch.setattr(scheduler_refresh, name, stub(name))
 
 
 def _stub_daily_refresh_subjobs(
@@ -1280,8 +1386,9 @@ def _stub_daily_refresh_subjobs(
 
     refresh_schedules stands in as the instrumented sub-job (records the
     call, signals it has started, then blocks until released); everything
-    else is a no-op so the test exercises only the guard.  Stale-game
-    pruning still runs — against the throwaway database via patched_scope.
+    else is a no-op so the test exercises only the guard.  The two prunes
+    around the stages (unbacked rows before, stale games after) still run —
+    against the throwaway database via patched_scope.
     """
 
     async def fake_refresh_schedules() -> None:
@@ -1289,20 +1396,8 @@ def _stub_daily_refresh_subjobs(
         started.set()
         await release.wait()
 
-    async def noop() -> None:
-        return None
-
     monkeypatch.setattr(scheduler_refresh, "refresh_schedules", fake_refresh_schedules)
-    for name in (
-        "refresh_standings",
-        "refresh_rosters",
-        "refresh_news",
-        "refresh_team_info",
-        "refresh_locations",
-        "refresh_competition_stadiums",
-        "refresh_game_venue_coords",
-    ):
-        monkeypatch.setattr(scheduler_refresh, name, noop)
+    _stub_later_stages(monkeypatch)
 
 
 async def test_daily_refresh_skips_an_overlapping_run(
@@ -1333,12 +1428,17 @@ async def test_daily_refresh_skips_an_overlapping_run(
     assert calls == ["schedules", "schedules"]
 
 
-async def test_kick_daily_refresh_is_single_flight_across_kicks(
+async def test_kick_during_refresh_reruns_exactly_once(
     db: async_sessionmaker[AsyncSession],
     patched_scope: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Two overlapping setup-wizard kicks run the refresh body only once."""
+    """Saves that land during a pass add up to ONE more pass.
+
+    Each overlapping kick's own task still skips (the lock is held); what
+    they leave behind is the mark that the followed set changed, and the
+    running task acts on it once, however many kicks made it.
+    """
     started = asyncio.Event()
     release = asyncio.Event()
     calls: list[str] = []
@@ -1347,11 +1447,418 @@ async def test_kick_daily_refresh_is_single_flight_across_kicks(
     jobs.kick_daily_refresh()
     try:
         await started.wait()
-        jobs.kick_daily_refresh()  # overlaps the in-flight run
+        jobs.kick_daily_refresh()  # both overlap the in-flight pass
+        jobs.kick_daily_refresh()
     finally:
         release.set()
     await _drain_kicked_tasks()
-    assert calls == ["schedules"]
+    assert calls == ["schedules", "schedules"]
+
+
+async def test_overlapping_run_logs_whether_the_running_pass_will_restart(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A kick's skipped task must not read like a dropped kick.
+
+    Every overlapping caller skips, the kick's own task included, and they
+    all used to log the same "skipping" line — which for a save during a
+    refresh looked exactly like the old bug, where the kick really was
+    lost.  The kick has marked the followed set changed by then, so the
+    line can say what happens next.
+    """
+
+    def skip_lines() -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if "already running" in record.getMessage()
+        ]
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+    _stub_daily_refresh_subjobs(monkeypatch, started, release, calls)
+    caplog.set_level(logging.INFO, logger=scheduler_refresh.logger.name)
+
+    first = asyncio.create_task(jobs.daily_refresh())
+    try:
+        await started.wait()
+        # The cron or the startup spawn: the run in flight is doing its work.
+        await jobs.daily_refresh()
+        assert skip_lines() == ["daily_refresh: a refresh is already running — skipping"]
+
+        caplog.clear()
+        jobs.kick_daily_refresh()
+        await asyncio.sleep(0)  # the kicked task runs, finds the lock held, returns
+        assert skip_lines() == [
+            "daily_refresh: a refresh is already running and will restart "
+            "for the new followed set — skipping"
+        ]
+    finally:
+        release.set()
+    await first
+    await _drain_kicked_tasks()
+    assert calls == ["schedules", "schedules"]
+
+
+async def test_superseded_refresh_skips_remaining_stages(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pass the followed set changed under stops after the stage in flight.
+
+    Everything after it — the stale-game prune included, which is only safe
+    once schedules are fresh — is left to the pass that starts over.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+    _stub_daily_refresh_subjobs(monkeypatch, started, release, calls)
+    _stub_later_stages(monkeypatch, calls)
+
+    async def fake_prune_stale_games(session: AsyncSession, now_utc: object) -> int:
+        calls.append("prune_stale_games")
+        return 0
+
+    monkeypatch.setattr(repository, "prune_stale_games", fake_prune_stale_games)
+
+    jobs.kick_daily_refresh()
+    try:
+        await started.wait()
+        jobs.kick_daily_refresh()  # the followed set changes mid-schedules
+    finally:
+        release.set()
+    await _drain_kicked_tasks()
+
+    assert calls == [
+        "schedules",  # pass 1 ends here
+        "schedules",
+        "standings",
+        "rosters",
+        "news",
+        "team_info",
+        "locations",
+        "competition_stadiums",
+        "game_venue_coords",
+        "prune_stale_games",
+    ]
+
+
+async def test_kick_is_seen_by_the_running_pass_before_the_kicked_task_runs(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The kick itself marks the followed set changed, not the task it spawns.
+
+    The blocked stage is released BEFORE the kick here, with no await in
+    between, so the running pass (a cron-style one, to show it need not
+    have been kicked itself) resumes ahead of the kicked task.  Only a mark
+    made synchronously is there for its very next checkpoint.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+    _stub_daily_refresh_subjobs(monkeypatch, started, release, calls)
+
+    async def fake_refresh_standings() -> None:
+        calls.append("standings")
+
+    monkeypatch.setattr(scheduler_refresh, "refresh_standings", fake_refresh_standings)
+
+    cron_run = asyncio.create_task(jobs.daily_refresh())
+    await started.wait()
+    release.set()
+    jobs.kick_daily_refresh()
+    await cron_run
+    await _drain_kicked_tasks()
+
+    assert calls == ["schedules", "schedules", "standings"]
+
+
+async def test_superseded_schedule_fetch_is_not_written(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    fake_provider: FakeProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fetch that comes back after a save is discarded, not stored.
+
+    The fetch is where a pass spends its time, so it is where a save lands;
+    what it returns was asked for on behalf of the old followed set.  Run
+    through ``daily_refresh`` because a stage on its own is never
+    superseded — there is no pass for the change to be measured against.
+    """
+    async with db() as session:
+        await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
+        await repository.upsert_team(session, _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global"))
+        await session.commit()
+
+    fetches: list[str] = []
+
+    async def get_schedule(league, team, start: date, end: date):
+        game_id = f"{PROVIDER_ID}:fetch-{len(fetches) + 1}"
+        fetches.append(game_id)
+        if len(fetches) == 1:
+            # The save lands while the first fetch is on the wire.
+            scheduler_refresh.note_follow_change()
+        return [_game(game_id, PRIMARY_LEAGUE, home_team_id=TEAM_ID)]
+
+    monkeypatch.setattr(fake_provider, "get_schedule", get_schedule)
+    _stub_later_stages(monkeypatch)
+
+    await jobs.daily_refresh()
+
+    assert fetches == [f"{PROVIDER_ID}:fetch-1", f"{PROVIDER_ID}:fetch-2"]
+    ids = await _game_ids(db)
+    assert f"{PROVIDER_ID}:fetch-1" not in ids, "the superseded fetch was written"
+    assert f"{PROVIDER_ID}:fetch-2" in ids, "the pass that started over wrote nothing"
+
+
+SECOND_TEAM_ID = "harborline-southbank-rovers"
+
+# Every provider fetch one pass makes over the followed set seeded by
+# test_superseded_pass_makes_no_fetch_after_the_one_a_save_landed_in, in the
+# order it makes them: teams, leagues and follow_all rows are each read
+# sorted by id, and a team's sibling competitions follow its own league.
+_PASS_FETCHES = (
+    f"schedule:{GOLF_LEAGUE}/{GOLFER_TEAM_ID}",
+    f"schedule:{PRIMARY_LEAGUE}/{TEAM_ID}",
+    f"schedule:{SIBLING_LEAGUE}/{TEAM_ID}",
+    f"schedule:{PRIMARY_LEAGUE}/{SECOND_TEAM_ID}",
+    f"competition:{FOLLOW_ALL_LEAGUE}",
+    f"competition:{GOLF_FOLLOW_ALL}",
+    f"events:{GOLF_LEAGUE}",
+    f"events:{GOLF_FOLLOW_ALL}",
+    f"standings:{SIBLING_LEAGUE}",
+    f"standings:{FOLLOW_ALL_LEAGUE}",
+    f"standings:{GOLF_LEAGUE}",
+    f"standings:{PRIMARY_LEAGUE}",
+    f"standings:{GOLF_FOLLOW_ALL}",
+    f"roster:{GOLFER_TEAM_ID}",
+    f"roster:{TEAM_ID}",
+    f"roster:{SECOND_TEAM_ID}",
+)
+
+
+class _SaveDuringFetchProvider(FakeProvider):
+    """Logs every fetch, and has a save land while a chosen one is on the wire.
+
+    Schedule, competition and event fetches each return one row whose id
+    carries the fetch's place in the log, so what reached the database can
+    be traced back to the fetch that asked for it.
+    """
+
+    def __init__(self, save_lands_in: int) -> None:
+        super().__init__()
+        self.save_lands_in = save_lands_in
+        self.log: list[str] = []
+
+    def _fetch(self, label: str) -> str:
+        """Record one fetch; returns the id for the row it will hand back."""
+        place = len(self.log)
+        self.log.append(label)
+        if place == self.save_lands_in:
+            scheduler_refresh.note_follow_change()
+        return f"{PROVIDER_ID}:fetch-{place}"
+
+    async def get_schedule(self, league, team, start: date, end: date):
+        row_id = self._fetch(f"schedule:{league.id}/{team.id}")
+        return [_game(row_id, league.id, home_team_id=team.id)]
+
+    async def get_competition_schedule(self, league, start: date, end: date):
+        return [_game(self._fetch(f"competition:{league.id}"), league.id)]
+
+    async def get_events(self, league, start: date, end: date):
+        row_id = self._fetch(f"events:{league.id}")
+        return [_event(row_id, league.id, phase=domain.GamePhase.SCHEDULED)]
+
+    async def get_standings(self, league):
+        self._fetch(f"standings:{league.id}")
+        return domain.Standings(league_id=league.id, season="2026", rows=(), fetched_at=utcnow())
+
+    async def get_roster(self, league, team, *, with_stat_lines: bool = True):
+        self._fetch(f"roster:{team.id}")
+        return domain.Roster(team_id=team.id, players=(), fetched_at=utcnow())
+
+
+@pytest.mark.parametrize("lands_in", range(len(_PASS_FETCHES)), ids=_PASS_FETCHES)
+async def test_superseded_pass_makes_no_fetch_after_the_one_a_save_landed_in(
+    lands_in: int,
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wherever a save lands, the stale pass stops at its next checkpoint.
+
+    One case per fetch of a pass over a set with every kind of source (a
+    team with a sibling competition, a second team, whole-competition
+    follows, leaderboard leagues).  The fetch in flight finishes — nothing
+    is cancelled — but the pass makes no other for the old set, and a
+    schedule or event fetch that came back superseded is not written.
+    """
+    provider = _SaveDuringFetchProvider(lands_in)
+    monkeypatch.setitem(registry._providers, PROVIDER_ID, provider)
+    async with db() as session:
+        for league in (
+            _league(PRIMARY_LEAGUE),
+            _league(SIBLING_LEAGUE),
+            _league(FOLLOW_ALL_LEAGUE, follow_all=True),
+            _golf_league(GOLF_LEAGUE),
+            _golf_league(GOLF_FOLLOW_ALL, follow_all=True),
+        ):
+            await repository.upsert_league(session, league)
+        await session.flush()  # parents before children: postgres enforces FKs
+        for team in (
+            _plain_team(TEAM_ID, PRIMARY_LEAGUE, "nsu-global"),
+            _plain_team(SECOND_TEAM_ID, PRIMARY_LEAGUE, "sbr-global"),
+            _golf_team(GOLFER_TEAM_ID, GOLF_LEAGUE, espn_id=GOLFER_ESPN_ID),
+        ):
+            await repository.upsert_team(session, team)
+        await session.flush()
+        session.add(
+            TeamCompetitionORM(team_id=TEAM_ID, league_id=SIBLING_LEAGUE, provider_key="nsu-global")
+        )
+        await session.commit()
+    _stub_later_stages(monkeypatch, keep=("refresh_standings", "refresh_rosters"))
+
+    await jobs.daily_refresh()
+
+    # Pass 1 up to and including the fetch the save landed in, then all of
+    # pass 2 — which is what the new followed set gets.
+    assert provider.log == [*_PASS_FETCHES[: lands_in + 1], *_PASS_FETCHES]
+
+    async with db() as session:
+        window = (utcnow() - timedelta(days=30), utcnow() + timedelta(days=60))
+        stored = {row.id for row in await repository.games_between(session, *window)}
+        stored |= {row.id for row in await repository.events_between(session, *window)}
+    fetched_rows = {
+        f"{PROVIDER_ID}:fetch-{place}"
+        for place, label in enumerate(provider.log)
+        if label.startswith(("schedule:", "competition:", "events:"))
+    }
+    # Everything fetched before the save was written as usual; only the row
+    # that came back after it was dropped.  (A standings or roster fetch has
+    # no such row: the one in flight finishes its league or team.)
+    assert stored == fetched_rows - {f"{PROVIDER_ID}:fetch-{lands_in}"}
+
+
+async def test_superseded_pass_does_not_go_on_to_leaderboard_events(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A save during the LAST team's schedule fetch still stops the stage.
+
+    With no whole-competition follow in between, the leaderboard events
+    are the very next source, reached by falling out of the team loop
+    rather than by going round it — so they need a checkpoint of their own.
+    """
+    provider = _SaveDuringFetchProvider(save_lands_in=0)
+    monkeypatch.setitem(registry._providers, PROVIDER_ID, provider)
+    async with db() as session:
+        await repository.upsert_league(session, _golf_league(GOLF_LEAGUE))
+        await repository.upsert_team(
+            session, _golf_team(GOLFER_TEAM_ID, GOLF_LEAGUE, espn_id=GOLFER_ESPN_ID)
+        )
+        await session.commit()
+    _stub_later_stages(monkeypatch)
+
+    await jobs.daily_refresh()
+
+    assert provider.log == [
+        f"schedule:{GOLF_LEAGUE}/{GOLFER_TEAM_ID}",  # pass 1 ends here
+        f"schedule:{GOLF_LEAGUE}/{GOLFER_TEAM_ID}",
+        f"events:{GOLF_LEAGUE}",
+    ]
+
+
+async def test_daily_refresh_prunes_unbacked_rows_first_and_survives_the_prune_failing(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every pass sweeps unbacked rows before it fetches; a failed sweep is logged.
+
+    The leftover is what a stale pass leaves when its write commits just
+    after a save's deletes: an untagged fixture in a league that is not
+    followed in whole.  Nothing but the sweep would ever remove it.
+    """
+    async with db() as session:
+        await repository.upsert_league(session, _league(PRIMARY_LEAGUE))
+        await session.flush()  # parents before children: postgres enforces FKs
+        await repository.upsert_games(session, [_game(f"{PROVIDER_ID}:leftover", PRIMARY_LEAGUE)])
+        await session.commit()
+
+    seen_by_schedules: list[set[str]] = []
+
+    async def fake_refresh_schedules() -> None:
+        seen_by_schedules.append(await _game_ids(db))
+
+    monkeypatch.setattr(scheduler_refresh, "refresh_schedules", fake_refresh_schedules)
+    _stub_later_stages(monkeypatch)
+
+    await jobs.daily_refresh()
+    assert seen_by_schedules == [set()], "the leftover outlived the start of the pass"
+
+    async def failing_prune(session: AsyncSession) -> None:
+        raise RuntimeError("boom: prune_unbacked")
+
+    monkeypatch.setattr(repository, "prune_unbacked", failing_prune)
+
+    await jobs.daily_refresh()  # must not raise
+    assert len(seen_by_schedules) == 2, "a failed prune cost the pass its refresh"
+
+
+async def test_daily_refresh_running_stays_true_across_a_restart(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``daily_refresh_running`` covers the whole run, restart included.
+
+    It is the setup status's ``refreshing`` flag, and the app refetches
+    everything when that clears — which has to mean the pass over the NEW
+    followed set is done, so it must not dip between the stale pass and the
+    one that replaces it.  Sampled on every turn of the event loop.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+    _stub_daily_refresh_subjobs(monkeypatch, started, release, calls)
+
+    last_pass_finishing = asyncio.Event()
+
+    async def fake_prune_stale_games(session: AsyncSession, now_utc: object) -> int:
+        # The last thing a pass does, and a superseded pass never gets here.
+        last_pass_finishing.set()
+        return 0
+
+    monkeypatch.setattr(repository, "prune_stale_games", fake_prune_stale_games)
+
+    samples: list[bool] = []
+
+    async def sample_every_loop_turn() -> None:
+        while not last_pass_finishing.is_set():
+            samples.append(jobs.daily_refresh_running())
+            await asyncio.sleep(0)
+
+    assert jobs.daily_refresh_running() is False
+    jobs.kick_daily_refresh()
+    await started.wait()
+    sampler = asyncio.create_task(sample_every_loop_turn())
+    jobs.kick_daily_refresh()  # supersedes the pass: one more follows
+    release.set()
+    await asyncio.wait_for(sampler, timeout=10)
+    await _drain_kicked_tasks()
+
+    assert calls == ["schedules", "schedules"]
+    assert samples and all(samples)
+    assert jobs.daily_refresh_running() is False
 
 
 def test_refresh_news_interval_job_is_single_instance() -> None:

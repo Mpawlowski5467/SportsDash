@@ -57,6 +57,33 @@ for a live sighting.
 
 ## ✅ Recently shipped
 
+- **Manage teams edits your follows instead of replacing them**
+  (2026-10-10) — the wizard opened empty, and saving it wiped every table
+  and left the refresh to rebuild them. A refresh reaches back seven days,
+  so adding one team cost every other team its older results for good,
+  along with its roster, stadium and "About" facts, followed players and
+  alert toggles — and the dedupe ledger went too, so that afternoon's
+  finals were pushed a second time. The wizard now opens on what you
+  follow (`GET /api/setup/selection`, read from the database so it works
+  with ESPN down), a save deletes only what the new set no longer backs
+  and never the ledger, and the review step lists what will be unfollowed
+  before anything is. A toggle forgets nothing, so a mis-click and its
+  undo are a no-op rather than an unfollowed league. The refresh a save
+  kicks is no longer dropped when one is already running: the run in
+  flight abandons its stale pass at the next checkpoint and starts over
+  on the new set. Pinned on SQLite and Postgres, and the selection rules
+  by pure tests — but the wizard has no component harness, so the seed
+  latch and the close-while-saving guard are covered by no test.
+- **A team with an accent in its name can be notified about**
+  (2026-10-10) — `services/notify.py` sent the title as an HTTP header,
+  httpx encodes header values as ASCII, and "Getafe @ Atlético Madrid"
+  raised before the request left the process. `send()` never raises, so
+  the only trace was a warning line, and a final — retried every tick for
+  the re-send window — failed every time. Notifications are now published
+  as a JSON body (ntfy 1.18.0 or later), with nothing provider-derived
+  left in a header. That changes the wire format, not the loose end
+  below: no notification has yet been seen arriving on a real device.
+
 - **Setup asks "where?" before "which?"** (2026-08-20) — soccer is 40 of the
   catalog's 55 leagues, and a flat list of all 40 was the worst way to find
   the two you actually watch. ESPN's own league codes carry the country

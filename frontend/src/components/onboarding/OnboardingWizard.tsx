@@ -1,25 +1,51 @@
 /**
  * Full-screen onboarding wizard.
  *
- * Flow: leagues -> teams -> review -> POST /setup/follow, ending on a
- * syncing screen that invalidates every cached query and polls /today
- * until games appear (or ~20s pass), then onComplete() fires. In "manage"
- * mode a close button (or ESC) lets the user bail out without touching
- * anything; "first-run" mode has no escape hatch by design, though focus
- * is still trapped and the page scroll locked like any other overlay.
+ * Flow: countries -> leagues -> teams -> review -> POST /setup/follow,
+ * ending on a syncing screen that invalidates every cached query and polls
+ * /today until games appear (or ~20s pass), then onComplete() fires.
+ *
+ * A first run starts empty. "manage" mode is the same wizard opened on the
+ * followed set (`initial`, loaded by ManageTeamsWizard): the save
+ * reconciles, keeping whatever is still selected and deleting the stored
+ * data of whatever is not, so the editor has to start from what is followed
+ * and the review step has to say what a save would unfollow.
+ *
+ * In "manage" mode a close button (or ESC) lets the user bail out without
+ * touching anything — except while the save is in flight, when both are
+ * inert; "first-run" mode has no escape hatch by design, though focus is
+ * still trapped and the page scroll locked like any other overlay.
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
-import type { CatalogLeague, CatalogTeam, FollowSelection } from "../../types";
+import type { CatalogLeague } from "../../types";
 import { useSetupLeagues } from "../../hooks";
 import { apiErrorMessage } from "./errors";
 import { useModalChrome } from "../modalChrome";
+import {
+  EMPTY_SELECTION,
+  clearLeagueTeams,
+  followAllIds,
+  followedLeagues,
+  pickTeamLeagueIds,
+  rememberedLeagueIds,
+  removedFromSeed,
+  toFollowRequest,
+  toggleFollowAll,
+  toggleLeague,
+  toggleTeam,
+  totalSelected,
+  type SelectionState,
+  type WizardSeed,
+} from "./selection";
 import CountryStep from "./CountryStep";
 import LeagueStep from "./LeagueStep";
 import TeamsStep from "./TeamsStep";
 import ReviewStep from "./ReviewStep";
 import SyncingStep from "./SyncingStep";
+import WizardFrame from "./WizardFrame";
 
 type Step = "countries" | "leagues" | "teams" | "review" | "syncing";
 
@@ -62,9 +88,15 @@ const STEP_TITLES: Record<Step, string> = {
 
 export interface Props {
   mode: "first-run" | "manage";
+  // What the wizard opens on. Read once, on mount: it seeds the wizard's
+  // own state, so a new value later neither resets nor remounts anything.
+  // Absent for a first run, which starts empty on the first step.
+  initial?: WizardSeed;
   onComplete: () => void;
   onClose?: () => void;
 }
+
+const NO_CLOSE = () => {};
 
 function StepIndicator({ current, steps }: { current: Step; steps: Step[] }) {
   const index = steps.indexOf(current);
@@ -97,11 +129,23 @@ function StepIndicator({ current, steps }: { current: Step; steps: Step[] }) {
   );
 }
 
-export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
+export default function OnboardingWizard({
+  mode,
+  initial,
+  onComplete,
+  onClose,
+}: Props) {
+  const queryClient = useQueryClient();
+  const [followPending, setFollowPending] = useState(false);
+  const [followError, setFollowError] = useState<string | null>(null);
+  // Closing is off while the save is in flight. The POST cannot be recalled,
+  // so closing then would leave a save that lands with nobody to act on it:
+  // no syncing step if it succeeds, and no error if it fails.
+  const close = followPending ? undefined : onClose;
   // Shared modal chrome: ESC stack, scroll lock, focus trap, focus restore.
   // First-run mode deliberately stays non-dismissible (ESC hits a no-op)
   // but still traps focus and locks scroll like every other overlay.
-  const dialogRef = useModalChrome(onClose ?? (() => {}));
+  const dialogRef = useModalChrome(close ?? NO_CLOSE);
   const leaguesQuery = useSetupLeagues();
   const catalog = useMemo(
     () => leaguesQuery.data?.leagues ?? [],
@@ -123,7 +167,7 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
     [hasCountryStep],
   );
 
-  const [step, setStep] = useState<Step>("countries");
+  const [step, setStep] = useState<Step>(initial?.step ?? "countries");
 
   // The catalog arrives after mount, so the opening step is a guess until it
   // does. If this run has no country step, step past it — but only from the
@@ -134,35 +178,18 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
       setStep("leagues");
     }
   }, [hasCountryStep, step, leaguesQuery.isSuccess]);
-  const [selectedCountryCodes, setSelectedCountryCodes] = useState<string[]>([]);
-  const [selectedLeagueIds, setSelectedLeagueIds] = useState<string[]>([]);
-  // Subset of selectedLeagueIds in whole-competition mode: these follow the
-  // entire competition (follow_all:true) and skip the team-picking step.
-  const [followAllLeagueIds, setFollowAllLeagueIds] = useState<string[]>([]);
-  const [teamsByLeague, setTeamsByLeague] = useState<
-    Record<string, CatalogTeam[]>
-  >({});
-  const [followPending, setFollowPending] = useState(false);
-  const [followError, setFollowError] = useState<string | null>(null);
-
-  // Leagues that still need a team-picking grid (selected, not follow-all).
-  const pickTeamLeagueIds = selectedLeagueIds.filter(
-    (id) => !followAllLeagueIds.includes(id),
+  const [selectedCountryCodes, setSelectedCountryCodes] = useState<string[]>(
+    initial?.selectedCountryCodes ?? [],
+  );
+  // Leagues, whole-league flags and team picks live in one value because
+  // every change to them is a pure transition in selection.ts. It remembers
+  // more than it follows — a deselected league keeps its picks — so the
+  // steps are handed that module's effective view, never the raw fields.
+  const [selection, setSelection] = useState<SelectionState>(
+    initial ?? EMPTY_SELECTION,
   );
 
-  const totalSelected = pickTeamLeagueIds.reduce(
-    (sum, id) => sum + (teamsByLeague[id] ?? []).length,
-    0,
-  );
-
-  const dropLeagueTeams = (leagueId: string) => {
-    setTeamsByLeague((prev) => {
-      if (!(leagueId in prev)) return prev;
-      const next = { ...prev };
-      delete next[leagueId];
-      return next;
-    });
-  };
+  const pickLeagueIds = pickTeamLeagueIds(selection);
 
   const toggleCountry = (code: string) => {
     setSelectedCountryCodes((current) =>
@@ -172,78 +199,16 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
     );
   };
 
-  const toggleLeague = (leagueId: string) => {
-    const deselecting = selectedLeagueIds.includes(leagueId);
-    setSelectedLeagueIds(
-      deselecting
-        ? selectedLeagueIds.filter((id) => id !== leagueId)
-        : [...selectedLeagueIds, leagueId],
-    );
-    if (deselecting) {
-      dropLeagueTeams(leagueId);
-      setFollowAllLeagueIds((prev) => prev.filter((id) => id !== leagueId));
-    }
-  };
-
-  // Whole-competition toggle on a chip: marking follow-all selects the
-  // league (if needed) and clears any teams picked for it; unmarking leaves
-  // it selected in pick-teams mode.
-  const toggleFollowAll = (leagueId: string) => {
-    const enabling = !followAllLeagueIds.includes(leagueId);
-    setFollowAllLeagueIds((prev) =>
-      enabling ? [...prev, leagueId] : prev.filter((id) => id !== leagueId),
-    );
-    if (enabling) {
-      if (!selectedLeagueIds.includes(leagueId)) {
-        setSelectedLeagueIds((prev) => [...prev, leagueId]);
-      }
-      dropLeagueTeams(leagueId);
-    }
-  };
-
-  const toggleTeam = (leagueId: string, team: CatalogTeam) => {
-    setTeamsByLeague((prev) => {
-      const current = prev[leagueId] ?? [];
-      const exists = current.some(
-        (chosen) => chosen.provider_key === team.provider_key,
-      );
-      return {
-        ...prev,
-        [leagueId]: exists
-          ? current.filter(
-              (chosen) => chosen.provider_key !== team.provider_key,
-            )
-          : [...current, team],
-      };
-    });
-  };
-
-  const clearLeagueTeams = (leagueId: string) => {
-    setTeamsByLeague((prev) => ({ ...prev, [leagueId]: [] }));
-  };
-
   const confirmFollow = async () => {
     setFollowPending(true);
     setFollowError(null);
     try {
-      const selections: FollowSelection[] = selectedLeagueIds
-        .map((leagueId): FollowSelection | null => {
-          if (followAllLeagueIds.includes(leagueId)) {
-            return {
-              league_id: leagueId,
-              team_provider_keys: [],
-              follow_all: true,
-            };
-          }
-          const teams = teamsByLeague[leagueId] ?? [];
-          if (teams.length === 0) return null;
-          return {
-            league_id: leagueId,
-            team_provider_keys: teams.map((team) => team.provider_key),
-          };
-        })
-        .filter((selection): selection is FollowSelection => selection !== null);
-      await api.setupFollow({ selections });
+      await api.setupFollow(toFollowRequest(selection));
+      // Here rather than left to the syncing step, because this line runs
+      // whether or not the wizard is still mounted and that step only if it
+      // is. A save that landed unseen would leave the dashboard on the old
+      // followed set until a reload: `/teams` never goes stale by itself.
+      void queryClient.invalidateQueries();
       setStep("syncing");
     } catch (err) {
       setFollowError(apiErrorMessage(err));
@@ -253,101 +218,73 @@ export default function OnboardingWizard({ mode, onComplete, onClose }: Props) {
   };
 
   return (
-    <div
-      ref={dialogRef}
-      tabIndex={-1}
-      role="dialog"
-      aria-modal="true"
-      aria-label="SportsDash setup"
-      className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950 text-zinc-100 outline-none"
+    <WizardFrame
+      dialogRef={dialogRef}
+      indicator={<StepIndicator current={step} steps={steps} />}
+      onClose={mode === "manage" ? onClose : undefined}
+      closeDisabled={followPending}
     >
-      <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6">
-        <header className="mb-6 flex items-center gap-4">
-          <span className="select-none whitespace-nowrap text-base font-bold tracking-tight">
-            Sports<span className="text-amber-400">Dash</span>
-          </span>
-          <div className="ml-auto flex items-center gap-3">
-            <StepIndicator current={step} steps={steps} />
-            {mode === "manage" && onClose !== undefined && (
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close setup"
-                title="Close setup"
-                className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="h-4 w-4"
-                  aria-hidden="true"
-                >
-                  <path d="M18 6 6 18" />
-                  <path d="m6 6 12 12" />
-                </svg>
-              </button>
-            )}
-          </div>
-        </header>
-
-        <div className="flex-1 pt-2">
-          {step === "countries" && (
-            <CountryStep
-              countries={countries}
-              leagues={catalog}
-              selectedCodes={selectedCountryCodes}
-              onToggle={toggleCountry}
-              onContinue={() => setStep("leagues")}
-              onSkip={() => {
-                setSelectedCountryCodes([]);
-                setStep("leagues");
-              }}
-            />
-          )}
-          {step === "leagues" && (
-            <LeagueStep
-              countryCodes={selectedCountryCodes}
-              selectedIds={selectedLeagueIds}
-              followAllIds={followAllLeagueIds}
-              onToggle={toggleLeague}
-              onToggleFollowAll={toggleFollowAll}
-              onBack={hasCountryStep ? () => setStep("countries") : undefined}
-              onContinue={() =>
-                setStep(pickTeamLeagueIds.length > 0 ? "teams" : "review")
-              }
-            />
-          )}
-          {step === "teams" && (
-            <TeamsStep
-              leagueIds={pickTeamLeagueIds}
-              teamsByLeague={teamsByLeague}
-              onToggleTeam={toggleTeam}
-              onClearLeague={clearLeagueTeams}
-              totalSelected={totalSelected}
-              onBack={() => setStep("leagues")}
-              onContinue={() => setStep("review")}
-            />
-          )}
-          {step === "review" && (
-            <ReviewStep
-              leagueIds={selectedLeagueIds}
-              followAllIds={followAllLeagueIds}
-              teamsByLeague={teamsByLeague}
-              pending={followPending}
-              error={followError}
-              onBack={() =>
-                setStep(pickTeamLeagueIds.length > 0 ? "teams" : "leagues")
-              }
-              onConfirm={() => void confirmFollow()}
-            />
-          )}
-          {step === "syncing" && <SyncingStep onDone={onComplete} />}
-        </div>
-      </div>
-    </div>
+      {step === "countries" && (
+        <CountryStep
+          countries={countries}
+          leagues={catalog}
+          selectedCodes={selectedCountryCodes}
+          onToggle={toggleCountry}
+          onContinue={() => setStep("leagues")}
+          onSkip={() => {
+            setSelectedCountryCodes([]);
+            setStep("leagues");
+          }}
+        />
+      )}
+      {step === "leagues" && (
+        <LeagueStep
+          countryCodes={selectedCountryCodes}
+          rememberedIds={rememberedLeagueIds(selection)}
+          selectedIds={selection.selectedLeagueIds}
+          followAllIds={followAllIds(selection)}
+          onToggle={(leagueId) =>
+            setSelection((current) => toggleLeague(current, leagueId))
+          }
+          onToggleFollowAll={(leagueId) =>
+            setSelection((current) => toggleFollowAll(current, leagueId))
+          }
+          onBack={hasCountryStep ? () => setStep("countries") : undefined}
+          onContinue={() =>
+            setStep(pickLeagueIds.length > 0 ? "teams" : "review")
+          }
+        />
+      )}
+      {step === "teams" && (
+        <TeamsStep
+          leagueIds={pickLeagueIds}
+          teamsByLeague={selection.teamsByLeague}
+          seededTeamsByLeague={initial?.teamsByLeague}
+          onToggleTeam={(leagueId, team) =>
+            setSelection((current) => toggleTeam(current, leagueId, team))
+          }
+          onClearLeague={(leagueId) =>
+            setSelection((current) => clearLeagueTeams(current, leagueId))
+          }
+          totalSelected={totalSelected(selection)}
+          onBack={() => setStep("leagues")}
+          onContinue={() => setStep("review")}
+        />
+      )}
+      {step === "review" && (
+        <ReviewStep
+          mode={mode}
+          follows={followedLeagues(selection)}
+          removed={
+            initial === undefined ? [] : removedFromSeed(initial, selection)
+          }
+          pending={followPending}
+          error={followError}
+          onBack={() => setStep(pickLeagueIds.length > 0 ? "teams" : "leagues")}
+          onConfirm={() => void confirmFollow()}
+        />
+      )}
+      {step === "syncing" && <SyncingStep onDone={onComplete} />}
+    </WizardFrame>
   );
 }

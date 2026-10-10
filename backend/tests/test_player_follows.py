@@ -2,7 +2,8 @@
 
 All fixture data is fictional.  Six layers:
 
-1. Repository CRUD + the ``replace_followed`` wipe.
+1. Repository CRUD + what ``replace_followed`` keeps (a kept team's
+   follows) and drops (a removed team's).
 2. Route validation for the ``/players/follows`` writing routes (v1
    constraint: the athlete must sit on a followed team's stored roster;
    cross-league bare-id collisions are rejected with 409).
@@ -357,19 +358,31 @@ async def test_refollow_updates_fields_and_keeps_one_row(
         assert rows[0].position == "SG"
 
 
-async def test_replace_followed_wipes_player_follows(
+async def test_replace_followed_keeps_follows_of_kept_teams(
     db: async_sessionmaker[AsyncSession],
 ) -> None:
-    """A wizard re-run clears follows — they're re-picked afterwards."""
-    await _seed_followed_set(db)
-    await _follow(db)
+    """Editing the followed set keeps the player follows of every kept team.
+
+    Only a follow whose team left the set goes with it.  The table has no
+    FK, so nothing else would ever remove that row — and it would go on
+    answering 409 to a follow of the same bare athlete id in another
+    league.  The kept follow is left as it was, alert baseline included:
+    the baseline is the roster-diff dedupe, so losing it loses the record
+    of what the user was already told.
+    """
+    await _seed_followed_set(db, teams=(TEAM, OTHER_TEAM))
+    await _follow(db, last_notified_status="out")
+    await _follow(db, OTHER_ATHLETE_ID, "Sable Quillan", team_id=OTHER_TEAM_ID)
 
     async with db() as session:
         await repository.replace_followed(session, [LEAGUE], [TEAM])
         await session.commit()
 
     async with db() as session:
-        assert await repository.list_player_follows(session) == []
+        rows = await repository.list_player_follows(session)
+        assert [(r.athlete_id, r.team_id, r.last_notified_status) for r in rows] == [
+            (ATHLETE_ID, TEAM_ID, "out")
+        ]
 
 
 # ---------------------------------------------------------------------------

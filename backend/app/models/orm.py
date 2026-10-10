@@ -218,10 +218,12 @@ class PlayerFollowORM(Base):
     athlete overview endpoint, and roster ids all share it — roster rows
     store it prefixed as ``"espn:{athlete_id}"``).  ``team_id`` /
     ``league_id`` are plain strings, deliberately NOT foreign keys:
-    rosters are delete+reinserted on every daily sync and
-    ``replace_followed`` wipes this table anyway, so an FK would only
-    add churn.  Roster data (status, stat line) is joined logically at
-    read time via ``PlayerORM.id == f"espn:{athlete_id}"``.
+    rosters are delete+reinserted on every daily sync, and a follow
+    whose team leaves the followed set is deleted without one
+    (``repository.replace_followed`` at save time, ``prune_unbacked``
+    before every refresh pass), so an FK would only add churn.  Roster
+    data (status, stat line) is joined logically at read time via
+    ``PlayerORM.id == f"espn:{athlete_id}"``.
     """
 
     __tablename__ = "player_follows"

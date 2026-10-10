@@ -70,6 +70,10 @@ async def _fetch_and_upsert_schedule(provider, league, team, start, end, *, labe
     """
     try:
         games = await provider.get_schedule(league, team, start, end)
+        # The fetch is where a pass spends its time, so it is where a save
+        # lands — and these games were asked for on behalf of the old set.
+        if _superseded():
+            return
         async with session_scope() as session:
             touched = await repository.upsert_games(session, games)
         logger.info(
@@ -94,6 +98,10 @@ async def refresh_schedules() -> None:
     3. every whole-competition follow (``League.follow_all``), via
        ``get_competition_schedule`` (the whole fixture set, team ids null
        unless a side happens to be a followed team).
+
+    The followed set is read once, up front, so a ``daily_refresh`` pass
+    that a save has superseded stops here at its next source and discards
+    a fetch already in flight (see :func:`_superseded`).
     """
     try:
         leagues, teams = await _load_leagues_and_teams()
@@ -104,6 +112,10 @@ async def refresh_schedules() -> None:
 
         # Passes 1 + 2: per-team primary + sibling competitions.
         for team in teams:
+            # ``teams`` is this pass's snapshot: once a save has replaced the
+            # followed set, the rest of it is not worth a provider call.
+            if _superseded():
+                return
             league = leagues.get(team.league_id)
             if league is None:
                 logger.error(
@@ -115,6 +127,9 @@ async def refresh_schedules() -> None:
                 await _fetch_and_upsert_schedule(provider, league, team, start, end, label=team.id)
 
             for sib_league_id, provider_key in competitions.get(team.id, ()):
+                # A national team has several of these, each its own fetch.
+                if _superseded():
+                    return
                 sib_league = leagues.get(sib_league_id)
                 if sib_league is None:
                     logger.error(
@@ -142,6 +157,8 @@ async def refresh_schedules() -> None:
         async with session_scope() as session:
             follow_all_rows = await repository.list_follow_all_leagues(session)
         for row in follow_all_rows:
+            if _superseded():
+                return
             try:
                 league = _league_from_row(row)
             except Exception:
@@ -154,6 +171,11 @@ async def refresh_schedules() -> None:
                 continue
             try:
                 games = await provider.get_competition_schedule(league, start, end)
+                # A whole fixture set, almost none of it tagged with a team:
+                # if the save turned this league's follow_all off but kept
+                # the league, no foreign key would stop these rows landing.
+                if _superseded():
+                    return
                 async with session_scope() as session:
                     touched = await repository.upsert_games(session, games)
                 logger.info(
@@ -210,6 +232,8 @@ async def _refresh_events(
             leaderboard_league_ids.add(league.id)
 
     for league_id in sorted(leaderboard_league_ids):
+        if _superseded():
+            return
         league = leagues.get(league_id)
         if league is None:
             continue
@@ -218,6 +242,10 @@ async def _refresh_events(
             continue
         try:
             events = await provider.get_events(league, start, end)
+            # ``espn_to_internal`` is the old set's athletes: tagging with it
+            # now would highlight a golfer or driver the save just unfollowed.
+            if _superseded():
+                return
             tagged = [_tag_followed_athletes(event, espn_to_internal) for event in events]
             async with session_scope() as session:
                 touched = await repository.upsert_events(session, tagged)
@@ -264,6 +292,8 @@ async def refresh_standings() -> None:
     try:
         leagues, _ = await _load_leagues_and_teams()
         for league in leagues.values():
+            if _superseded():
+                return
             await refresh_standings_for_league(league)
     except Exception:
         logger.exception("refresh_standings failed")
@@ -564,6 +594,12 @@ async def refresh_rosters() -> None:
         leagues, teams = await _load_leagues_and_teams()
         followed_by_team = await _followed_players_by_team()
         for team in teams:
+            # Between teams only: a sync already in flight finishes its team
+            # (its write is one roster, and a removed team's fails its foreign
+            # key and is caught), but this is the longest stage — a request
+            # per player — so a stale pass must not start another.
+            if _superseded():
+                return
             league = leagues.get(team.league_id)
             if league is None:
                 logger.error(
@@ -986,40 +1022,148 @@ async def refresh_team_info() -> None:
 # ``_competition_stadiums_lock`` in common.py.
 _daily_refresh_lock = asyncio.Lock()
 
+# Skipping is right for the cron and the startup spawn — the run in flight
+# is already doing their work — but not for the wizard's kick, which means
+# the followed set was just replaced.  The run in flight read the OLD set:
+# skipped, the kick would leave a newly followed team without data until the
+# next cron, while the stale run went on fetching for follows that are gone.
+# Queueing a second run would make it wait out a pass that is now pointless,
+# and the stale one cannot be cancelled instead: a cron-started run has no
+# task handle, and a cancel that lands inside a session keeps the lock held
+# while the close unwinds, so the replacement would skip itself.
+#
+# So the kick bumps ``_follow_generation`` and the lock holder compares it
+# with the generation its pass started from: a stale pass stops at its next
+# checkpoint (``_superseded``) and the SAME task starts over against the new
+# set.  However many saves land during one pass, that is one more pass.
+# In-process state, like the lock itself (one worker).
+_follow_generation = 0
+# The generation the pass in flight started from, and None outside a pass —
+# which keeps every checkpoint inert for a stage that is run on its own.
+_running_generation: int | None = None
+
+
+def note_follow_change() -> None:
+    """Record that the followed set was just replaced (see ``kick_daily_refresh``).
+
+    A plain synchronous bump, made by the saver itself rather than by the
+    task it spawns: the pass in flight then sees the change at its very next
+    checkpoint, not whenever that task first gets to run.
+    """
+    global _follow_generation
+    _follow_generation += 1
+
+
+def _superseded() -> bool:
+    """Whether the followed set changed under the ``daily_refresh`` pass in flight.
+
+    The checkpoints sit where a stale pass would otherwise spend a provider
+    call on the old set, or write what it fetched for it: at the top of the
+    schedule, standings and roster loops, between a schedule or event fetch
+    and its write, and after each stage.  A superseded pass returns from
+    there — nothing is cancelled, so the call already in flight completes
+    and is discarded.  The news, enrichment and stadium stages have none
+    inside: whichever is running finishes first.
+    """
+    return _running_generation is not None and _running_generation != _follow_generation
+
+
+def daily_refresh_running() -> bool:
+    """Whether a ``daily_refresh`` is in flight (``SetupStatusOut.refreshing``).
+
+    True from the first pass to the last, across any restart in between —
+    the lock is held throughout — so after a save it clears only once a
+    whole pass has run against the followed set as it now stands.
+    """
+    return _daily_refresh_lock.locked()
+
 
 async def daily_refresh() -> None:
     """Full refresh: schedules + standings + rosters + news + locations + cleanup.
 
     Single-flight: a run already in progress makes any overlapping caller
     (cron, startup spawn, or setup-wizard kick) a no-op rather than racing
-    the upserts; nothing queues behind a running refresh.
+    the upserts; nothing queues behind a running refresh.  A kick does still
+    get its refresh — from the run in flight, which abandons the pass the
+    kick made stale and runs another before it lets go of the lock.
     """
+    global _running_generation
     if _daily_refresh_lock.locked():
-        logger.info("daily_refresh: a refresh is already running — skipping")
+        if _superseded():
+            # Almost always a kick's own task: the kick marked the followed
+            # set changed before it spawned this, and the pass in flight has
+            # not reached a checkpoint since.  "Skipping" alone would read
+            # like the kick being dropped, which is what used to happen.
+            logger.info(
+                "daily_refresh: a refresh is already running and will restart "
+                "for the new followed set — skipping"
+            )
+        else:
+            logger.info("daily_refresh: a refresh is already running — skipping")
         return
     async with _daily_refresh_lock:
-        await _daily_refresh()
+        try:
+            while True:
+                _running_generation = _follow_generation
+                await _daily_refresh()
+                # Nothing may await between this check and the lock's release
+                # (the ``finally`` and the ``async with`` exit never yield).
+                # A kick landing in such a gap would be too late for the
+                # check, and its own task would still find the lock held and
+                # skip — leaving nobody to run the pass it asked for.
+                if not _superseded():
+                    break
+                logger.info("daily_refresh: the followed set changed — running another pass")
+        finally:
+            _running_generation = None
 
 
 async def _daily_refresh() -> None:
-    """Body of :func:`daily_refresh`, run under its single-flight lock."""
+    """One pass of :func:`daily_refresh`, run under its single-flight lock.
+
+    Returns early, leaving the rest for the pass that follows, once a stage
+    comes back with the followed set replaced under it.
+    """
     logger.info("daily_refresh: starting")
-    await refresh_schedules()
-    await refresh_standings()
-    await refresh_rosters()
-    await refresh_news()
-    # Club "About" facts (history, founded year, stadium prose) for followed
-    # teams' pages.
-    await refresh_team_info()
-    # After schedules, so the home-venue fallback can read stored games.
-    await refresh_locations()
-    # After schedules, so the host-venue path can read near fixtures —
-    # pre-resolve every follow_all field's home stadiums for the map view,
-    # in or out of season.
-    await refresh_competition_stadiums()
-    # After schedules, so the upcoming-games map has venue coordinates ready
-    # (away grounds the host table / stadium index don't already cover).
-    await refresh_game_venue_coords()
+    try:
+        # Before anything is fetched.  A save reconciles the stored rows with
+        # the new set, but a pass or live tick that read the old one can
+        # commit a write just after the save's deletes, and nothing else
+        # would ever remove such a row.  The save's kick is always followed
+        # by a pass, so its leftovers are gone within seconds; anything else
+        # waits a day at most.  Never allowed to cost the pass its refresh.
+        async with session_scope() as session:
+            await repository.prune_unbacked(session)
+    except Exception:
+        logger.exception("daily_refresh: pruning unbacked rows failed — continuing")
+    for stage in (
+        refresh_schedules,
+        refresh_standings,
+        refresh_rosters,
+        refresh_news,
+        # Club "About" facts (history, founded year, stadium prose) for
+        # followed teams' pages.
+        refresh_team_info,
+        # After schedules, so the home-venue fallback can read stored games.
+        refresh_locations,
+        # After schedules, so the host-venue path can read near fixtures —
+        # pre-resolve every follow_all field's home stadiums for the map view,
+        # in or out of season.
+        refresh_competition_stadiums,
+        # After schedules, so the upcoming-games map has venue coordinates
+        # ready (away grounds the host table / stadium index don't already
+        # cover).
+        refresh_game_venue_coords,
+    ):
+        await stage()
+        # Stop once a save has landed.  The stages left would read the new
+        # set and be right, but the lock holder runs the whole pass again
+        # regardless: going on would only put them (rosters above all) ahead
+        # of the new teams' schedules, and then run them twice.  It also
+        # keeps a pass whose schedule stage was cut short away from the prune
+        # below, which is only safe once schedules are fresh.
+        if _superseded():
+            return
     try:
         # After schedules are fresh, anything still scheduled/in_progress
         # days in the past is a ghost no provider will update — drop it.

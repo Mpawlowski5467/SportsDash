@@ -115,7 +115,9 @@ slide-over panels you reach by clicking a team or game anywhere in the UI.
   match, recent form, fixtures, results, roster, news, and home stadium (with
   a jump-to-Map button).
 - **Setup wizard** — *Manage teams* (and the first-run screen): choose
-  leagues and teams, or **Follow all** a whole competition.
+  leagues and teams, or **Follow all** a whole competition. *Manage teams*
+  opens on what you already follow, and saving keeps everything you left
+  selected, with its data.
 - **Settings & notifications** — theme switcher, per-scope notification
   toggles, and kiosk mode.
 
@@ -275,13 +277,24 @@ Your followed set lives in the **database** and is chosen through the in-app
    (every game, no team picks) — handy for a playoff race or the World Cup.
 2. **Pick teams** — for leagues you didn't "Follow all", select the specific
    teams (or players/fighters/golfers) to follow.
-3. **Review & confirm** — confirming replaces your previous follows and kicks
-   an immediate background sync, so data starts loading right away.
+3. **Review & confirm** — confirming saves your follows and kicks an
+   immediate background sync, so data starts loading right away.
+
+Coming back later through *Manage teams* opens the same wizard on what you
+already follow, so you edit the set rather than rebuild it. Whatever you
+leave as you had it keeps everything it has — its games and past results,
+roster, followed players and alert settings. Only what you take out is
+unfollowed and its stored data deleted, and the review step lists that
+before you confirm.
 
 > Advanced: `backend/config/teams.yaml` is an optional bootstrap template,
 > read **only** while the teams table is empty (so it never clobbers wizard
 > picks). Authoring your follows there marks the app onboarded and skips the
-> wizard. The normal path is the wizard.
+> wizard. The normal path is the wizard. *Manage teams* can only show
+> leagues the picker offers: a league authored there under an id of your own
+> does not appear in the editor, and the first save from *Manage teams*
+> unfollows it and deletes its stored data **without** listing it on the
+> review step.
 
 ## Notifications
 
@@ -435,7 +448,8 @@ representative selection:
 | `GET /api/map` | Followed/competition team venues for the map |
 | `GET /api/calendar.ics?team_id=` | iCalendar feed (−30 … +60 days) |
 | `GET /api/setup/leagues`, `GET /api/setup/teams/{id}` | Onboarding catalog |
-| `POST /api/setup/follow` | Replace the followed set of leagues and teams |
+| `GET /api/setup/selection` | The followed set as wizard selections (what *Manage teams* opens on) |
+| `POST /api/setup/follow` | Save the followed set of leagues and teams — what is still followed keeps its data, the rest is removed |
 
 ## Adding a provider
 

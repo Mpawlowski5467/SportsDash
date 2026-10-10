@@ -7,15 +7,30 @@ fictional.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 import pytest
+from sqlalchemy import Delete, Select, Update, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import InstrumentedAttribute
 
 from app.models import domain
 from tests.db_engine import create_test_schema, make_test_engine
-from app.models.orm import NewsORM
+from app.models.orm import (
+    Base,
+    EventORM,
+    GameORM,
+    LeagueORM,
+    NewsORM,
+    NotificationPrefORM,
+    PlayerFollowORM,
+    PlayerORM,
+    StandingsORM,
+    TeamCompetitionORM,
+    TeamORM,
+)
 from app.services import repository
 from app.timeutil import ensure_utc, utcnow
 
@@ -85,10 +100,11 @@ def make_game(
     state: domain.GameState | None = None,
     fight_result: domain.FightResult | None = None,
     broadcasts: tuple[str, ...] = (),
+    league_id: str = LEAGUE_ID,
 ) -> domain.Game:
     return domain.Game(
         id=game_id,
-        league_id=LEAGUE_ID,
+        league_id=league_id,
         home_name=home_name,
         away_name=away_name,
         start_time=start_time,
@@ -1376,45 +1392,1282 @@ async def test_save_standings_drops_team_ids_no_longer_followed(
 # ---------------------------------------------------------------------------
 
 
-async def test_replace_followed_wipes_every_leagues_fk_child(seeded: AsyncSession) -> None:
-    """Re-following must clear the archive, the last leagues-FK child.
+CUP_ID = "meridian-cup"
+TOUR_ID = "fairway-tour"
+PREMIER_ID = "pinnacle-premier"
+GOLFER_CALLOWAY = "fairway-tour-ines-calloway"
+GOLFER_FINCH = "fairway-tour-orla-finch"
+
+BASKETBALL = domain.League(
+    id=LEAGUE_ID,
+    sport=domain.Sport.BASKETBALL,
+    name="Pinnacle Basketball League",
+    provider="mock",
+    provider_key="mock-basketball",
+)
+CUP = domain.League(
+    id=CUP_ID,
+    sport=domain.Sport.BASKETBALL,
+    name="Meridian Cup",
+    provider="mock",
+    provider_key="mock-cup",
+    follow_all=True,
+)
+TOUR = domain.League(
+    id=TOUR_ID,
+    sport=domain.Sport.GOLF,
+    name="Fairway Tour",
+    provider="mock",
+    provider_key="mock-golf",
+)
+COMETS = domain.Team(
+    id=TEAM_COMETS,
+    league_id=LEAGUE_ID,
+    name="Ashport Comets",
+    abbreviation="ASH",
+    provider_key="ashport-comets",
+    color="#f59e0b",
+)
+STAGS = domain.Team(
+    id=TEAM_STAGS,
+    league_id=LEAGUE_ID,
+    name="Rivermont Stags",
+    abbreviation="RIV",
+    provider_key="rivermont-stags",
+    color="#10b981",
+)
+CALLOWAY = domain.Team(
+    id=GOLFER_CALLOWAY,
+    league_id=TOUR_ID,
+    name="Ines Calloway",
+    abbreviation="CAL",
+    provider_key="4410",
+)
+FINCH = domain.Team(
+    id=GOLFER_FINCH,
+    league_id=TOUR_ID,
+    name="Orla Finch",
+    abbreviation="FIN",
+    provider_key="4411",
+)
+# The Comets also enter the cup: a ``team_competitions`` triple.
+COMETS_IN_CUP = (TEAM_COMETS, CUP_ID, "ashport-comets")
+
+# ``updated_at`` is bumped by any write to a game/event row, including one
+# that puts a value back; ignored where a test edits a row and expects the
+# code under test to restore it.
+_UPDATED_AT = frozenset({"updated_at"})
+
+
+@pytest.fixture
+async def followed(session: AsyncSession) -> AsyncSession:
+    """A consistent database holding one of every row a follow can own.
+
+    Three leagues: basketball followed through two teams, a cup followed
+    in whole (``follow_all``, no teams of its own) and a golf tour
+    followed through two athletes.  Committed, so every test starts from
+    stored rows rather than pending ones.
+    """
+    now = utcnow()
+    for league in (BASKETBALL, CUP, TOUR):
+        await repository.upsert_league(session, league)
+    await session.flush()
+    for team in (COMETS, STAGS, CALLOWAY, FINCH):
+        await repository.upsert_team(session, team)
+    await session.flush()
+    team_id, league_id, provider_key = COMETS_IN_CUP
+    session.add(TeamCompetitionORM(team_id=team_id, league_id=league_id, provider_key=provider_key))
+
+    # Enrichment and rosters: the expensive, rate-limited part of a follow.
+    await repository.set_team_location(
+        session, TEAM_COMETS, "Ashport Fieldhouse", 51.5074, -0.1278, capacity=18000
+    )
+    await repository.set_team_info(
+        session,
+        TEAM_COMETS,
+        description="Ashport Comets are a fictional basketball club.",
+        founded_year=1974,
+        description_source="thesportsdb",
+    )
+    await repository.replace_roster(
+        session,
+        domain.Roster(
+            team_id=TEAM_COMETS,
+            players=(
+                domain.Player(id="espn:9001", team_id=TEAM_COMETS, name="Juno Hollyfield"),
+                domain.Player(id="espn:9002", team_id=TEAM_COMETS, name="Sable Quillan"),
+            ),
+            fetched_at=now,
+        ),
+    )
+    await repository.replace_roster(
+        session,
+        domain.Roster(
+            team_id=TEAM_STAGS,
+            players=(domain.Player(id="espn:7001", team_id=TEAM_STAGS, name="Bram Tolliver"),),
+            fetched_at=now,
+        ),
+    )
+    await repository.follow_player(
+        session,
+        athlete_id="9001",
+        name="Juno Hollyfield",
+        team_id=TEAM_COMETS,
+        league_id=LEAGUE_ID,
+        last_notified_status="active",
+    )
+    await repository.follow_player(
+        session, athlete_id="7001", name="Bram Tolliver", team_id=TEAM_STAGS, league_id=LEAGUE_ID
+    )
+
+    await repository.upsert_games(
+        session,
+        [
+            # A finished derby between two followed teams, already announced.
+            make_game(
+                "mock:derby",
+                start_time=now - timedelta(hours=2),
+                home_team_id=TEAM_COMETS,
+                away_team_id=TEAM_STAGS,
+                state=domain.GameState(
+                    game_id="mock:derby",
+                    phase=domain.GamePhase.FINAL,
+                    home_score=88,
+                    away_score=81,
+                ),
+            ),
+            # A per-team fetch tags one side only.
+            make_game(
+                "mock:comets-away",
+                start_time=now + timedelta(days=1),
+                away_team_id=TEAM_COMETS,
+                home_name="Foxglove Sentinels",
+                away_name="Ashport Comets",
+            ),
+            make_game(
+                "mock:stags-home",
+                start_time=now + timedelta(days=2),
+                home_team_id=TEAM_STAGS,
+                home_name="Rivermont Stags",
+                away_name="Foxglove Sentinels",
+            ),
+            # A whole-competition fetch tags neither; the Comets' own cup
+            # tie arrived through their per-team fetch as well.
+            make_game(
+                "mock:cup-final",
+                league_id=CUP_ID,
+                start_time=now + timedelta(days=3),
+                home_name="Glimmerfen Owls",
+                away_name="Bramblewick Foxes",
+            ),
+            make_game(
+                "mock:cup-comets",
+                league_id=CUP_ID,
+                start_time=now + timedelta(days=4),
+                home_team_id=TEAM_COMETS,
+                away_name="Glimmerfen Owls",
+            ),
+        ],
+    )
+    await repository.mark_notified(session, "mock:derby:final")
+
+    await repository.upsert_events(
+        session,
+        [
+            domain.Event(
+                id="mock:open",
+                league_id=TOUR_ID,
+                name="Fairway Open",
+                start_time=now - timedelta(days=1),
+                end_time=now + timedelta(days=2),
+                phase=domain.GamePhase.IN_PROGRESS,
+                round_label="Round 2",
+                leaderboard=(
+                    domain.LeaderRow(1, "1", "Ines Calloway", "-9", "thru 14", GOLFER_CALLOWAY),
+                    domain.LeaderRow(2, "2", "Orla Finch", "-7", "thru 15", GOLFER_FINCH),
+                    domain.LeaderRow(3, "3", "Wren Abernathy", "-6", "F"),
+                ),
+            )
+        ],
+    )
+
+    table = domain.Standings(
+        league_id=LEAGUE_ID,
+        season="2025-26",
+        rows=(
+            domain.StandingRow(
+                rank=1, team_name="Ashport Comets", wins=21, losses=9, team_id=TEAM_COMETS
+            ),
+            domain.StandingRow(
+                rank=2, team_name="Rivermont Stags", wins=18, losses=12, team_id=TEAM_STAGS
+            ),
+            domain.StandingRow(rank=3, team_name="Foxglove Sentinels", wins=11, losses=19),
+        ),
+        fetched_at=now,
+    )
+    await repository.save_standings(session, table)
+    await repository.save_standings_archive(session, table)
+
+    await repository.upsert_news(
+        session,
+        [
+            domain.NewsItem(
+                id="news-comets",
+                team_id=TEAM_COMETS,
+                title="Comets clinch a playoff berth",
+                url="https://news.example/ashport/clinch",
+                source="Ashport Sports Wire",
+                published_at=now,
+            ),
+            domain.NewsItem(
+                id="news-stags",
+                team_id=TEAM_STAGS,
+                title="Stags extend their home streak",
+                url="https://news.example/rivermont/streak",
+                source="Rivermont Ledger",
+                published_at=now,
+            ),
+            # League-level: what a whole-competition follow gets instead.
+            domain.NewsItem(
+                id="news-cup",
+                team_id=None,
+                league_id=CUP_ID,
+                title="Meridian Cup draw announced",
+                url="https://news.example/meridian-cup/draw",
+                source="Cup Dispatch",
+                published_at=now,
+            ),
+        ],
+    )
+
+    await repository.upsert_notification_pref(session, "global", events={"intermission": False})
+    await repository.upsert_notification_pref(
+        session, f"team:{TEAM_COMETS}", muted=True, events={"final": False}
+    )
+    await repository.upsert_notification_pref(
+        session, f"team:{TEAM_STAGS}", events={"game_start": False}
+    )
+    await repository.upsert_notification_pref(
+        session, f"league:{CUP_ID}", events={"game_start": True, "period_start": False}
+    )
+    await repository.upsert_notification_pref(session, f"league:{TOUR_ID}", muted=True)
+
+    # Rows no follow keys: no save and no sweep may ever touch these.
+    await repository.upsert_stadium(
+        session,
+        "mock:ashport-comets",
+        "Ashport Comets",
+        venue="Ashport Fieldhouse",
+        lat=51.5074,
+        lon=-0.1278,
+    )
+    await repository.set_meta(session, "onboarded", "1")
+    await session.commit()
+    return session
+
+
+async def _snapshot(
+    session: AsyncSession, *, ignore: frozenset[str] = frozenset()
+) -> dict[str, list[tuple[Any, ...]]]:
+    """Every row of every table, as stored.
+
+    Plain column selects bypass the session's identity map, so this is
+    what was actually written: an in-place edit of a JSON column, which
+    SQLAlchemy never flushes, shows up here as the old value.
+    """
+    snapshot: dict[str, list[tuple[Any, ...]]] = {}
+    for table in Base.metadata.sorted_tables:
+        columns = [column for column in table.columns if column.name not in ignore]
+        result = await session.execute(select(*columns).order_by(*table.primary_key.columns))
+        snapshot[table.name] = [tuple(row) for row in result]
+    return snapshot
+
+
+async def _stored(session: AsyncSession, column: InstrumentedAttribute[Any]) -> set[Any]:
+    """One column's distinct values, read from the database (not the identity map)."""
+    return set((await session.execute(select(column))).scalars().all())
+
+
+async def _sides(session: AsyncSession, game_id: str) -> tuple[str | None, str | None]:
+    row = (
+        await session.execute(
+            select(GameORM.home_team_id, GameORM.away_team_id).where(GameORM.id == game_id)
+        )
+    ).one()
+    return (row.home_team_id, row.away_team_id)
+
+
+async def test_replace_followed_keeps_rows_of_kept_follows(followed: AsyncSession) -> None:
+    """Dropping some follows must cost the kept ones nothing.
+
+    The Comets and the cup stay; the Stags, both golfers and the whole
+    tour go.  Everything the Comets had accumulated survives the save —
+    above all what the next refresh cannot simply fetch back: the
+    geocoded venue and club history (rate-limited, multi-source lookups),
+    the season archive, the user's own alert settings and player follow.
+    So does the dedupe ledger, without which a game that outlives the
+    save is announced a second time.
+    """
+    session = followed
+    await repository.replace_followed(session, [BASKETBALL, CUP], [COMETS], [COMETS_IN_CUP])
+    await session.commit()
+
+    assert await _stored(session, LeagueORM.id) == {LEAGUE_ID, CUP_ID}
+    assert await _stored(session, TeamORM.id) == {TEAM_COMETS}
+    assert (await _snapshot(session))["team_competitions"] == [COMETS_IN_CUP]
+
+    session.expire_all()
+    comets = await repository.get_team(session, TEAM_COMETS)
+    assert comets is not None
+    assert comets.home_venue == "Ashport Fieldhouse"
+    assert comets.venue_lat == pytest.approx(51.5074)
+    assert comets.venue_capacity == 18000
+    assert comets.description == "Ashport Comets are a fictional basketball club."
+    assert comets.founded_year == 1974
+    assert comets.roster_updated_at is not None
+
+    assert await _stored(session, PlayerORM.id) == {"espn:9001", "espn:9002"}
+    assert await repository.get_standings_archive(session, LEAGUE_ID, "2026") is not None
+    follows = await repository.list_player_follows(session)
+    assert [(f.athlete_id, f.team_id, f.last_notified_status) for f in follows] == [
+        ("9001", TEAM_COMETS, "active")
+    ]
+    prefs = await repository.prefs_by_scope(session)
+    assert set(prefs) == {"global", f"team:{TEAM_COMETS}", f"league:{CUP_ID}"}
+    assert prefs[f"team:{TEAM_COMETS}"].muted is True
+    assert prefs[f"team:{TEAM_COMETS}"].events == {"final": False}
+    assert prefs["global"].events == {"intermission": False}
+    assert await repository.was_notified(session, "mock:derby:final")
+
+    # ...while what only a removed follow backed is gone with it.
+    assert await _stored(session, NewsORM.id) == {"news-comets", "news-cup"}
+    assert await _stored(session, EventORM.id) == set()
+    # Tables no follow keys are not the save's business.
+    assert await repository.get_stadium(session, "mock:ashport-comets") is not None
+    assert await repository.get_meta(session, "onboarded") == "1"
+
+
+async def test_replace_followed_identical_resave_changes_nothing(followed: AsyncSession) -> None:
+    """Saving the set that is already stored is a no-op, column for column.
+
+    The wizard's manage mode posts the whole selection back, so "nothing
+    changed" is its most common save — and the one that used to wipe and
+    re-fetch everything.
+    """
+    session = followed
+    before = await _snapshot(session)
+
+    await repository.replace_followed(
+        session, [BASKETBALL, CUP, TOUR], [COMETS, STAGS, CALLOWAY, FINCH], [COMETS_IN_CUP]
+    )
+    await session.commit()
+
+    assert await _snapshot(session) == before
+
+
+async def test_replace_followed_nulls_removed_side_and_drops_unbacked_games(
+    followed: AsyncSession,
+) -> None:
+    """A game stays while a followed side or a whole-competition league backs it.
+
+    Results are read from stored finals only and a refresh reaches back a
+    week, so a kept team's game deleted here would be gone for good.  A
+    game against a removed team therefore keeps its row and loses just
+    that team's id; only a game nobody follows any more is deleted.
+    """
+    session = followed
+    now = utcnow()
+    await repository.upsert_games(
+        session,
+        [
+            # The Stags' cup tie: their id goes, the cup still backs the game.
+            make_game(
+                "mock:cup-stags",
+                league_id=CUP_ID,
+                start_time=now + timedelta(days=5),
+                away_team_id=TEAM_STAGS,
+            ),
+            # A kept team's fixture stored under a league that leaves the
+            # set (which is how a sibling competition's games are stored).
+            make_game(
+                "mock:tour-proam",
+                league_id=TOUR_ID,
+                start_time=now + timedelta(days=6),
+                home_team_id=TEAM_COMETS,
+            ),
+        ],
+    )
+    await session.commit()
+
+    await repository.replace_followed(session, [BASKETBALL, CUP], [COMETS], [COMETS_IN_CUP])
+    await session.commit()
+
+    # Gone: the Stags-only fixture (its league is not followed in whole)
+    # and the one whose league left the set.
+    assert await _stored(session, GameORM.id) == {
+        "mock:derby",
+        "mock:comets-away",
+        "mock:cup-final",
+        "mock:cup-comets",
+        "mock:cup-stags",
+    }
+    assert await _sides(session, "mock:derby") == (TEAM_COMETS, None)
+    assert await _sides(session, "mock:comets-away") == (None, TEAM_COMETS)
+    assert await _sides(session, "mock:cup-comets") == (TEAM_COMETS, None)
+    assert await _sides(session, "mock:cup-stags") == (None, None)
+
+    session.expire_all()
+    derby = await repository.get_game(session, "mock:derby")
+    assert derby is not None
+    assert (derby.phase, derby.home_score, derby.away_score) == ("final", 88, 81)
+    assert derby.away_name == "Rivermont Stags"
+    # Its FINAL was announced before the save; the surviving row must not
+    # look like an unsent one to the resend query.
+    assert await repository.finals_missing_notification(session, utcnow(), timedelta(hours=6)) == []
+
+
+async def test_replace_followed_clears_removed_tags(followed: AsyncSession) -> None:
+    """A kept league's table and leaderboard stay; only a removed follow's tag goes.
+
+    The tags are the "this row is one of yours" marker — the highlight in
+    a table, and on a leaderboard who a finish notification is about — so
+    one left behind keeps pointing at a team that no longer exists.  The
+    rows are JSON, read back here from the database: an edit made in
+    place would never have been written.
+    """
+    session = followed
+    rows_before = (await session.execute(select(StandingsORM.rows))).scalar_one()
+    board_before, stamped_before = (
+        await session.execute(select(EventORM.leaderboard, EventORM.state_updated_at))
+    ).one()
+
+    await repository.replace_followed(
+        session, [BASKETBALL, CUP, TOUR], [COMETS, CALLOWAY], [COMETS_IN_CUP]
+    )
+    await session.commit()
+
+    assert await _stored(session, StandingsORM.league_id) == {LEAGUE_ID}
+    assert await _stored(session, EventORM.id) == {"mock:open"}
+
+    rows_after = (await session.execute(select(StandingsORM.rows))).scalar_one()
+    assert [row["team_id"] for row in rows_after] == [TEAM_COMETS, None, None]
+    assert rows_after == [
+        {**row, "team_id": None} if row["team_id"] == TEAM_STAGS else row for row in rows_before
+    ]
+
+    board_after, stamped_after = (
+        await session.execute(select(EventORM.leaderboard, EventORM.state_updated_at))
+    ).one()
+    assert [row["player_id"] for row in board_after] == [GOLFER_CALLOWAY, None, None]
+    assert board_after == [
+        {**row, "player_id": None} if row["player_id"] == GOLFER_FINCH else row
+        for row in board_before
+    ]
+    # Untagging is not news about the event: a fresh stamp would put a
+    # finished one back inside the FINAL-resend window.
+    assert stamped_after == stamped_before
+
+
+async def test_replace_followed_follow_all_flips(followed: AsyncSession) -> None:
+    """Switching a league between whole-competition and picked teams keeps
+    exactly what the new mode still backs."""
+    session = followed
+
+    # Off: the cup is now followed only through the Comets.  The fixtures
+    # and articles it held as a whole competition have no follow left;
+    # the Comets' own tie does.
+    await repository.replace_followed(
+        session,
+        [BASKETBALL, replace(CUP, follow_all=False), TOUR],
+        [COMETS, STAGS, CALLOWAY, FINCH],
+        [COMETS_IN_CUP],
+    )
+    await session.commit()
+
+    assert await _stored(session, GameORM.id) == {
+        "mock:derby",
+        "mock:comets-away",
+        "mock:stags-home",
+        "mock:cup-comets",
+    }
+    assert await _stored(session, NewsORM.id) == {"news-comets", "news-stags"}
+
+    # On: basketball becomes a whole-competition follow, which drops its
+    # team picks (the wizard does that).  The league backs their games
+    # now, so every one stays — minus the team ids.
+    await repository.replace_followed(session, [replace(BASKETBALL, follow_all=True)], [])
+    await session.commit()
+
+    assert await _stored(session, GameORM.id) == {
+        "mock:derby",
+        "mock:comets-away",
+        "mock:stags-home",
+    }
+    assert await _sides(session, "mock:derby") == (None, None)
+    assert await _stored(session, TeamORM.id) == set()
+    assert await _stored(session, NewsORM.id) == set()
+
+
+async def test_replace_followed_repoints_team_before_deleting_old_league(
+    followed: AsyncSession,
+) -> None:
+    """A kept team id can arrive under a new league; the old league must go last.
+
+    Until the team row is upserted it still references its old league, so
+    deleting unfollowed leagues first violates that FK (an IntegrityError:
+    a 500 from the wizard).  And the row has to be updated, not replaced —
+    a delete-and-insert would cost the team its enrichment.
+    """
+    session = followed
+    premier = replace(BASKETBALL, id=PREMIER_ID, name="Pinnacle Premier Basketball")
+    await repository.replace_followed(session, [premier], [replace(COMETS, league_id=PREMIER_ID)])
+    await session.commit()
+
+    assert await _stored(session, LeagueORM.id) == {PREMIER_ID}
+    assert await _stored(session, TeamORM.id) == {TEAM_COMETS}
+    session.expire_all()
+    comets = await repository.get_team(session, TEAM_COMETS)
+    assert comets is not None
+    assert comets.league_id == PREMIER_ID
+    assert comets.venue_lat == pytest.approx(51.5074)
+    assert comets.description == "Ashport Comets are a fictional basketball club."
+    assert await _stored(session, PlayerORM.id) == {"espn:9001", "espn:9002"}
+
+
+async def test_replace_followed_deletes_removed_leagues_children(followed: AsyncSession) -> None:
+    """Unfollowing a league must clear every row that references it.
 
     ``standings_archive`` is written by every standings refresh, so it is
-    populated minutes after the first setup; leaving it behind made the
-    unqualified ``DELETE FROM leagues`` violate its FK on postgres (a 500
-    from the wizard, permanently) and orphan stale tables on sqlite.  The
-    test engine enables ``PRAGMA foreign_keys=ON``, so the omission fails
-    here rather than only in production.
+    populated minutes after the first setup; leaving it behind once made
+    ``DELETE FROM leagues`` violate its FK on postgres (a 500 from the
+    wizard, permanently) and orphan stale tables on sqlite.  The test
+    engine enables ``PRAGMA foreign_keys=ON``, so a forgotten child table
+    fails here rather than only in production.  The cup is kept, and its
+    archive must be too: a past season cannot always be fetched again.
     """
+    session = followed
     await repository.save_standings_archive(
-        seeded,
+        session,
         domain.Standings(
-            league_id=LEAGUE_ID,
+            league_id=CUP_ID,
             season="2025-26",
-            rows=(domain.StandingRow(rank=1, team_name="Ashport Comets", wins=21, losses=9),),
+            rows=(domain.StandingRow(rank=1, team_name="Glimmerfen Owls", wins=5, losses=0),),
             fetched_at=utcnow(),
         ),
     )
-    await seeded.flush()
-    assert await repository.get_standings_archive(seeded, LEAGUE_ID, "2026") is not None
+    await session.commit()
+    assert await repository.get_standings_archive(session, LEAGUE_ID, "2026") is not None
+
+    await repository.replace_followed(session, [CUP], [])
+    await session.commit()
+    session.expire_all()
+
+    assert await repository.get_standings_archive(session, LEAGUE_ID, "2026") is None
+    assert await repository.get_league(session, LEAGUE_ID) is None
+    assert await repository.get_league(session, TOUR_ID) is None
+    stored = await _snapshot(session)
+    for name in ("standings", "events", "teams", "players"):
+        assert stored[name] == [], name
+    assert await _stored(session, GameORM.league_id) == {CUP_ID}
+    assert await repository.get_standings_archive(session, CUP_ID, "2026") is not None
+
+
+async def test_replace_followed_follow_all_only_set_keeps_league_level_rows(
+    followed: AsyncSession,
+) -> None:
+    """With no team followed at all, rows keyed by a league alone must survive.
+
+    The team id list is then empty, and an empty NOT IN matches every
+    row, NULLs included — where a non-empty one skips them.  Unguarded,
+    "team not in the set" would take each untagged cup fixture and
+    league-level article with it: all a whole-competition follow has.
+    """
+    session = followed
+    await repository.replace_followed(session, [CUP], [])
+    await session.commit()
+
+    assert await _stored(session, GameORM.id) == {"mock:cup-final", "mock:cup-comets"}
+    assert await _sides(session, "mock:cup-comets") == (None, None)
+    assert await _stored(session, NewsORM.id) == {"news-cup"}
+    assert await _stored(session, NotificationPrefORM.scope) == {"global", f"league:{CUP_ID}"}
+    assert await _stored(session, PlayerFollowORM.athlete_id) == set()
+    assert (await _snapshot(session))["team_competitions"] == []
+
+
+async def test_replace_followed_with_nothing_followed_spares_unkeyed_tables(
+    session: AsyncSession,
+) -> None:
+    """Empty id sets are still valid SQL, and never reach past follow data.
+
+    A blank database first, then one holding only rows no follow keys —
+    the dedupe ledger, the ``global`` pref, a cached stadium, app meta.
+    """
+    await repository.replace_followed(session, [], [])
+    await session.commit()
+    assert not any((await _snapshot(session)).values())
+
+    await repository.mark_notified(session, "mock:derby:final")
+    await repository.upsert_notification_pref(session, "global", muted=True)
+    await repository.upsert_stadium(
+        session, "mock:ashport-comets", "Ashport Comets", venue="Ashport Fieldhouse"
+    )
+    await repository.set_meta(session, "onboarded", "1")
+    await session.commit()
+    before = await _snapshot(session)
+
+    await repository.replace_followed(session, [], [])
+    await session.commit()
+
+    assert await _snapshot(session) == before
+
+
+# One nation picked under two national competitions is two followed teams
+# that fetch the same fixtures: each has the other's league, and the
+# friendlies, as sibling competitions.  ESPN's nation ids are global, so
+# both carry the same provider key.
+_NATION_KEY = "478"
+
+
+def _soccer_league(league_id: str) -> domain.League:
+    return domain.League(
+        id=league_id,
+        sport=domain.Sport.SOCCER,
+        name=league_id.title(),
+        provider="mock",
+        provider_key=f"mock-{league_id}",
+    )
+
+
+def _pick(team_id: str, league_id: str, provider_key: str = _NATION_KEY) -> domain.Team:
+    return domain.Team(
+        id=team_id,
+        league_id=league_id,
+        name="Verdania",
+        abbreviation="VRD",
+        provider_key=provider_key,
+    )
+
+
+def _slate(team_id: str, *league_ids: str) -> list[tuple[str, str, str]]:
+    """``team_competitions`` triples: the nation's other competitions."""
+    return [(team_id, league_id, _NATION_KEY) for league_id in league_ids]
+
+
+def _old_final(
+    game_id: str, league_id: str, *, home: str | None = None, away: str | None = None
+) -> domain.Game:
+    """A result from well before the week a refresh reaches back."""
+    return make_game(
+        game_id,
+        league_id=league_id,
+        start_time=utcnow() - timedelta(days=40),
+        home_team_id=home,
+        away_team_id=away,
+        home_name="Verdania",
+        away_name="Mistralia",
+        state=domain.GameState(
+            game_id=game_id, phase=domain.GamePhase.FINAL, home_score=2, away_score=1
+        ),
+    )
+
+
+async def _tagged_games(session: AsyncSession) -> list[tuple[str, str | None, str | None]]:
+    rows = await session.execute(
+        select(GameORM.id, GameORM.home_team_id, GameORM.away_team_id).order_by(GameORM.id)
+    )
+    return [tuple(row) for row in rows]
+
+
+async def test_replace_followed_hands_game_tags_to_same_provider_team(
+    session: AsyncSession,
+) -> None:
+    """Dropping one of two picks of the same team costs the kept one no game.
+
+    Both picks fetch every fixture they share, and the later fetch's id
+    replaces the earlier one on the game's side (``upsert_games``), so ALL
+    of them end up tagged with one pick — the one whose id sorts last.
+    Unfollow that one and its side used to be nulled like any removed
+    team's: the games then looked like nobody's and were deleted, with the
+    kept pick still playing in them and a refresh reaching back one week.
+
+    The tag passes to the kept pick instead — but only where that pick is
+    the same team: fetched in the game's league under the same provider
+    key.  The key alone is not an identity (ESPN reuses ids across
+    sports), which is what the basketball team with Verdania's key is
+    here for.
+    """
+    cup, euro, friendly, hoops = (_soccer_league(i) for i in ("cup", "euro", "friendly", "hoops"))
+    euro_verdania = _pick("euro-verdania", "euro")
+    cup_verdania = _pick("cup-verdania", "cup")
+    hoops_478 = _pick("hoops-478", "hoops")
+    euro_mistralia = _pick("euro-mistralia", "euro", "479")
+    euro_slate = _slate("euro-verdania", "cup", "friendly")
+    cup_slate = _slate("cup-verdania", "euro", "friendly")
+    await repository.replace_followed(
+        session,
+        [cup, euro, friendly, hoops],
+        [euro_verdania, cup_verdania, hoops_478, euro_mistralia],
+        euro_slate + cup_slate,
+    )
+    # As the refresh leaves them: every game the two picks share carries
+    # the id fetched last, here ``cup-verdania``.
+    await repository.upsert_games(
+        session,
+        [
+            _old_final("mock:cup-1", "cup", home="cup-verdania"),
+            _old_final("mock:euro-1", "euro", away="cup-verdania"),
+            # Against another followed team, which is unfollowed too and has
+            # no second pick: an ordinary removed side.
+            _old_final("mock:euro-2", "euro", home="cup-verdania", away="euro-mistralia"),
+            _old_final("mock:euro-3", "euro", home="euro-mistralia"),
+            _old_final("mock:friendly-1", "friendly", home="cup-verdania"),
+            _old_final("mock:hoops-1", "hoops", home="hoops-478"),
+        ],
+    )
+    await session.commit()
+
+    # Only the Euros pick of Verdania stays.  ``hoops`` stays stored too, so
+    # nothing but the missing follow can take its game.
+    await repository.replace_followed(
+        session, [cup, euro, friendly, hoops], [euro_verdania], euro_slate
+    )
+    await session.commit()
+
+    assert await _tagged_games(session) == [
+        ("mock:cup-1", "euro-verdania", None),
+        ("mock:euro-1", None, "euro-verdania"),
+        ("mock:euro-2", "euro-verdania", None),
+        ("mock:friendly-1", "euro-verdania", None),
+    ]
+    session.expire_all()
+    results = await repository.results_for_team(session, "euro-verdania")
+    assert {game.id for game in results} == {
+        "mock:cup-1",
+        "mock:euro-1",
+        "mock:euro-2",
+        "mock:friendly-1",
+    }
+
+
+async def test_replace_followed_hands_game_tags_only_where_the_kept_pick_is_fetched(
+    session: AsyncSession,
+) -> None:
+    """A tag moves to a team the next refresh would put it on, or not at all.
+
+    Three picks of one nation, the last-sorted one removed.  A game in a
+    league both kept picks are fetched in goes to the one fetched LAST
+    (team-id order, as ``refresh_schedules`` walks them) — the id the next
+    pass would write there anyway, so the tags do not move twice.  A game
+    in a competition neither kept pick is fetched in has no heir: its side
+    is nulled and, with nobody following it, the game goes.
+    """
+    leagues = [_soccer_league(i) for i in ("cup", "euro", "friendly", "nations", "qualifier")]
+    euro_verdania = _pick("euro-verdania", "euro")
+    nations_verdania = _pick("nations-verdania", "nations")
+    cup_verdania = _pick("cup-verdania", "cup")
+    kept_slates = _slate("euro-verdania", "friendly") + _slate(
+        "nations-verdania", "euro", "friendly"
+    )
+    await repository.replace_followed(
+        session,
+        leagues,
+        [euro_verdania, nations_verdania, cup_verdania],
+        kept_slates + _slate("cup-verdania", "euro", "friendly", "nations", "qualifier"),
+    )
+    await repository.upsert_games(
+        session,
+        [
+            _old_final("mock:euro-1", "euro", home="cup-verdania"),
+            _old_final("mock:friendly-1", "friendly", home="cup-verdania"),
+            _old_final("mock:nations-1", "nations", home="cup-verdania"),
+            _old_final("mock:qualifier-1", "qualifier", home="cup-verdania"),
+        ],
+    )
+    await session.commit()
 
     await repository.replace_followed(
-        seeded,
+        session, leagues, [euro_verdania, nations_verdania], kept_slates
+    )
+    await session.commit()
+
+    assert await _tagged_games(session) == [
+        ("mock:euro-1", "nations-verdania", None),
+        ("mock:friendly-1", "nations-verdania", None),
+        ("mock:nations-1", "nations-verdania", None),
+    ]
+
+
+async def test_replace_followed_hands_game_tags_to_a_team_the_same_save_adds(
+    session: AsyncSession,
+) -> None:
+    """Swapping a nation's pick for its other competition in ONE save keeps its games.
+
+    The heir is then a team this very save adds, and the side columns are
+    foreign keys: the tags can only move once the new ``teams`` row is
+    stored.  Handed over any earlier, the save fails on the constraint and
+    stores nothing.
+    """
+    leagues = [_soccer_league(i) for i in ("cup", "euro", "friendly")]
+    await repository.replace_followed(
+        session,
+        leagues,
+        [_pick("cup-verdania", "cup")],
+        _slate("cup-verdania", "euro", "friendly"),
+    )
+    await repository.upsert_games(
+        session,
         [
-            domain.League(
-                id="harborlight-hockey",
-                sport=domain.Sport.HOCKEY,
-                name="Harborlight Hockey League",
-                provider="espn",
-                provider_key="hockey/harborlight",
+            _old_final("mock:cup-1", "cup", home="cup-verdania"),
+            _old_final("mock:friendly-1", "friendly", away="cup-verdania"),
+        ],
+    )
+    await session.commit()
+
+    await repository.replace_followed(
+        session,
+        leagues,
+        [_pick("euro-verdania", "euro")],
+        _slate("euro-verdania", "cup", "friendly"),
+    )
+    await session.commit()
+
+    assert await _stored(session, TeamORM.id) == {"euro-verdania"}
+    assert await _tagged_games(session) == [
+        ("mock:cup-1", "euro-verdania", None),
+        ("mock:friendly-1", None, "euro-verdania"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Sweeping rows the stored followed set does not back
+# ---------------------------------------------------------------------------
+
+
+async def test_prune_unbacked_is_noop_on_consistent_db(followed: AsyncSession) -> None:
+    """The sweep runs before every refresh; on a healthy database it changes nothing.
+
+    ``followed`` holds each shape it could be tempted by: an untagged
+    fixture and a league-level article (in the whole-competition league),
+    one-sided games, an untagged table row, prefs of all three scope
+    kinds, a ``team_competitions`` row.  Compared on every column of
+    every row, ``updated_at`` included — a needless rewrite would bump it.
+    """
+    session = followed
+    before = await _snapshot(session)
+    assert all(
+        before[table]
+        for table in (
+            "games",
+            "events",
+            "standings",
+            "standings_archive",
+            "news_items",
+            "players",
+            "player_follows",
+            "notification_prefs",
+            "notifications_sent",
+            "team_competitions",
+        )
+    )
+
+    await repository.prune_unbacked(session)
+    await session.commit()
+
+    assert await _snapshot(session) == before
+
+
+async def test_prune_unbacked_removes_leftovers(followed: AsyncSession) -> None:
+    """What a write racing a save can leave behind is swept — and only that.
+
+    A refresh pass or live tick that read the followed set before a save
+    can commit after it.  None of these rows breaks a foreign key, so
+    nothing else would ever remove them: an untagged fixture and a league
+    article in a league not followed in whole, a pref and a player follow
+    for a team that is gone, and follow tags naming it.
+    """
+    session = followed
+    before = await _snapshot(session, ignore=_UPDATED_AT)
+
+    await repository.upsert_games(
+        session,
+        [
+            make_game(
+                "mock:stale-fixture",
+                start_time=utcnow() + timedelta(days=1),
+                home_name="Glimmerfen Owls",
+                away_name="Bramblewick Foxes",
             )
         ],
-        [],
     )
-    await seeded.flush()
+    await repository.upsert_news(
+        session,
+        [
+            domain.NewsItem(
+                id="news-stale-league",
+                team_id=None,
+                league_id=LEAGUE_ID,
+                title="Pinnacle league office names new commissioner",
+                url="https://news.example/pinnacle/commissioner",
+                source="Pinnacle Wire",
+            )
+        ],
+    )
+    await repository.upsert_notification_pref(session, "team:ghost-team", muted=True)
+    await repository.upsert_notification_pref(session, "league:ghost-league", muted=True)
+    await repository.follow_player(
+        session, athlete_id="6001", name="Pell Ardent", team_id="ghost-team", league_id=LEAGUE_ID
+    )
+    table = await repository.get_standings(session, LEAGUE_ID)
+    assert table is not None
+    table.rows = [
+        {**row, "team_id": "ghost-team"} if row["team_id"] is None else row for row in table.rows
+    ]
+    event = await repository.get_event(session, "mock:open")
+    assert event is not None
+    event.leaderboard = [
+        {**row, "player_id": "ghost-team"} if row["player_id"] is None else row
+        for row in event.leaderboard
+    ]
+    await session.commit()
+    with_leftovers = await _snapshot(session, ignore=_UPDATED_AT)
+    for name in ("games", "news_items", "notification_prefs", "player_follows"):
+        assert len(with_leftovers[name]) > len(before[name])
+    for name in ("standings", "events"):
+        assert with_leftovers[name] != before[name]
 
-    assert await repository.get_standings_archive(seeded, LEAGUE_ID, "2026") is None
-    assert await repository.get_league(seeded, LEAGUE_ID) is None
+    await repository.prune_unbacked(session)
+    await session.commit()
+
+    assert await _snapshot(session, ignore=_UPDATED_AT) == before
+
+
+async def test_prune_unbacked_on_empty_database(session: AsyncSession) -> None:
+    """Nothing followed yet (a fresh install's first refresh): every id set
+    is empty, which must neither be invalid SQL nor read as "delete it all"."""
+    await repository.prune_unbacked(session)
+    await session.commit()
+    assert not any((await _snapshot(session)).values())
+
+    await repository.mark_notified(session, "mock:derby:final")
+    await repository.upsert_notification_pref(session, "global", muted=True)
+    await session.commit()
+    before = await _snapshot(session)
+
+    await repository.prune_unbacked(session)
+    await session.commit()
+
+    assert await _snapshot(session) == before
+
+
+async def test_prune_unbacked_with_no_team_followed_keeps_league_level_rows(
+    followed: AsyncSession,
+) -> None:
+    """The sweep's own "not followed" test must spare NULL as well.
+
+    It asks the database (``NOT IN (SELECT id FROM teams)``) rather than
+    comparing with a list, and with nothing but a whole competition
+    followed that subquery returns no row — which a bare ``NOT IN`` reads
+    as "every row, NULL included": each untagged cup fixture and
+    league-level article, all a whole-competition follow has.
+    """
+    session = followed
+    await repository.replace_followed(session, [CUP], [])
+    await session.commit()
+    before = await _snapshot(session)
+    assert before["teams"] == []
+    assert before["games"] and before["news_items"] and before["notification_prefs"]
+
+    await repository.prune_unbacked(session)
+    await session.commit()
+
+    assert await _snapshot(session) == before
+
+
+# Two the fixture does not follow.  The Sentinels are a name on two
+# basketball fixtures and the untagged third row of the table; Wren
+# Abernathy is the untagged third row of the leaderboard.  The saves below
+# follow them while a sweep is running.
+SENTINELS = domain.Team(
+    id="foxglove-sentinels",
+    league_id=LEAGUE_ID,
+    name="Foxglove Sentinels",
+    abbreviation="FOX",
+    provider_key="foxglove-sentinels",
+)
+ABERNATHY = domain.Team(
+    id="fairway-tour-wren-abernathy",
+    league_id=TOUR_ID,
+    name="Wren Abernathy",
+    abbreviation="ABE",
+    provider_key="4412",
+)
+
+
+async def _sweep_with_a_save_landing(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    lands_before: Callable[[Any], bool],
+    save: Callable[[AsyncSession], Awaitable[None]],
+) -> None:
+    """Run the sweep with ``save`` committing from a second session part-way.
+
+    It lands just before the first statement of the sweep that
+    ``lands_before`` accepts.  Engine-independent: in-memory SQLite shares
+    one connection between the sessions, postgres gives each its own
+    (READ COMMITTED).
+    """
+    saved = False
+    real_execute = session.execute
+
+    async def execute(statement: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal saved
+        if not saved and lands_before(statement):
+            saved = True
+            async with async_sessionmaker(session.bind, expire_on_commit=False)() as other:
+                await save(other)
+                await other.commit()
+        return await real_execute(statement, *args, **kwargs)
+
+    # A pass sweeps in a session of its own.  This one may still hold the
+    # fixture's rows as loaded (``expire_on_commit=False``), and a query
+    # does not refresh those: the sweep would judge what the fixture
+    # wrote, not what the save has just stored.
+    session.expire_all()
+    monkeypatch.setattr(session, "execute", execute)
+    await repository.prune_unbacked(session)
+    await session.commit()
+    monkeypatch.undo()
+    assert saved
+
+
+def _is_write(statement: Any) -> bool:
+    return isinstance(statement, (Delete, Update))
+
+
+def _writes_prefs(statement: Any) -> bool:
+    return _is_write(statement) and statement.table.name == NotificationPrefORM.__tablename__
+
+
+def _reads_rows_of(entity: type[Base]) -> Callable[[Any], bool]:
+    """Accepts the sweep's ``select(entity)``: whole rows, to edit their JSON tags."""
+
+    def reads(statement: Any) -> bool:
+        if not isinstance(statement, Select):
+            return False
+        selected = statement.column_descriptions
+        # ``is``: against a column, ``==`` would build a SQL comparison.
+        return len(selected) == 1 and selected[0]["expr"] is entity
+
+    return reads
+
+
+@pytest.mark.parametrize(
+    "lands_before",
+    [
+        pytest.param(_is_write, id="the-first-delete"),
+        pytest.param(_writes_prefs, id="the-prefs-delete"),
+    ],
+)
+async def test_prune_unbacked_spares_what_a_save_commits_during_the_sweep(
+    followed: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    lands_before: Callable[[Any], bool],
+) -> None:
+    """A save that commits while the sweep runs keeps everything it wrote.
+
+    The sweep starts every refresh pass, the cron's and the startup one
+    included, so a save can land in the middle of it.  Sweeping against
+    ids read into Python beforehand, it took the new set for a leftover:
+    a league just followed in whole lost the headline-only ``league:{id}``
+    pref the save had seeded for it, and then notified on every event
+    type.  Each statement has to judge by the set as stored when IT runs.
+
+    The save is committed from a second session at the moment the sweep
+    is about to issue a write — its first, then the prefs delete itself.
+    This save only adds a league, so it is the league ids it puts to the
+    test; the three tests below do the same for the whole-competition
+    ids, the team ids and the ids the JSON tags are judged by.
+    """
+    session = followed
+    before = await _snapshot(session)
+    harbour = domain.League(
+        id="harbour-shield",
+        sport=domain.Sport.BASKETBALL,
+        name="Harbour Shield",
+        provider="mock",
+        provider_key="mock-shield",
+        follow_all=True,
+    )
+    seed = {"game_start": True, "final": True, "period_start": False}
+
+    async def save(other: AsyncSession) -> None:
+        await repository.replace_followed(
+            other,
+            [BASKETBALL, CUP, TOUR, harbour],
+            [COMETS, STAGS, CALLOWAY, FINCH],
+            [COMETS_IN_CUP],
+        )
+        await repository.upsert_notification_pref(other, f"league:{harbour.id}", events=seed)
+
+    await _sweep_with_a_save_landing(session, monkeypatch, lands_before, save)
+
+    session.expire_all()
+    prefs = await repository.prefs_by_scope(session)
+    assert set(prefs) == {scope for scope, *_ in before["notification_prefs"]} | {
+        f"league:{harbour.id}"
+    }
+    assert prefs[f"league:{harbour.id}"].events == seed
+    after = await _snapshot(session)
+    assert [row[0] for row in after["leagues"]] == sorted([LEAGUE_ID, CUP_ID, TOUR_ID, harbour.id])
+    for name, rows in before.items():
+        if name not in ("leagues", "notification_prefs"):
+            assert after[name] == rows, name
+
+
+async def test_prune_unbacked_judges_whole_competitions_by_the_stored_set(
+    followed: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A league a save switches to whole-competition mid-sweep keeps its games.
+
+    The save drops both basketball teams and follows the league in whole,
+    so its games are now untagged — kept only because the league is
+    ``follow_all``.  Judged by the whole-competition ids as they were
+    before the save, every one of them is a leftover, and the results
+    among them are gone for good.
+    """
+    session = followed
+
+    async def save(other: AsyncSession) -> None:
+        await repository.replace_followed(
+            other, [replace(BASKETBALL, follow_all=True), CUP, TOUR], [CALLOWAY, FINCH], []
+        )
+
+    await _sweep_with_a_save_landing(session, monkeypatch, _is_write, save)
+
+    assert await _tagged_games(session) == [
+        ("mock:comets-away", None, None),
+        ("mock:cup-comets", None, None),
+        ("mock:cup-final", None, None),
+        ("mock:derby", None, None),
+        ("mock:stags-home", None, None),
+    ]
+
+
+async def test_prune_unbacked_judges_teams_by_the_stored_set(
+    followed: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rows keyed by a team a save adds mid-sweep are not leftovers.
+
+    The save follows the Sentinels; a fixture tagged with them, a pref and
+    a player follow are stored with it.  Judged by the team ids as they
+    were before the save, all three name a team that is not followed: the
+    game is untagged and then deleted as nobody's, the other two deleted.
+    """
+    session = followed
+    games = await _tagged_games(session)
+    prefs = await _stored(session, NotificationPrefORM.scope)
+
+    async def save(other: AsyncSession) -> None:
+        await repository.replace_followed(
+            other,
+            [BASKETBALL, CUP, TOUR],
+            [COMETS, STAGS, CALLOWAY, FINCH, SENTINELS],
+            [COMETS_IN_CUP],
+        )
+        await repository.upsert_games(
+            other,
+            [
+                make_game(
+                    "mock:sentinels-home",
+                    start_time=utcnow() + timedelta(days=5),
+                    home_team_id=SENTINELS.id,
+                    home_name="Foxglove Sentinels",
+                    away_name="Glimmerfen Owls",
+                )
+            ],
+        )
+        await repository.upsert_notification_pref(other, f"team:{SENTINELS.id}", muted=True)
+        await repository.follow_player(
+            other,
+            athlete_id="5001",
+            name="Tamsin Rook",
+            team_id=SENTINELS.id,
+            league_id=LEAGUE_ID,
+        )
+
+    await _sweep_with_a_save_landing(session, monkeypatch, _is_write, save)
+
+    assert set(await _tagged_games(session)) == {
+        *games,
+        ("mock:sentinels-home", SENTINELS.id, None),
+    }
+    assert await _stored(session, NotificationPrefORM.scope) == prefs | {f"team:{SENTINELS.id}"}
+    assert await _stored(session, PlayerFollowORM.team_id) == {
+        TEAM_COMETS,
+        TEAM_STAGS,
+        SENTINELS.id,
+    }
+
+
+@pytest.mark.parametrize("tagged", ["standings", "leaderboard"])
+async def test_prune_unbacked_keeps_the_tag_of_a_team_followed_during_the_sweep(
+    followed: AsyncSession, monkeypatch: pytest.MonkeyPatch, tagged: str
+) -> None:
+    """A JSON follow tag is judged by team ids read AFTER the row carrying it.
+
+    Those tags cannot be tested in SQL: the sweep reads the rows, reads
+    the team ids and compares in Python.  Were the ids read first, a team
+    followed in between — and the tag a writer then puts on its row (a
+    live tick writes leaderboards while a pass is running) — would reach
+    the comparison as a tag naming nobody, and be cleared.
+
+    The save and the tagged write land just before the read of the table
+    that carries the tag, one case each, so the ids have to come after
+    BOTH reads whichever order those are in.
+    """
+    session = followed
+    entity, newcomer = (StandingsORM, SENTINELS) if tagged == "standings" else (EventORM, ABERNATHY)
+
+    async def save(other: AsyncSession) -> None:
+        await repository.replace_followed(
+            other,
+            [BASKETBALL, CUP, TOUR],
+            [COMETS, STAGS, CALLOWAY, FINCH, newcomer],
+            [COMETS_IN_CUP],
+        )
+        if tagged == "standings":
+            table = await repository.get_standings(other, LEAGUE_ID)
+            assert table is not None
+            table.rows = [
+                {**row, "team_id": newcomer.id} if row["team_id"] is None else row
+                for row in table.rows
+            ]
+        else:
+            event = await repository.get_event(other, "mock:open")
+            assert event is not None
+            event.leaderboard = [
+                {**row, "player_id": newcomer.id} if row["player_id"] is None else row
+                for row in event.leaderboard
+            ]
+
+    await _sweep_with_a_save_landing(session, monkeypatch, _reads_rows_of(entity), save)
+
+    if tagged == "standings":
+        rows = (
+            await session.execute(
+                select(StandingsORM.rows).where(StandingsORM.league_id == LEAGUE_ID)
+            )
+        ).scalar_one()
+        assert [row["team_id"] for row in rows] == [TEAM_COMETS, TEAM_STAGS, SENTINELS.id]
+    else:
+        board = (
+            await session.execute(select(EventORM.leaderboard).where(EventORM.id == "mock:open"))
+        ).scalar_one()
+        assert [row["player_id"] for row in board] == [
+            GOLFER_CALLOWAY,
+            GOLFER_FINCH,
+            ABERNATHY.id,
+        ]
 
 
 # ---------------------------------------------------------------------------

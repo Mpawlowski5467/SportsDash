@@ -522,6 +522,10 @@ class MetaOut(BaseModel):
 class SetupStatusOut(BaseModel):
     onboarded: bool
     followed_team_count: int
+    # A ``daily_refresh`` is in flight.  Every save kicks one, and the flag
+    # stays up until a whole pass has run against the new followed set — so
+    # its clearing is the client's cue to refetch what that pass loaded.
+    refreshing: bool = False
 
 
 class CatalogLeagueOut(BaseModel):
@@ -573,6 +577,20 @@ class FollowSelection(BaseModel):
 
 class FollowRequest(BaseModel):
     selections: list[FollowSelection]
+
+
+class CurrentSelectionOut(BaseModel):
+    """One league of the followed set, as the wizard selection that made it."""
+
+    league_id: str
+    follow_all: bool = False
+    # The followed picks, in catalog shape so the picker can show one the
+    # live catalog no longer lists.  Empty for a whole-competition follow.
+    teams: list[CatalogTeamOut] = []
+
+
+class CurrentSelectionsOut(BaseModel):
+    selections: list[CurrentSelectionOut]
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ import type {
   Bracket,
   CatalogLeaguesResponse,
   CatalogTeamsResponse,
+  CurrentSelectionsResponse,
   Game,
   GameDetail,
   GameOdds,
@@ -431,14 +432,45 @@ export function useRefreshNews(
 }
 
 /**
+ * Polling for the setup status: every 5s while the backend reports a refresh
+ * in flight, otherwise never. The status is the only signal that the refresh
+ * a save kicked has finished, and that pass takes anywhere from seconds to
+ * minutes — so it is watched while it runs and left alone once it is done.
+ */
+export function statusRefetchInterval(
+  data: SetupStatus | undefined,
+): number | false {
+  return data?.refreshing ? 5_000 : false;
+}
+
+/**
  * Onboarding gate. staleTime 0 so re-checks after setup mutations always
- * hit the backend instead of trusting a cached "not onboarded".
+ * hit the backend instead of trusting a cached "not onboarded". It doubles
+ * as the refresh watch (see `statusRefetchInterval`): App refetches
+ * everything once `refreshing` clears.
  */
 export function useSetupStatus(): UseQueryResult<SetupStatus> {
   return useQuery({
     queryKey: ["setup-status"],
     queryFn: () => api.setupStatus(),
     staleTime: 0,
+    refetchInterval: (query) => statusRefetchInterval(query.state.data),
+  });
+}
+
+/**
+ * The followed set as wizard selections, for the manage-mode editor to open
+ * on. Never served from cache: the editor seeds itself from this once, and
+ * a copy kept from an earlier open would seed it with follows that a save
+ * has since changed. gcTime 0 drops the entry the moment the editor closes,
+ * so every open starts from a fresh request.
+ */
+export function useSetupSelection(): UseQueryResult<CurrentSelectionsResponse> {
+  return useQuery({
+    queryKey: ["setup-selection"],
+    queryFn: () => api.setupSelection(),
+    staleTime: 0,
+    gcTime: 0,
   });
 }
 
