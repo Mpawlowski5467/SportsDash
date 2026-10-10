@@ -86,16 +86,20 @@ from app.providers.espn.roster import (
 )
 from app.providers.espn.standings import _parse_standings, _parse_tennis_rankings
 from app.providers.espn.summary import (
+    _MONTH_BUCKET_LIMIT,
     _SCHEDULE_PARAM_SETS,
     _add_month,
     _chunk_date_range,
     _core_event_path,
     _merge_games,
+    _month_buckets,
     _odds_has_signal,
     _parse_game_summary,
     _parse_pickcenter,
     _parse_predictor,
     _parse_summary_state,
+    _range_dates,
+    _range_rejected,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,6 +158,73 @@ class EspnProvider:
         data = response.json()
         return data if isinstance(data, dict) else {}
 
+    async def _fetch_scoreboards(
+        self, url: str, param_sets: list[dict[str, str]], *, what: str
+    ) -> tuple[list[dict[str, Any]], list[Exception]]:
+        """Fetch each scoreboard param set independently.
+
+        Returns the payloads that came back and the errors that did not: a
+        failed call logs and is skipped (a partial window beats none), and
+        the caller decides whether having nothing at all is fatal.
+        """
+        payloads: list[dict[str, Any]] = []
+        errors: list[Exception] = []
+        for params in param_sets:
+            try:
+                payloads.append(await self._get_json(url, params=params))
+            except Exception as exc:
+                logger.warning("ESPN %s call failed (params=%s): %s", what, params, exc)
+                errors.append(exc)
+        return payloads, errors
+
+    async def _get_scoreboard_window(
+        self, url: str, start: date, end: date, *, what: str
+    ) -> list[dict[str, Any]]:
+        """Raw scoreboard payloads covering ``[start, end]`` (UTC dates).
+
+        The window is asked for in the day-range form
+        (``?dates=YYYYMMDD-YYYYMMDD&limit=400``), split on month boundaries
+        when it is long (``_chunk_date_range``).  The calls are independent
+        — one failing can't lose the rest — and only when nothing at all
+        came back does the first error propagate.
+
+        ESPN refuses the range form outright on some scoreboards (see
+        ``_MONTH_BUCKET_LIMIT``).  The first such 400 switches the rest of
+        the window to whole-month buckets (``?dates=YYYYMM``), which every
+        scoreboard still serves, instead of failing the league.  Buckets
+        return more than was asked for and may repeat what an earlier chunk
+        already delivered, so callers must merge by id and filter the
+        parsed result to ``[start, end]`` — which they did for the ranged
+        payloads anyway.
+        """
+        payloads: list[dict[str, Any]] = []
+        errors: list[Exception] = []
+        for chunk_start, chunk_end in _chunk_date_range(start, end):
+            params = {"dates": _range_dates(chunk_start, chunk_end), "limit": "400"}
+            try:
+                payloads.append(await self._get_json(url, params=params))
+            except Exception as exc:
+                if not _range_rejected(exc):
+                    logger.warning("ESPN %s call failed (params=%s): %s", what, params, exc)
+                    errors.append(exc)
+                    continue
+                logger.warning(
+                    "ESPN refused ranged dates for %s (dates=%s) — using month buckets instead",
+                    what,
+                    params["dates"],
+                )
+                months = [
+                    {"dates": bucket, "limit": _MONTH_BUCKET_LIMIT}
+                    for bucket in _month_buckets(chunk_start, end)
+                ]
+                fetched, failed = await self._fetch_scoreboards(url, months, what=what)
+                payloads.extend(fetched)
+                errors.extend(failed)
+                break
+        if not payloads and errors:
+            raise errors[0]
+        return payloads
+
     async def get_schedule(self, league: League, team: Team, start: date, end: date) -> list[Game]:
         self._register(league, team)
         if league.sport in LEADERBOARD_SPORTS:
@@ -186,10 +257,12 @@ class EspnProvider:
         Tennis ships the whole tournament draw on the tour scoreboard;
         ``?dates=YYYYMMDD-YYYYMMDD`` returns every event overlapping the
         range, so one ranged call (chunked by month for long windows)
-        covers the window.  UFC schedules at month granularity
-        (``?dates=YYYYMM``), so each calendar month in the window is
-        fetched and the bouts the athlete appears in are kept.  Each chunk
-        is fetched independently; a failed chunk logs and is skipped.
+        covers the window — degrading to month buckets if ESPN refuses the
+        range (see :meth:`_get_scoreboard_window`).  UFC schedules at month
+        granularity (``?dates=YYYYMM``), so each calendar month in the
+        window is fetched and the bouts the athlete appears in are kept.
+        Each chunk is fetched independently; a failed chunk logs and is
+        skipped.
 
         MMA additionally collects each bout's core-API status URL so the
         followed fighter's FINISHED bouts can be enriched with their method
@@ -197,27 +270,19 @@ class EspnProvider:
         """
         url = f"{_SITE_BASE}/{league.provider_key}/scoreboard"
         core_league_base = f"{_CORE_BASE}/{_core_event_path(league.provider_key)}"
-        batches: list[list[Game]] = []
+        what = f"{league.sport.value} schedule for athlete {team.id}"
         status_urls: dict[str, str] = {}
-        errors: list[Exception] = []
-        for params in self._individual_scoreboard_params(league.sport, start, end):
-            try:
-                data = await self._get_json(url, params=params)
-            except Exception as exc:
-                logger.warning(
-                    "ESPN %s schedule call failed for athlete %s (params=%s): %s",
-                    league.sport.value,
-                    team.id,
-                    params,
-                    exc,
-                )
-                errors.append(exc)
-                continue
-            batches.append(_parse_individual_scoreboard(data, league, team))
-            if league.sport is Sport.MMA:
+        if league.sport is Sport.MMA:
+            payloads, errors = await self._fetch_scoreboards(
+                url, self._mma_scoreboard_params(start, end), what=what
+            )
+            if not payloads and errors:
+                raise errors[0]
+            for data in payloads:
                 status_urls.update(_mma_status_urls(data, core_league_base=core_league_base))
-        if not batches and errors:
-            raise errors[0]
+        else:
+            payloads = await self._get_scoreboard_window(url, start, end, what=what)
+        batches = [_parse_individual_scoreboard(data, league, team) for data in payloads]
         games = _games_for_athlete(_merge_games(*batches), team)
         if league.sport is Sport.MMA:
             games = await self._attach_fight_results(
@@ -301,27 +366,18 @@ class EspnProvider:
         ]
 
     @staticmethod
-    def _individual_scoreboard_params(sport: Sport, start: date, end: date) -> list[dict[str, str]]:
-        """Scoreboard ``dates`` params covering ``[start, end]`` per sport.
+    def _mma_scoreboard_params(start: date, end: date) -> list[dict[str, str]]:
+        """UFC scoreboard ``dates`` params covering ``[start, end]``.
 
-        Tennis uses ranged ``YYYYMMDD-YYYYMMDD`` dates (chunked by month
-        for long windows).  UFC takes a ``YYYYMM`` month bucket, so one
-        param is emitted per calendar month spanned by the window.
+        UFC takes a ``YYYYMM`` month bucket, so one param is emitted per
+        calendar month spanned by the window.
         """
-        if sport is Sport.MMA:
-            params: list[dict[str, str]] = []
-            cursor = date(start.year, start.month, 1)
-            while cursor <= end:
-                params.append({"dates": cursor.strftime("%Y%m"), "limit": "400"})
-                cursor = _add_month(cursor)
-            return params
-        return [
-            {
-                "dates": (f"{chunk_start.strftime('%Y%m%d')}-{chunk_end.strftime('%Y%m%d')}"),
-                "limit": "400",
-            }
-            for chunk_start, chunk_end in _chunk_date_range(start, end)
-        ]
+        params: list[dict[str, str]] = []
+        cursor = date(start.year, start.month, 1)
+        while cursor <= end:
+            params.append({"dates": cursor.strftime("%Y%m"), "limit": "400"})
+            cursor = _add_month(cursor)
+        return params
 
     async def _get_merged_schedule(
         self,
@@ -398,6 +454,11 @@ class EspnProvider:
         by US/Eastern, so the requested dates are formatted in ET to match
         ESPN's day boundaries; the final ``[start, end]`` filter is applied
         to each game's tz-aware UTC start date.
+
+        ESPN now answers the range form with a 400 for every team sport,
+        so in practice the window arrives as whole-month buckets
+        (``?dates=YYYYMM``) and that final filter is what trims them back
+        down — see :meth:`_get_scoreboard_window`.
         """
         if league.sport in LEADERBOARD_SPORTS:
             # A leaderboard follow_all league (a golf tour, a racing series)
@@ -405,25 +466,10 @@ class EspnProvider:
             # get_events (see get_schedule's identical gate).
             return []
         url = f"{_SITE_BASE}/{league.provider_key}/scoreboard"
-        batches: list[list[Game]] = []
-        errors: list[Exception] = []
-        for chunk_start, chunk_end in _chunk_date_range(start, end):
-            dates = f"{chunk_start.strftime('%Y%m%d')}-{chunk_end.strftime('%Y%m%d')}"
-            try:
-                data = await self._get_json(url, params={"dates": dates, "limit": "400"})
-            except Exception as exc:
-                logger.warning(
-                    "ESPN competition scoreboard call failed for league %s (dates=%s): %s",
-                    league.id,
-                    dates,
-                    exc,
-                )
-                errors.append(exc)
-                continue
-            batches.append(_parse_scoreboard(data, league))
-        if not batches and errors:
-            raise errors[0]
-        games = _merge_games(*batches)
+        payloads = await self._get_scoreboard_window(
+            url, start, end, what=f"competition scoreboard for league {league.id}"
+        )
+        games = _merge_games(*(_parse_scoreboard(data, league) for data in payloads))
         return sorted(
             (game for game in games if start <= game.start_time.date() <= end),
             key=lambda game: game.start_time,
@@ -446,8 +492,9 @@ class EspnProvider:
         Non-leaderboard sports return ``[]``.  ESPN's tour/series scoreboard
         exposes the current/most-recent event (and the season calendar
         around it) — a single ``?dates=YYYYMMDD-YYYYMMDD`` call covers the
-        window (chunked by month for long ranges, like the competition
-        scoreboard), and each tournament/race weekend becomes one
+        window (chunked by month for long ranges, and degrading to month
+        buckets if the range is refused, like the competition scoreboard),
+        and each tournament/race weekend becomes one
         :class:`Event` with a populated leaderboard.  Each
         :class:`LeaderRow` carries the athlete's ESPN id in ``player_id``
         TRANSIENTLY; the scheduler rewrites it to the internal
@@ -459,24 +506,10 @@ class EspnProvider:
             return []
         parse = self._event_scoreboard_parser(league)
         url = f"{_SITE_BASE}/{league.provider_key}/scoreboard"
-        batches: list[list[Event]] = []
-        errors: list[Exception] = []
-        for chunk_start, chunk_end in _chunk_date_range(start, end):
-            dates = f"{chunk_start.strftime('%Y%m%d')}-{chunk_end.strftime('%Y%m%d')}"
-            try:
-                data = await self._get_json(url, params={"dates": dates, "limit": "400"})
-            except Exception as exc:
-                logger.warning(
-                    "ESPN leaderboard scoreboard call failed for league %s (dates=%s): %s",
-                    league.id,
-                    dates,
-                    exc,
-                )
-                errors.append(exc)
-                continue
-            batches.append(parse(data, league))
-        if not batches and errors:
-            raise errors[0]
+        payloads = await self._get_scoreboard_window(
+            url, start, end, what=f"leaderboard scoreboard for league {league.id}"
+        )
+        batches = [parse(data, league) for data in payloads]
         # Merge by event id (first batch wins on duplicates) and keep any
         # tournament whose [start_time, end_time] span overlaps the window.
         merged: dict[str, Event] = {}

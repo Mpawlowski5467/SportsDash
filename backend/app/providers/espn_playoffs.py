@@ -13,12 +13,18 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
 from app import timeutil, useragent
 from app.models.domain import Sport
+from app.providers.espn.summary import (
+    _MONTH_BUCKET_LIMIT,
+    _month_buckets,
+    _range_dates,
+    _range_rejected,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,31 +141,79 @@ async def fetch_playoff_bracket(provider_key: str, sport: Sport) -> list[Playoff
     """
     if sport not in _PLAYOFF_SPORTS:
         return []
-    now = timeutil.utcnow()
-    start = (now - timedelta(days=95)).strftime("%Y%m%d")
-    end = (now + timedelta(days=7)).strftime("%Y%m%d")
+    today = timeutil.utcnow().date()
+    start = today - timedelta(days=95)
+    end = today + timedelta(days=7)
     url = f"{_SITE_BASE}/{provider_key}/scoreboard"
     # ``limit`` is load-bearing: a full playoff window plus the regular-season
     # / makeup games the date range also catches runs to a few hundred events,
     # and ESPN truncates to ``limit`` (oldest first).  300 cut the feed off
     # mid-first-round, freezing the bracket there; 1000 covers the whole
     # postseason through the finals with headroom.
-    params = {"dates": f"{start}-{end}", "seasontype": "3", "limit": "1000"}
+    params = {"dates": _range_dates(start, end), "seasontype": "3", "limit": "1000"}
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(15.0),
             headers=useragent.headers(),
             follow_redirects=True,
         ) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
+            try:
+                events = _events(await _get_scoreboard(client, url, params))
+            except httpx.HTTPStatusError as exc:
+                if not _range_rejected(exc):
+                    raise
+                logger.warning(
+                    "espn_playoffs: ESPN refused ranged dates for %s — using month buckets",
+                    provider_key,
+                )
+                events = await _fetch_month_buckets(client, url, start, end)
     except (httpx.HTTPError, ValueError):
         logger.warning("espn_playoffs: fetch failed for %s", provider_key, exc_info=True)
         return []
-    if not isinstance(data, dict):
-        return []
-    return _rounds_from_events(data.get("events") or [])
+    return _rounds_from_events(events)
+
+
+async def _get_scoreboard(client: httpx.AsyncClient, url: str, params: dict[str, str]) -> object:
+    response = await client.get(url, params=params)
+    response.raise_for_status()
+    return response.json()
+
+
+def _events(data: object) -> list:
+    events = data.get("events") if isinstance(data, dict) else None
+    return events if isinstance(events, list) else []
+
+
+async def _fetch_month_buckets(client: httpx.AsyncClient, url: str, start: date, end: date) -> list:
+    """The playoff window's events via whole-month scoreboard buckets.
+
+    The stand-in for a refused day range (ESPN's team-sport scoreboards
+    answer ``dates=YYYYMMDD-YYYYMMDD`` with a 400; ``dates=YYYYMM`` still
+    works).  Buckets are fetched oldest first and concatenated in that
+    order, because ``_rounds_from_events`` lets a series' LAST game set its
+    summary.  All-or-nothing: a bucket that fails raises, since a bracket
+    missing a month of series is worse than no bracket.  Months overshoot
+    the window at both ends, so events are trimmed back to ``[start, end]``.
+    """
+    events: list = []
+    for bucket in _month_buckets(start, end):
+        params = {"dates": bucket, "seasontype": "3", "limit": _MONTH_BUCKET_LIMIT}
+        events.extend(_events(await _get_scoreboard(client, url, params)))
+    return [event for event in events if _in_window(event, start, end)]
+
+
+def _in_window(event: object, start: date, end: date) -> bool:
+    """Whether a scoreboard event's (UTC) start date falls in ``[start, end]``.
+
+    An event with no readable date is kept — ``_rounds_from_events`` is the
+    judge of what is malformed, exactly as it is for a ranged payload.
+    """
+    when = _parse_date(event.get("date")) if isinstance(event, dict) else None
+    if when is None:
+        return True
+    if when.tzinfo is not None:
+        when = when.astimezone(timezone.utc)
+    return start <= when.date() <= end
 
 
 def _rounds_from_events(events: list) -> list[PlayoffRound]:
