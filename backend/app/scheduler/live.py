@@ -347,7 +347,12 @@ async def live_tick() -> None:
                             home_name=target.home_name,
                             away_name=target.away_name,
                         )
-                        await repository.apply_game_state(session, new_state)
+                        # No row any more: a follow save landed while the
+                        # scoreboard was being fetched and deleted this game.
+                        # Nothing to persist — and nothing to announce or
+                        # ledger for a game the user has just unfollowed.
+                        if await repository.apply_game_state(session, new_state) is None:
+                            continue
                         team_ids = list(target.team_ids)
                         for event in events:
                             if not notify_prefs.decide(

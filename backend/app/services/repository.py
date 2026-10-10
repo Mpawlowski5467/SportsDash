@@ -16,10 +16,12 @@ import logging
 import re
 from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import Sequence
+from typing import Any, Sequence
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import Select, and_, delete, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import domain
 from app.models.orm import (
@@ -956,11 +958,11 @@ def _standing_row_to_dict(row: domain.StandingRow) -> dict:
 
 async def save_standings(session: AsyncSession, standings: domain.Standings) -> None:
     # Providers tag rows with internal team ids from an in-process map
-    # that can outlive a ``replace_followed`` (e.g. the user re-ran the
-    # setup wizard); only keep tags that reference a team we still
-    # follow so stored rows never point at deleted teams.  (Queried
-    # before the StandingsORM row is added — autoflush would otherwise
-    # flush a half-built row.)
+    # that can outlive a ``replace_followed`` (e.g. the user unfollowed
+    # a team in the setup wizard); only keep tags that reference a team
+    # we still follow so stored rows never point at deleted teams.
+    # (Queried before the StandingsORM row is added — autoflush would
+    # otherwise flush a half-built row.)
     known_ids = set((await session.execute(select(TeamORM.id))).scalars().all())
     row = await session.get(StandingsORM, standings.league_id)
     if row is None:
@@ -1009,9 +1011,10 @@ async def save_standings_archive(
     Archive rows deliberately drop the followed-team ``team_id`` tags:
     they mark rows belonging to the CURRENT follow set, which says nothing
     about a past season's table and would render it with today's
-    highlighting.  The stored season stands on its own, by name.  (Nothing
-    survives a re-follow to go stale either — :func:`replace_followed`
-    clears the archive with the rest of the derived data.)
+    highlighting.  The stored season stands on its own, by name.  (So an
+    edit of the followed set has nothing to go stale here either —
+    :func:`replace_followed` leaves a kept league's archive untouched and
+    drops only that of a league no longer followed.)
     """
     key = season_key or season_key_from_label(standings.season)
     if key is None:
@@ -1180,7 +1183,8 @@ async def list_news(
     )
     # team_id scopes to one followed team; league_id to one whole-competition
     # follow. With neither, return everything stored — which is already the
-    # current followed set, since replace_followed() wipes news on re-follow.
+    # current followed set, since replace_followed() deletes the news of
+    # every team and league it unfollows.
     if team_id is not None:
         stmt = stmt.where(NewsORM.team_id == team_id)
     if league_id is not None:
@@ -1207,58 +1211,347 @@ async def set_meta(session: AsyncSession, key: str, value: str) -> None:
         row.value = value
 
 
+# The ids a follow set consists of, as the rules below take them: the ids
+# themselves, or a query selecting them, for a caller that needs each
+# statement to judge by the set as stored when that statement runs (see
+# :func:`prune_unbacked`).
+_Ids = set[str] | Select[tuple[str]]
+
+
+def _outside(column: InstrumentedAttribute[Any], ids: _Ids) -> ColumnElement[bool]:
+    """Rows whose ``column`` names an id that is not in ``ids``.
+
+    NULL names nothing, so it is never "outside".  A bare ``NOT IN``
+    would not say that reliably: against a non-empty list a NULL compares
+    as unknown and the row is skipped, but against an empty one it
+    matches — and an untagged game or a league-level article must not
+    vanish just because no team happens to be followed.  The empty case
+    is spelled out instead of left to each dialect's empty-``IN`` SQL.
+
+    ``ids`` given as a query becomes ``NOT IN (SELECT …)`` and keeps the
+    same guard, for the same reason: a subquery that returns no row is
+    the empty list again.  (The queries passed select primary keys, so
+    the opposite trap — a NULL *inside* the list — cannot arise.)
+    """
+    if isinstance(ids, Select):
+        return column.is_not(None) & column.not_in(ids)
+    if not ids:
+        return column.is_not(None)
+    return column.is_not(None) & column.not_in(sorted(ids))
+
+
+def _prefixed(prefix: str, ids: _Ids) -> _Ids:
+    """``ids`` as notification-pref scopes: each behind ``prefix`` (``"team:"``)."""
+    if isinstance(ids, Select):
+        (column,) = ids.selected_columns
+        return ids.with_only_columns(literal(prefix) + column)
+    return {f"{prefix}{value}" for value in ids}
+
+
+def _without_stale_tags(entries: Any, key: str, team_ids: set[str]) -> list | None:
+    """``entries`` with ``key`` cleared wherever it names a team outside ``team_ids``.
+
+    For the follow tags inside a JSON column (a standings row's
+    ``team_id``, a leaderboard row's ``player_id``).  Returns ``None``
+    when nothing is stale so the caller leaves the row alone; otherwise a
+    NEW list — SQLAlchemy does not change-track in-place mutation of a
+    JSON column, so editing the stored one would silently never be
+    written.
+    """
+    if not isinstance(entries, list):
+        return None
+    cleared = [
+        {**entry, key: None}
+        if isinstance(entry, dict) and entry.get(key) is not None and entry[key] not in team_ids
+        else entry
+        for entry in entries
+    ]
+    return cleared if cleared != entries else None
+
+
+async def _drop_unbacked_children(
+    session: AsyncSession,
+    team_ids: _Ids,
+    league_ids: _Ids,
+    follow_all_ids: _Ids,
+) -> None:
+    """Delete or untag every child row the given follow set does not back.
+
+    The single statement of what a follow set entitles the database to
+    hold: a team-keyed row needs its team, a league-keyed row its league,
+    and a game its league plus either a followed side or a
+    whole-competition (``follow_all``) league.  Shared by
+    :func:`replace_followed` (the ids about to be the set, as sets) and
+    :func:`prune_unbacked` (the ids that are the set, as queries on the
+    tables that hold it), so a save and the later sweep can never
+    disagree about what is a leftover.
+
+    Rows are kept wherever the set still backs them: a game between a
+    kept and a removed team stays with the removed side nulled, and a
+    kept league's table or leaderboard stays with the removed team's
+    highlight tag cleared.  ``teams``, ``leagues`` and
+    ``team_competitions`` are the set itself and are left to the caller;
+    ``notifications_sent``, ``stadiums`` and ``app_meta`` are not keyed
+    by a follow and are never touched.
+    """
+    await session.execute(delete(PlayerORM).where(_outside(PlayerORM.team_id, team_ids)))
+
+    await session.execute(delete(NewsORM).where(_outside(NewsORM.team_id, team_ids)))
+    await session.execute(delete(NewsORM).where(_outside(NewsORM.league_id, league_ids)))
+    # League-level articles exist only for a whole-competition follow.
+    await session.execute(
+        delete(NewsORM).where(
+            NewsORM.team_id.is_(None), _outside(NewsORM.league_id, follow_all_ids)
+        )
+    )
+
+    # Sides first: only once a removed team's id is nulled can the last
+    # delete tell a game nobody followed any more (both sides NULL, league
+    # not followed in whole) from one a kept team still plays in.
+    await session.execute(
+        update(GameORM).where(_outside(GameORM.home_team_id, team_ids)).values(home_team_id=None)
+    )
+    await session.execute(
+        update(GameORM).where(_outside(GameORM.away_team_id, team_ids)).values(away_team_id=None)
+    )
+    await session.execute(delete(GameORM).where(_outside(GameORM.league_id, league_ids)))
+    await session.execute(
+        delete(GameORM).where(
+            GameORM.home_team_id.is_(None),
+            GameORM.away_team_id.is_(None),
+            _outside(GameORM.league_id, follow_all_ids),
+        )
+    )
+
+    await session.execute(delete(EventORM).where(_outside(EventORM.league_id, league_ids)))
+    await session.execute(delete(StandingsORM).where(_outside(StandingsORM.league_id, league_ids)))
+    await session.execute(
+        delete(StandingsArchiveORM).where(_outside(StandingsArchiveORM.league_id, league_ids))
+    )
+
+    # The follow tags inside the JSON columns cannot be judged in SQL: the
+    # rows are read, edited here and written back.  So when the team ids
+    # are a query they are read only now, AFTER the rows — a tag on a row
+    # then always names a team that existed when the row was read, and one
+    # still followed is still in ids read later.  Read the other way
+    # round, a row written for a team followed in between would lose its
+    # tag.
+    #
+    # ``state_updated_at`` is deliberately not re-stamped with the board:
+    # it is the recency signal of :func:`event_finals_missing_notification`,
+    # and clearing a tag is not news about the event.
+    events = (await session.execute(select(EventORM))).scalars().all()
+    tables = (await session.execute(select(StandingsORM))).scalars().all()
+    tagged_ids = (
+        set((await session.execute(team_ids)).scalars().all())
+        if isinstance(team_ids, Select)
+        else team_ids
+    )
+    for event in events:
+        board = _without_stale_tags(event.leaderboard, "player_id", tagged_ids)
+        if board is not None:
+            event.leaderboard = board
+    for standings in tables:
+        rows = _without_stale_tags(standings.rows, "team_id", tagged_ids)
+        if rows is not None:
+            standings.rows = rows
+
+    # No FKs on these two, so nothing but this keeps them in step with the
+    # set: a follow of a removed team's player, and pref rows for scopes
+    # the editor can no longer show (which would silently reapply if the
+    # same id were ever followed again).  Every scope goes except
+    # ``global``, ``team:{id}`` of a followed team and ``league:{id}`` of
+    # a stored league.
+    await session.execute(
+        delete(PlayerFollowORM).where(_outside(PlayerFollowORM.team_id, team_ids))
+    )
+    await session.execute(
+        delete(NotificationPrefORM).where(
+            NotificationPrefORM.scope != "global",
+            _outside(NotificationPrefORM.scope, _prefixed("team:", team_ids)),
+            _outside(NotificationPrefORM.scope, _prefixed("league:", league_ids)),
+        )
+    )
+
+
+async def _hand_over_game_tags(
+    session: AsyncSession,
+    teams: list[domain.Team],
+    competitions: Sequence[tuple[str, str, str]],
+) -> None:
+    """Pass a removed team's game tags to a kept team that is the same team.
+
+    One real team can be followed twice: a nation picked under two
+    national competitions is two ``teams`` rows, each holding the other's
+    league as a sibling competition, and both fetch the same fixtures.
+    ``upsert_games`` lets a later non-NULL side id replace an earlier
+    one, so every game they share carries ONE of the two ids — whichever
+    was fetched last.  Unfollow that pick and nulling its side like any
+    removed team's leaves those games looking like nobody's: they were
+    deleted with the kept pick still playing in them, and for good, since
+    a refresh only reaches back a week.
+
+    So, before any side is nulled, the tag moves to a kept team that is
+    fetched in the game's league under the same provider key — the one
+    test that makes it the same team in that game.  The key alone is not
+    an identity (ESPN reuses ids across sports), and a kept team that is
+    not fetched in that league never tags a game there.  A removed team
+    with no such heir is untagged as before.
+
+    Must run after the parents are upserted (the heir may be a team this
+    very save adds, and the side columns are foreign keys) and before
+    ``team_competitions`` is replaced: the removed team's stored rows are
+    what say which leagues it was fetched in.
+    """
+    removed = (
+        await session.execute(
+            select(TeamORM.id, TeamORM.league_id, TeamORM.provider_key).where(
+                _outside(TeamORM.id, {team.id for team in teams})
+            )
+        )
+    ).all()
+    if not removed:
+        return
+
+    # What each kept team is fetched as: its own league, then its sibling
+    # competitions.  Where several are fetched alike the heir is the one
+    # with the last id, since ``refresh_schedules`` walks teams in id
+    # order and the last fetch's tag is the one that stays — the next
+    # pass would move the tag there anyway.
+    fetched_as = [(team.id, team.league_id, team.provider_key) for team in teams]
+    heirs: dict[tuple[str, str], str] = {}
+    for team_id, league_id, provider_key in sorted([*fetched_as, *competitions]):
+        heirs[(league_id, provider_key)] = team_id
+    if not heirs:
+        return
+
+    # Plain columns, like the teams above: nothing here is edited, and
+    # every one of these rows is about to be bulk-deleted — no reason to
+    # bring them into the session.
+    stored_competitions = (
+        await session.execute(
+            select(
+                TeamCompetitionORM.team_id,
+                TeamCompetitionORM.league_id,
+                TeamCompetitionORM.provider_key,
+            )
+        )
+    ).all()
+    for gone_id, gone_league_id, gone_key in removed:
+        was_fetched_as = {(gone_league_id, gone_key)} | {
+            (league_id, provider_key)
+            for team_id, league_id, provider_key in stored_competitions
+            if team_id == gone_id
+        }
+        for league_id, provider_key in sorted(was_fetched_as):
+            heir = heirs.get((league_id, provider_key))
+            if heir is None:
+                continue
+            for side in (GameORM.home_team_id, GameORM.away_team_id):
+                await session.execute(
+                    update(GameORM)
+                    .where(GameORM.league_id == league_id, side == gone_id)
+                    .values({side: heir})
+                )
+
+
 async def replace_followed(
     session: AsyncSession,
     leagues: list[domain.League],
     teams: list[domain.Team],
     competitions: list[tuple[str, str, str]] | None = None,
 ) -> None:
-    """Replace the followed set wholesale (the setup wizard's save).
+    """Reconcile the stored followed set with the setup wizard's save.
 
-    All cached sports data is disposable — it derives entirely from
-    provider fetches keyed off the followed set — so it is wiped along
-    with the old teams/leagues (children before parents, for FK
-    integrity on postgres) and re-fetched by the next refresh.
+    Afterwards ``leagues``, ``teams`` and ``team_competitions`` equal the
+    arguments, and any other row survives only if the new set still backs
+    it (:func:`_drop_unbacked_children` holds the rules).  Everything a
+    kept team or league already has is left exactly as it is: an edit
+    used to wipe and re-fetch the lot, which cost every kept team its
+    rosters, venue and "About" enrichment, prefs and player follows — and
+    its results for good, since a refresh only reaches back a week.
+
+    The dedupe ledger is never deleted either.  It is what stops a game
+    that survives the edit (or comes back with the next refresh) from
+    being announced a second time.
+
+    A removed team's id is nulled on the games it played, with one
+    exception: where a kept team is the same team in that game — a second
+    pick of the same nation — it takes the tag over first
+    (:func:`_hand_over_game_tags`), so the games the two shared do not go
+    with whichever pick happened to hold their tags.
 
     ``competitions`` are ``(team_id, league_id, provider_key)`` triples:
     extra leagues whose fixtures a (national) team should also be pulled
-    from.  Notification prefs are wiped too — they key off scopes that
-    no longer exist after a re-follow.
+    from.  They are derived afresh by every save, so that table alone is
+    still replaced wholesale.
     """
-    for table in (
-        NotificationSentORM,
-        NotificationPrefORM,
-        # Player follows are wiped with the rest: they point at teams that
-        # may no longer be followed, and are re-picked after a wizard
-        # re-run (no FKs, so its position in this children-first list is
-        # arbitrary — it sits with the other child tables for clarity).
-        PlayerFollowORM,
-        TeamCompetitionORM,
-        NewsORM,
-        PlayerORM,
-        GameORM,
-        EventORM,
-        StandingsORM,
-        StandingsArchiveORM,
-        TeamORM,
-        LeagueORM,
-    ):
-        await session.execute(delete(table))
+    # Parents FIRST, and upserted rather than re-created.  ``upsert_team``
+    # writes identity columns only, so a kept team keeps its enrichment;
+    # and a kept team id whose league changed is re-pointed at the new
+    # league here, before the old league is deleted below — deleting
+    # first would trip the FK it still held.  The flushes are because,
+    # without ORM relationships, SQLAlchemy gives no cross-table INSERT
+    # ordering inside one flush, and both postgres and (via its PRAGMA)
+    # sqlite enforce the FKs.
     for league in leagues:
         await upsert_league(session, league)
-    # Parents must reach the database before children reference them:
-    # without ORM relationships SQLAlchemy gives no cross-table INSERT
-    # ordering inside one flush, and postgres (unlike sqlite's default)
-    # enforces the FKs — the delete loop above already goes children-first
-    # for the same reason.
     await session.flush()
     for team in teams:
         await upsert_team(session, team)
     await session.flush()
+
+    team_ids = {team.id for team in teams}
+    league_ids = {league.id for league in leagues}
+    follow_all_ids = {league.id for league in leagues if league.follow_all}
+
+    # While the removed teams and their sibling competitions are still
+    # stored, and before the rules below null a removed team's sides.
+    await _hand_over_game_tags(session, teams, competitions or ())
+
+    # Children before the parents they reference, then teams before
+    # leagues — the same FK reasoning, in the delete direction.
+    await session.execute(delete(TeamCompetitionORM))
+    await _drop_unbacked_children(session, team_ids, league_ids, follow_all_ids)
+    await session.execute(delete(TeamORM).where(_outside(TeamORM.id, team_ids)))
+    await session.execute(delete(LeagueORM).where(_outside(LeagueORM.id, league_ids)))
+
     for team_id, league_id, provider_key in competitions or ():
         session.add(
             TeamCompetitionORM(team_id=team_id, league_id=league_id, provider_key=provider_key)
         )
+
+
+async def prune_unbacked(session: AsyncSession) -> None:
+    """Sweep child rows the followed set, as stored, does not back.
+
+    :func:`replace_followed` applies these rules at save time, but a
+    refresh pass or live tick that read the old set can commit a write
+    just after the save's deletes — an untagged fixture or a league
+    article for a competition that just stopped being followed in whole,
+    a table still tagged with a team that is gone.  Nothing else would
+    ever remove such a row, so every refresh pass starts by running the
+    same rules against the set that is actually stored.
+
+    With foreign keys enforced that can only reach what no FK guards
+    (untagged games and league-level news of a league not followed in
+    whole, player follows and prefs of a missing team or league, stale
+    JSON tags), and on a consistent database it changes nothing.
+
+    The set is handed to the rules as queries, never read into Python
+    first, so every statement tests against ``teams`` and ``leagues`` as
+    they stand when that statement runs.  A sweep starts every pass — the
+    cron's and the startup one too — so a save can commit in the middle of
+    it; judged by ids read beforehand, what that save had just added was
+    a leftover, and a league newly followed in whole lost the
+    headline-only pref seeded for it (and then notified on everything).
+    """
+    await _drop_unbacked_children(
+        session,
+        select(TeamORM.id),
+        select(LeagueORM.id),
+        select(LeagueORM.id).where(LeagueORM.follow_all.is_(True)),
+    )
 
 
 async def list_team_competitions(

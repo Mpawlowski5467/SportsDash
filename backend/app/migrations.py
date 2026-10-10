@@ -126,7 +126,8 @@ def prune_orphaned_rows(conn: Connection) -> None:
     Only tables that nothing else references are swept.  Deleting a row
     that is itself a parent — ``teams`` is the sole case — could violate
     the very constraint this repairs, and no code path can orphan one
-    anyway (``replace_followed`` deletes leagues and teams together), so
+    anyway (``replace_followed`` re-points a kept team before any league
+    is deleted, and deletes removed teams before removed leagues), so
     those are reported and left alone.
     """
     tables = set(inspect(conn).get_table_names())

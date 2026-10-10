@@ -5,6 +5,13 @@ boolean return value, never raised, so a flaky ntfy server can never
 break the live polling loop.  When ``notifications_enabled`` is False
 the send is skipped and treated as handled (returns True) so callers
 mark the event as notified and never retry it.
+
+Notifications are published in ntfy's JSON form (ntfy 1.18.0 and later)
+rather than as ``Title`` / ``Tags`` / ``Priority`` headers.  httpx encodes
+``str`` header values as ASCII, so a title such as "Getafe @ Atlético
+Madrid" raised UnicodeEncodeError before the request left the process —
+and a FINAL, retried every tick for the resend window, failed every time.
+Nothing provider-derived travels in a header now.
 """
 
 from __future__ import annotations
@@ -33,6 +40,17 @@ _EVENT_TAGS: dict[EventType, str] = {
 
 _HIGH_PRIORITY_EVENTS: frozenset[EventType] = frozenset({EventType.GAME_START, EventType.FINAL})
 
+# The JSON form takes the priority as ntfy's integer level, not the name
+# the ``Priority`` header accepted.
+_PRIORITY_LEVELS: dict[str, int] = {
+    "min": 1,
+    "low": 2,
+    "default": 3,
+    "high": 4,
+    "max": 5,
+    "urgent": 5,
+}
+
 
 async def send(
     title: str,
@@ -41,30 +59,41 @@ async def send(
     tags: str | None = None,
     priority: str | None = None,
 ) -> bool:
-    """POST a notification to ``{ntfy_url}/{ntfy_topic}``.
+    """POST a notification as JSON to the ntfy server root.
 
-    The message is the UTF-8 request body; ``Title`` (and optionally
-    ``Tags`` / ``Priority``) travel as headers, plus a bearer
-    ``Authorization`` header when ``ntfy_token`` is configured.  Returns
-    True on success, False (after logging) on any failure.
+    The body carries ``topic`` (``ntfy_topic``), ``title`` and ``message``;
+    ``tags`` (the comma-separated argument, as a list) and ``priority``
+    (the name, as ntfy's 1-5 level) are added only when they hold a value
+    ntfy can take.  The only header set here is a bearer ``Authorization``
+    when ``ntfy_token`` is configured.  Returns True on success, False
+    (after logging) on any failure.
     """
     settings = get_settings()
     if not settings.notifications_enabled:
         logger.debug("Notifications disabled; skipping %r", title)
         return True
 
-    url = f"{settings.ntfy_url.rstrip('/')}/{settings.ntfy_topic}"
-    headers: dict[str, str] = {"Title": title}
-    if tags:
-        headers["Tags"] = tags
-    if priority:
-        headers["Priority"] = priority
+    # ntfy reads a JSON publish only at its root, never at the topic URL.
+    url = f"{settings.ntfy_url.rstrip('/')}/"
+    payload: dict[str, object] = {
+        "topic": settings.ntfy_topic,
+        "title": title,
+        "message": message,
+    }
+    tag_list = [tag.strip() for tag in (tags or "").split(",") if tag.strip()]
+    if tag_list:
+        payload["tags"] = tag_list
+    # An unknown name is dropped, not forwarded: the field must be an integer.
+    level = _PRIORITY_LEVELS.get(priority or "")
+    if level is not None:
+        payload["priority"] = level
+    headers: dict[str, str] = {}
     if settings.ntfy_token:
         headers["Authorization"] = f"Bearer {settings.ntfy_token}"
 
     try:
         client = http_client.get_client("ntfy", timeout=_REQUEST_TIMEOUT)
-        response = await client.post(url, content=message.encode("utf-8"), headers=headers)
+        response = await client.post(url, json=payload, headers=headers)
         response.raise_for_status()
     except Exception as exc:  # noqa: BLE001 — notification failures must never propagate
         logger.warning("Failed to send ntfy notification %r to %s: %s", title, url, exc)

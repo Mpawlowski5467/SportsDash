@@ -345,6 +345,49 @@
         "title": "ClipOut",
         "type": "object"
       },
+      "CurrentSelectionOut": {
+        "description": "One league of the followed set, as the wizard selection that made it.",
+        "properties": {
+          "follow_all": {
+            "default": false,
+            "title": "Follow All",
+            "type": "boolean"
+          },
+          "league_id": {
+            "title": "League Id",
+            "type": "string"
+          },
+          "teams": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CatalogTeamOut"
+            },
+            "title": "Teams",
+            "type": "array"
+          }
+        },
+        "required": [
+          "league_id"
+        ],
+        "title": "CurrentSelectionOut",
+        "type": "object"
+      },
+      "CurrentSelectionsOut": {
+        "properties": {
+          "selections": {
+            "items": {
+              "$ref": "#/components/schemas/CurrentSelectionOut"
+            },
+            "title": "Selections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "selections"
+        ],
+        "title": "CurrentSelectionsOut",
+        "type": "object"
+      },
       "EventOut": {
         "properties": {
           "end_time": {
@@ -2483,6 +2526,11 @@
           "onboarded": {
             "title": "Onboarded",
             "type": "boolean"
+          },
+          "refreshing": {
+            "default": false,
+            "title": "Refreshing",
+            "type": "boolean"
           }
         },
         "required": [
@@ -4386,6 +4434,25 @@
           }
         },
         "summary": "Setup Leagues"
+      }
+    },
+    "/api/setup/selection": {
+      "get": {
+        "description": "The followed set as wizard selections \u2014 what an edit starts from.\n\nDatabase only, never the provider: the editor has to open while ESPN\nis down or slow, and has to show a pick the live catalog no longer\nlists.  Saved back through ``POST /setup/follow`` as it stands (each\nteam by its provider key), it changes nothing.\n\nA stored league is a selection only if the user chose it: the picker\noffers it, and it is followed in whole or owns a followed team.  That\nleaves out the sibling competitions a national-team pick attaches on\nits own \u2014 they are neither, every save re-derives them, and sent back\nthey would be rejected as empty selections.  \"Offered\" is membership\nof ``CATALOG`` itself: ``get_catalog_league`` also resolves the\ninternal sibling leagues the picker never lists.",
+        "operationId": "setup_selection_api_setup_selection_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentSelectionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Setup Selection"
       }
     },
     "/api/setup/status": {

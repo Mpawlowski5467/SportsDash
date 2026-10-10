@@ -1,13 +1,17 @@
 import { useMemo } from "react";
 import { useSetupLeagues } from "../../hooks";
-import type { CatalogTeam } from "../../types";
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from "./buttons";
+import type { LeagueFollow, RemovedFollow } from "./selection";
 import MiniSpinner from "../loaders/MiniSpinner";
 
 export interface Props {
-  leagueIds: string[];
-  followAllIds: string[];
-  teamsByLeague: Record<string, CatalogTeam[]>;
+  mode: "first-run" | "manage";
+  // What the save will follow: each league in whole or by its picks, with
+  // the leagues that ended up with neither already left out.
+  follows: LeagueFollow[];
+  // What the save will unfollow, compared with the set the wizard opened on.
+  // Always empty for a first run, which opened on nothing.
+  removed: RemovedFollow[];
   pending: boolean;
   error: string | null;
   onBack: () => void;
@@ -16,9 +20,9 @@ export interface Props {
 
 /** Confirmation screen: chips of chosen teams + whole-competition follows. */
 export default function ReviewStep({
-  leagueIds,
-  followAllIds,
-  teamsByLeague,
+  mode,
+  follows,
+  removed,
   pending,
   error,
   onBack,
@@ -34,18 +38,7 @@ export default function ReviewStep({
     return map;
   }, [leaguesQuery.data]);
 
-  // A selected league shows up either as a whole-competition follow or as a
-  // group of picked teams (dropped if it ended up with none).
-  const groups = leagueIds
-    .map((leagueId) => ({
-      id: leagueId,
-      name: nameById[leagueId] ?? leagueId,
-      followAll: followAllIds.includes(leagueId),
-      teams: teamsByLeague[leagueId] ?? [],
-    }))
-    .filter((group) => group.followAll || group.teams.length > 0);
-
-  const hasSelections = groups.length > 0;
+  const hasSelections = follows.length > 0;
 
   return (
     <div className="space-y-6">
@@ -54,26 +47,27 @@ export default function ReviewStep({
           Review your picks
         </h2>
         <p className="mt-1 text-sm text-zinc-400">
-          SportsDash will follow these. Confirming replaces anything you
-          followed before.
+          {mode === "manage"
+            ? "SportsDash will follow exactly these. Everything you kept stays as it is."
+            : "SportsDash will follow these."}
         </p>
       </header>
 
       {hasSelections ? (
         <div className="space-y-4">
-          {groups.map((group) => (
-            <section key={group.id}>
+          {follows.map((follow) => (
+            <section key={follow.leagueId}>
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                {group.name}
+                {nameById[follow.leagueId] ?? follow.leagueId}
               </h3>
               <div className="mt-2 flex flex-wrap gap-2">
-                {group.followAll ? (
+                {follow.followAll ? (
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/60 bg-emerald-500/15 px-3 py-1 text-sm text-emerald-200">
                     <span aria-hidden="true">✓</span>
                     <span className="font-medium">Entire league — every game</span>
                   </span>
                 ) : (
-                  group.teams.map((team) => (
+                  follow.teams.map((team) => (
                     <span
                       key={team.provider_key}
                       className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-sm text-zinc-200"
@@ -94,6 +88,44 @@ export default function ReviewStep({
           Nothing selected yet — go back and pick a team or follow a whole
           league.
         </p>
+      )}
+
+      {/* The save deletes what it unfollows, and nothing above shows an
+          absence: a league toggled off by a stray click simply is not
+          listed. So what is going is spelled out, right above Confirm. */}
+      {removed.length > 0 && (
+        <div className="space-y-4 rounded-lg border border-red-900/50 bg-red-950/30 px-4 py-3">
+          <p className="text-sm font-medium text-red-300">
+            Will be unfollowed — their stored games, rosters and alert
+            settings are deleted
+          </p>
+          {removed.map((entry) => (
+            <section key={entry.leagueId}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                {nameById[entry.leagueId] ?? entry.leagueId}
+                {entry.leagueRemoved && " — the whole league"}
+              </h3>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {entry.followAllRemoved && (
+                  <span className="inline-flex items-center rounded-full border border-red-900/60 bg-zinc-900 px-3 py-1 text-sm font-medium text-zinc-200">
+                    Entire league — every game
+                  </span>
+                )}
+                {entry.teams.map((team) => (
+                  <span
+                    key={team.provider_key}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-red-900/60 bg-zinc-900 px-3 py-1 text-sm text-zinc-200"
+                  >
+                    <span className="font-medium">{team.name}</span>
+                    <span className="text-xs text-zinc-500">
+                      {team.abbreviation}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
       )}
 
       {error !== null && (
