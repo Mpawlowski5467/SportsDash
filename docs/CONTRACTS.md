@@ -209,11 +209,19 @@ flavors plus intermission and final.
 async def send_event(event: GameEvent) -> bool
 async def send(title: str, message: str, *, tags: str | None = None, priority: str | None = None) -> bool
 ```
-POST `{settings.ntfy_url}/{settings.ntfy_topic}`, body = message, headers
-`Title`, optional `Tags`/`Priority`, `Authorization: Bearer` when
-`ntfy_token` set. Returns False (never raises) on failure. When
-`notifications_enabled` is False, skip sending and return True (treat as
-handled).
+POST `{settings.ntfy_url}/` — the server root, never the topic URL: this
+is ntfy's publish-as-JSON form (ntfy ≥ 1.18.0). JSON body: `topic` =
+`settings.ntfy_topic`, `title`, `message`; `tags` as a list of strings
+(the comma-separated argument split, stripped, empties dropped; omitted
+when none are left); `priority` as an integer (`min` 1, `low` 2,
+`default` 3, `high` 4, `max`/`urgent` 5; omitted for `None` or any other
+name). The only header set is `Authorization: Bearer` when `ntfy_token`
+set. Nothing provider-derived may travel in a header: httpx encodes
+header values as ASCII, so a `Title` header carrying "Getafe @ Atlético
+Madrid" failed before the request was sent and the notification was
+lost. Returns False (never raises) on failure, a non-2xx response
+included. When `notifications_enabled` is False, skip sending and return
+True (treat as handled).
 
 ### `app/services/news.py` (owner: persistence agent)
 

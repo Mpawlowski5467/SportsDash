@@ -377,7 +377,7 @@ Most are small; the ones that are not say so.
 
 - **Notifications have never been sent to a real device** (2026-08-19) —
   the whole path exists and none of it has been exercised end to end:
-  `services/notify.py` POSTs to `{ntfy_url}/{ntfy_topic}`,
+  `services/notify.py` POSTs the topic and text as JSON to `ntfy_url`,
   `scheduler/live.py` decides what fires, `services/notify_prefs.py`
   resolves the scope precedence (team overrides league overrides global),
   and `backend/tests/` covers the payload shape, the preference
