@@ -4161,3 +4161,53 @@ trip, the effective view, every transition and its round trips, purity,
 `offeredLeagues`, `removedFromSeed`, `mergeSelectedTeams`) and `hooks.test.ts`
 (`statusRefetchInterval`). `tests/openapi_snapshot.json` gained the route
 and the three schema changes.
+
+## October 2026 — ESPN refuses day-range scoreboards
+
+Verified live 2026-10-10: every `scoreboard?dates=YYYYMMDD-YYYYMMDD` on a
+**team-sport** scoreboard (soccer, basketball, hockey, baseball, football)
+answers `400 {"code":400,"message":"Failed to get events endpoint."}` — any
+league, past or future, with or without `limit` / `seasontype`. Single days
+(`YYYYMMDD`), whole months (`YYYYMM`) and whole years (`YYYY`) still return
+200, and tennis, golf, racing and MMA scoreboards still accept ranges. This
+supersedes the "ranged scoreboard" wording for `get_competition_schedule`
+above wherever the two disagree.
+
+- **Fallback, not replacement.** Range-based fetches still ask for the day
+  range first. On a 400 they switch to month buckets (`dates=YYYYMM`,
+  `limit=1000`) for the rest of the window. `EspnProvider.
+  _get_scoreboard_window` owns this for `get_competition_schedule`,
+  `get_events` and the tennis half of `get_schedule`;
+  `espn_playoffs.fetch_playoff_bracket` does the same with `seasontype=3`.
+  UFC already scheduled by month and is unchanged.
+- **Only a plain 400 triggers it** (`_range_rejected`). 401/403
+  (`ProviderAccessError`), exhausted retries (`TransientProviderError`) and
+  other statuses behave exactly as before — a denial or an outage is never
+  answered by trying another request form.
+- **Buckets are a superset; the existing final filter is the contract.**
+  Games are filtered on their UTC start date, events on span overlap, both
+  after an id merge, so a bucket's extra days (and any overlap with a ranged
+  chunk that did succeed) drop out. The playoff fetch had no such filter and
+  now trims bucket events to its window itself.
+- **ET bucketing.** Month buckets are keyed by US/Eastern like every other
+  scoreboard date: an NBA tip-off at `2026-11-01T00:30Z` came back in
+  `202610`, not `202611`. `_month_buckets` therefore also reads the bucket
+  holding `start − 1 day`, which adds a request only when the window opens
+  on the 1st.
+- **`limit=1000` for buckets**, not the ranged calls' 400: a month of MLB is
+  417 events (2026-08) and ESPN truncates silently, oldest first.
+- **Failure semantics.** Buckets are fetched independently — one failing
+  logs and is skipped — and the provider method raises only when nothing at
+  all came back, so an ESPN that refuses months too still reaches the
+  scheduler and the circuit breaker rather than looking like an empty
+  refresh. The bracket is all-or-nothing: any failed bucket yields `[]`,
+  since a bracket missing a month of series is worse than none.
+- Each fallback logs one WARNING (`ESPN refused ranged dates for …`), i.e.
+  one wasted request per follow_all league per refresh while ESPN keeps
+  refusing ranges.
+
+Tests (hermetic, stubbed `_get_json` / `_get_scoreboard` answering 400 to
+ranges and 200 to months): `test_espn.py` — `_month_buckets`, the
+competition/tennis/golf fallbacks, the long-window and late-ET-game cases,
+partial and total bucket failure, and that 404/403/outage do not fall back;
+`test_espn_playoffs.py` — the bracket fallback, window trim and ordering.

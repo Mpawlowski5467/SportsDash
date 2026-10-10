@@ -5,6 +5,7 @@ All payloads are fictional ESPN-shaped JSON; no network I/O anywhere.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
@@ -41,6 +42,7 @@ from app.providers.espn import (
     _merge_fight_results,
     _merge_games,
     _mma_status_urls,
+    _month_buckets,
     _parse_bout_status,
     _parse_game_summary,
     _parse_golf_event,
@@ -62,7 +64,7 @@ from app.providers.espn import (
     _stat_line_from_overview,
 )
 from app.providers.espn_catalog import get_catalog_league
-from app.providers.http_util import TransientProviderError
+from app.providers.http_util import ProviderAccessError, TransientProviderError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -3217,6 +3219,191 @@ async def test_get_competition_schedule_raises_when_all_chunks_fail() -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Ranged scoreboards ESPN refuses (400) degrade to whole-month buckets
+# ---------------------------------------------------------------------------
+
+
+def _range_refused() -> httpx.HTTPStatusError:
+    """ESPN's answer to a day-range ``dates`` param on a team-sport scoreboard."""
+    request = httpx.Request("GET", "http://x")
+    response = httpx.Response(
+        400, json={"code": 400, "message": "Failed to get events endpoint."}, request=request
+    )
+    return httpx.HTTPStatusError("400 Bad Request", request=request, response=response)
+
+
+def _month_only_espn(months: dict[str, dict[str, Any]], calls: list[dict[str, str]]) -> Any:
+    """A ``_get_json`` stub behaving like ESPN's team-sport scoreboards did
+    on 2026-10-10: every day range is a 400, every month bucket a 200."""
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        assert params is not None
+        calls.append(params)
+        if "-" in params["dates"]:
+            raise _range_refused()
+        return months.get(params["dates"], {"events": []})
+
+    return fake_get_json
+
+
+def test_month_buckets_cover_the_window() -> None:
+    assert _month_buckets(date(2026, 10, 3), date(2026, 10, 31)) == ["202610"]
+    assert _month_buckets(date(2026, 10, 3), date(2026, 11, 24)) == ["202610", "202611"]
+    assert _month_buckets(date(2026, 12, 10), date(2027, 2, 5)) == ["202612", "202701", "202702"]
+    assert _month_buckets(date(2026, 6, 20), date(2026, 6, 10)) == []
+
+
+def test_month_buckets_reach_back_when_the_window_opens_on_the_first() -> None:
+    """ESPN buckets by US/Eastern: a game in the small hours of the 1st
+    (UTC) is filed under the last ET day of the month before."""
+    assert _month_buckets(date(2026, 11, 1), date(2026, 11, 24)) == ["202610", "202611"]
+    assert _month_buckets(date(2027, 1, 1), date(2027, 1, 5)) == ["202612", "202701"]
+
+
+async def test_get_competition_schedule_falls_back_to_month_buckets(
+    competition_scoreboard_data: dict[str, Any],
+) -> None:
+    """A refused day range no longer fails the league: the window is
+    re-fetched as a month bucket and trimmed back to [start, end]."""
+    provider = EspnProvider()
+    calls: list[dict[str, str]] = []
+    provider._get_json = _month_only_espn(  # type: ignore[method-assign]
+        {"202606": competition_scoreboard_data}, calls
+    )
+    games = await provider.get_competition_schedule(
+        COMPETITION_LEAGUE, date(2026, 6, 14), date(2026, 6, 21)
+    )
+    # One refused ranged attempt, then the month — with the higher limit a
+    # whole month needs.
+    assert calls == [
+        {"dates": "20260614-20260621", "limit": "400"},
+        {"dates": "202606", "limit": "1000"},
+    ]
+    # The bucket holds all of June; only the in-window fixtures survive.
+    assert [game.id for game in games] == ["espn:9700002", "espn:9700003"]
+
+
+async def test_get_competition_schedule_fallback_covers_the_whole_long_window(
+    competition_scoreboard_data: dict[str, Any],
+) -> None:
+    """The first refusal switches the REST of the window to buckets: no
+    further ranged chunk is attempted, and overlapping buckets dedupe."""
+    provider = EspnProvider()
+    calls: list[dict[str, str]] = []
+    every_month = dict.fromkeys(
+        ("202604", "202605", "202606", "202607"), competition_scoreboard_data
+    )
+    provider._get_json = _month_only_espn(every_month, calls)  # type: ignore[method-assign]
+    games = await provider.get_competition_schedule(
+        COMPETITION_LEAGUE, date(2026, 5, 1), date(2026, 7, 31)
+    )
+    assert [params["dates"] for params in calls] == [
+        "20260501-20260531",
+        # April too: the window opens on the 1st (see _month_buckets).
+        "202604",
+        "202605",
+        "202606",
+        "202607",
+    ]
+    assert [game.id for game in games] == [
+        "espn:9700001",
+        "espn:9700002",
+        "espn:9700003",
+        "espn:9700004",
+    ]
+
+
+async def test_get_competition_schedule_fallback_keeps_late_et_game_of_prior_month(
+    competition_scoreboard_data: dict[str, Any],
+) -> None:
+    """A July 1 00:30Z kickoff is June 30 in US/Eastern, so ESPN files it
+    in the JUNE bucket — which a window opening July 1 must still read."""
+    late = copy.deepcopy(competition_scoreboard_data["events"][0])
+    late["id"] = late["competitions"][0]["id"] = "9700099"
+    late["date"] = late["competitions"][0]["date"] = "2026-07-01T00:30Z"
+    june = {"events": [*competition_scoreboard_data["events"], late]}
+    provider = EspnProvider()
+    calls: list[dict[str, str]] = []
+    provider._get_json = _month_only_espn({"202606": june}, calls)  # type: ignore[method-assign]
+    games = await provider.get_competition_schedule(
+        COMPETITION_LEAGUE, date(2026, 7, 1), date(2026, 7, 10)
+    )
+    assert [params["dates"] for params in calls] == ["20260701-20260710", "202606", "202607"]
+    # The rest of June is outside the window and dropped.
+    assert [game.id for game in games] == ["espn:9700099"]
+
+
+async def test_get_competition_schedule_fallback_survives_one_failed_bucket(
+    competition_scoreboard_data: dict[str, Any],
+) -> None:
+    provider = EspnProvider()
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        assert params is not None
+        if "-" in params["dates"]:
+            raise _range_refused()
+        if params["dates"] == "202607":
+            raise httpx.ConnectError("July bucket down")
+        return competition_scoreboard_data
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    games = await provider.get_competition_schedule(
+        COMPETITION_LEAGUE, date(2026, 6, 14), date(2026, 7, 5)
+    )
+    assert [game.id for game in games] == ["espn:9700002", "espn:9700003", "espn:9700004"]
+
+
+async def test_get_competition_schedule_raises_when_buckets_fail_too() -> None:
+    """If ESPN refuses the month form as well there is nothing to degrade
+    to — the error must reach the scheduler (and the breaker), not turn
+    into an empty 'successful' refresh."""
+    provider = EspnProvider()
+    calls: list[dict[str, str] | None] = []
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        calls.append(params)
+        raise _range_refused()
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.get_competition_schedule(
+            COMPETITION_LEAGUE, date(2026, 6, 14), date(2026, 6, 21)
+        )
+    assert [params["dates"] for params in calls] == ["20260614-20260621", "202606"]  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.HTTPStatusError(
+            "404", request=httpx.Request("GET", "http://x"), response=httpx.Response(404)
+        ),
+        ProviderAccessError("espn GET http://x -> 403: access denied"),
+        TransientProviderError("espn GET http://x -> 503 after 3 attempts"),
+    ],
+    ids=["not-found", "access-denied", "outage"],
+)
+async def test_get_competition_schedule_only_a_400_triggers_the_fallback(
+    error: Exception,
+) -> None:
+    """Month buckets answer a refused RANGE, nothing else: a denial or an
+    outage must not be worked around by trying another request form."""
+    provider = EspnProvider()
+    calls: list[dict[str, str] | None] = []
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        calls.append(params)
+        raise error
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    with pytest.raises(type(error)):
+        await provider.get_competition_schedule(
+            COMPETITION_LEAGUE, date(2026, 6, 14), date(2026, 6, 21)
+        )
+    assert calls == [{"dates": "20260614-20260621", "limit": "400"}]
+
+
 # ===========================================================================
 # Phase 4: tennis + UFC (an athlete is a single-member "team")
 # ===========================================================================
@@ -3736,6 +3923,26 @@ async def test_tennis_schedule_filters_to_window(
         TENNIS_LEAGUE, TENNIS_PLAYER, date(2026, 6, 20), date(2026, 6, 25)
     )
     assert games == []
+
+
+async def test_tennis_schedule_falls_back_to_month_buckets(
+    tennis_scoreboard_data: dict[str, Any],
+) -> None:
+    """The tour scoreboard gets the same degrade as the team sports should
+    ESPN ever refuse its ranges too: the month bucket still ships the draw."""
+    provider = EspnProvider()
+    calls: list[dict[str, str]] = []
+    provider._get_json = _month_only_espn(  # type: ignore[method-assign]
+        {"202606": tennis_scoreboard_data}, calls
+    )
+    games = await provider.get_schedule(
+        TENNIS_LEAGUE, TENNIS_PLAYER, date(2026, 6, 8), date(2026, 6, 14)
+    )
+    assert calls == [
+        {"dates": "20260608-20260614", "limit": "400"},
+        {"dates": "202606", "limit": "1000"},
+    ]
+    assert [g.id for g in games] == ["espn:9810002", "espn:9810001"]
 
 
 async def test_mma_schedule_fetches_month_buckets(
@@ -4863,6 +5070,23 @@ async def test_golf_get_events_raises_when_all_chunks_fail() -> None:
     provider._get_json = fake_get_json  # type: ignore[method-assign]
     with pytest.raises(httpx.ConnectError):
         await provider.get_events(GOLF_LEAGUE, date(2026, 6, 8), date(2026, 6, 14))
+
+
+async def test_golf_get_events_falls_back_to_month_buckets() -> None:
+    """A refused range degrades to the month bucket for leaderboard
+    events as well; the overlap filter still trims to the window."""
+    provider = EspnProvider()
+    calls: list[dict[str, str]] = []
+    provider._get_json = _month_only_espn(  # type: ignore[method-assign]
+        {"202606": _golf_scoreboard_payload()}, calls
+    )
+    events = await provider.get_events(GOLF_LEAGUE, date(2026, 6, 8), date(2026, 6, 14))
+    assert calls == [
+        {"dates": "20260608-20260614", "limit": "400"},
+        {"dates": "202606", "limit": "1000"},
+    ]
+    # The May classic falls outside the window; the live tournament stays.
+    assert [event.id for event in events] == ["espn:8800001"]
 
 
 async def test_golf_get_event_state_scans_scoreboard_by_id() -> None:

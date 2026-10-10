@@ -9,6 +9,7 @@ import logging
 from datetime import date, timedelta
 from typing import Any, Iterable
 
+import httpx
 
 from app import timeutil
 from app.models.domain import (
@@ -94,6 +95,51 @@ def _chunk_date_range(
         chunks.append((cursor, chunk_end))
         cursor = chunk_end + timedelta(days=1)
     return chunks
+
+
+# ESPN's team-sport scoreboards (soccer, basketball, hockey, baseball,
+# football) stopped accepting the day-range form: every
+# ``dates=YYYYMMDD-YYYYMMDD`` answers 400 ``Failed to get events endpoint.``
+# (verified live 2026-10-10; tennis, golf, racing and MMA still take it).
+# Whole-month buckets (``dates=YYYYMM``) work everywhere, so a rejected
+# range degrades to those.  A month outgrows the ranged calls' limit=400 —
+# MLB alone ran to 417 events in 2026-08 — hence the higher cap.
+_MONTH_BUCKET_LIMIT = "1000"
+
+
+def _range_dates(start: date, end: date) -> str:
+    """The day-range scoreboard ``dates`` value for ``[start, end]``."""
+    return f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"
+
+
+def _range_rejected(exc: BaseException) -> bool:
+    """True when ``exc`` is ESPN refusing a day-range ``dates`` param.
+
+    Only a plain 400 qualifies.  An access denial (401/403) surfaces as
+    ``ProviderAccessError`` and a sustained outage as
+    ``TransientProviderError`` — neither is an ``httpx`` status error, so
+    neither is ever answered by switching to another request form.
+    """
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 400
+
+
+def _month_buckets(start: date, end: date) -> list[str]:
+    """``YYYYMM`` scoreboard buckets covering the UTC dates ``[start, end]``.
+
+    ESPN keys its buckets by US/Eastern, which trails UTC: a game in the
+    small hours of UTC ``start`` belongs to the ET day before, so the
+    bucket holding ``start - 1 day`` is included too (it only adds a month
+    when ``start`` is the 1st).  The buckets are a superset of the window;
+    callers filter the parsed result back down to ``[start, end]``.
+    """
+    if end < start:
+        return []
+    buckets: list[str] = []
+    cursor = (start - timedelta(days=1)).replace(day=1)
+    while cursor <= end:
+        buckets.append(cursor.strftime("%Y%m"))
+        cursor = _add_month(cursor)
+    return buckets
 
 
 # Sports whose ESPN team schedules are split across multiple calls; each
