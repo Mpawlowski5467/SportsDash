@@ -51,7 +51,7 @@ export default function PlayByPlayTimeline({ plays }: { plays: GamePlay[] }) {
                   <span className="shrink-0 text-[11px] uppercase tracking-wide text-zinc-500 tabular-nums">
                     {play.period_label}
                     {play.clock !== null && (
-                      <span className="text-zinc-600"> · {play.clock}</span>
+                      <span className="text-zinc-500"> · {play.clock}</span>
                     )}
                   </span>
                   {hasScore && (

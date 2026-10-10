@@ -84,7 +84,7 @@ function RosterRow({
               </div>
             )}
             {player.career_stat_line !== null && (
-              <div className="text-xs tabular-nums text-zinc-600">
+              <div className="text-xs tabular-nums text-zinc-500">
                 Career: {player.career_stat_line}
               </div>
             )}
@@ -97,7 +97,7 @@ function RosterRow({
       <td className="px-2 py-1.5 text-zinc-300">{player.position ?? "—"}</td>
       <td className="px-2 py-1.5">
         {player.status === "active" ? (
-          <span className="text-zinc-600">—</span>
+          <span className="text-zinc-500">—</span>
         ) : (
           <span className={STATUS_PILLS[player.status].className}>
             {STATUS_PILLS[player.status].label}

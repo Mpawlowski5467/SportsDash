@@ -383,6 +383,31 @@ def _event_provider_key(event_id: str) -> str:
     return event_id.split(":", 1)[1] if ":" in event_id else event_id
 
 
+# The two ``score`` tokens a racing board uses for a car that did not
+# complete the race (``providers/espn/racing.py::_racing_score``); every
+# other score is a gap, a time or a lap count.  Golf has no equivalent —
+# its scores are to-par strings — so this is racing-only by construction.
+_NON_FINISH_VERBS = {
+    "DNF": "retired",
+    "DSQ": "was disqualified",
+}
+
+
+def _final_event_headline(best: domain.LeaderRow) -> str:
+    """Describe a followed athlete's result with a verb the result earns.
+
+    "finished 18 (DNF)" is a contradiction — the driver did not finish, which
+    is what DNF says — and "finished 2 (DSQ)" credits a place that was taken
+    away.  Both still carry the board's position because it stays useful (a
+    retirement is classified where it fell), but as a classification rather
+    than a finish.
+    """
+    verb = _NON_FINISH_VERBS.get(best.score.strip().upper())
+    if verb is not None:
+        return f"{best.name} {verb} (classified {best.position_label})"
+    return f"{best.name} finished {best.position_label} ({best.score})"
+
+
 def _final_event(event: domain.Event) -> GameEvent | None:
     """Build the event-FINAL notification for a followed golfer/driver.
 
@@ -399,7 +424,7 @@ def _final_event(event: domain.Event) -> GameEvent | None:
         return None
     best = min(followed, key=lambda row: row.position)
     extras = [row for row in followed if row is not best]
-    message = f"{best.name} finished {best.position_label} ({best.score})"
+    message = _final_event_headline(best)
     if extras:
         others = ", ".join(f"{row.name} {row.position_label}" for row in extras)
         message = f"{message}; also: {others}"

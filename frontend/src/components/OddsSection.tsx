@@ -66,7 +66,7 @@ export default function OddsSection({
                 </dt>
                 <dd className="tabular-nums text-zinc-200">
                   {awayLabel} {formatMoneyline(odds.away_moneyline)}
-                  <span className="px-1.5 text-zinc-600">·</span>
+                  <span className="px-1.5 text-zinc-500">·</span>
                   {homeLabel} {formatMoneyline(odds.home_moneyline)}
                 </dd>
               </div>

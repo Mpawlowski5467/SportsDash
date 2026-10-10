@@ -9,16 +9,19 @@ from fastapi import APIRouter
 from app.config import get_settings
 from app.schemas import MetaOut
 
+# The shipped app version, re-exported so this module stays the name
+# everything imports: ``app.main`` builds ``FastAPI(version=...)`` from it
+# instead of repeating the literal, so /api/meta, /docs and the OpenAPI
+# schema can never disagree.  Bump it in ``app/version.py`` at release, in
+# step with the desktop bundle version in
+# ``frontend/src-tauri/tauri.conf.json`` (tests/test_api.py pins the two).
+# The constant lives in that leaf module so ``app.useragent`` can stamp the
+# version into outbound requests without importing the whole route package.
+from app.version import APP_VERSION as APP_VERSION
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# The shipped app version, and the backend's single source of truth for it:
-# ``app.main`` builds ``FastAPI(version=...)`` from this constant instead of
-# repeating the literal, so /api/meta, /docs and the OpenAPI schema can never
-# disagree.  Bump it here at release, in step with the desktop bundle version
-# in ``frontend/src-tauri/tauri.conf.json`` (tests/test_api.py pins the two).
-APP_VERSION = "1.4.0"
 
 
 @router.get("/meta", response_model=MetaOut)

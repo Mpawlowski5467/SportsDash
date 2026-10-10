@@ -1,9 +1,9 @@
 /**
- * Theme context + stadium dynamic-accent effect (Phase 8).
+ * Theme context + the Custom theme's dynamic-accent effect (Phase 8).
  *
  * Holds the active theme as React state (initialised from localStorage via
  * `getTheme()`), exposes a `useTheme()` hook so the SettingsView switcher
- * updates the whole app live, and — only when the theme is "stadium" — sets
+ * updates the whole app live, and — only when the theme is "custom" — sets
  * `--sd-accent` on <html> from the color of the team currently in focus.
  *
  * "In focus" is kept deliberately simple and safe: the first followed team
@@ -25,9 +25,9 @@ import {
 import { useTeams } from "../hooks";
 import {
   applyTheme,
-  clearStadiumAccent,
+  clearCustomAccent,
   getTheme,
-  setStadiumAccent,
+  setCustomAccent,
   setTheme as persistTheme,
   type ThemeId,
 } from "../lib/theme";
@@ -62,23 +62,23 @@ export default function ThemeProvider({ children }: { children: ReactNode }) {
     applyTheme(theme);
   }, [theme]);
 
-  // Stadium dynamic accent: drive --sd-accent from the focused team's color.
-  // Only active under the stadium theme; otherwise the override is cleared.
+  // Custom theme's dynamic accent: drive --sd-accent from the focused
+  // team's color. Only active under that theme; otherwise it is cleared.
   const focusColor = useMemo(() => {
     const teams = teamsQuery.data?.teams ?? [];
     return teams.find((team) => Boolean(team.color))?.color ?? null;
   }, [teamsQuery.data]);
 
   useEffect(() => {
-    if (theme === "stadium") {
-      setStadiumAccent(focusColor);
+    if (theme === "custom") {
+      setCustomAccent(focusColor);
     } else {
-      clearStadiumAccent();
+      clearCustomAccent();
     }
     return () => {
-      // Tidy up on unmount so a leftover override can't bleed into a
-      // non-stadium theme on a future mount.
-      clearStadiumAccent();
+      // Tidy up on unmount so a leftover override can't bleed into another
+      // theme on a future mount.
+      clearCustomAccent();
     };
   }, [theme, focusColor]);
 

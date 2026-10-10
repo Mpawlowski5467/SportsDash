@@ -31,6 +31,7 @@ from urllib.parse import quote, urlparse
 import feedparser
 import httpx
 
+from app import useragent
 from app.config import get_settings
 from app.db import session_scope
 from app.models import convert, domain
@@ -45,7 +46,7 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 _SUMMARY_MAX_CHARS = 300
 _FEED_TIMEOUT = httpx.Timeout(15.0)
-_FEED_HEADERS = {"User-Agent": "SportsDash/1.0 (+rss reader)"}
+_FEED_HEADERS = useragent.headers("rss reader")
 _GOOGLE_NEWS_BASE = "https://news.google.com/rss/search"
 _DEFAULT_LOCALE = ("en", "US")
 

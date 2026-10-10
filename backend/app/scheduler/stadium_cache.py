@@ -99,14 +99,18 @@ async def _resolve_competition_stadium(
 ) -> domain.TeamLocation | None:
     """Resolve one competition team's home stadium by name (+ facts + coords).
 
-    Competition teams have no ``TeamORM`` row and no stored fixtures to
-    borrow a venue from, so this is the name-only slice of
-    :func:`_resolve_team_location`: TheSportsDB enrichment by team name
-    (``stadiums.lookup_stadium`` — venue + capacity + photo and often
-    coordinates), then a geocode of the venue name when no coordinates came
-    back.  Returns ``None`` when nothing usable resolves; the caller still
-    caches that as a definitive miss so it isn't re-attempted hot.  Never
-    raises — every step is guarded.
+    This is the name-keyed twin of :func:`_resolve_team_location`:
+    TheSportsDB enrichment by team name (``stadiums.lookup_stadium`` —
+    venue + capacity + photo and often coordinates), then the side's own
+    stored home fixtures when that yields no venue, then a geocode of
+    whichever venue name came back.  Returns ``None`` when nothing usable
+    resolves; the caller still caches that as a definitive miss so it isn't
+    re-attempted hot.  Never raises — every step is guarded.
+
+    A competition team has no ``TeamORM`` row, so the id-keyed
+    ``most_common_home_venue`` used by followed teams cannot see it — hence
+    the by-name query, which is the whole reason these sides used to drop
+    off the map instead of falling back like everyone else.
 
     A team TheSportsDB knows only by region ("Kyiv, Ukraine") resolves to no
     venue name at all — the enrichment refuses to pass a coarse area off as a
@@ -127,6 +131,20 @@ async def _resolve_competition_stadium(
         return enrichment
 
     venue = enrichment.venue if enrichment is not None else None
+    if not venue:
+        # The provider does not know this side's ground, but its own stored
+        # home fixtures usually name it — the same fallback a followed team
+        # gets, reached by name because there is no team id to key on.
+        try:
+            async with session_scope() as session:
+                venue = await repository.most_common_home_venue_by_name(
+                    session, league.id, team.name
+                )
+        except Exception:
+            logger.exception(
+                "refresh_competition_stadiums: stored-venue lookup failed for %s — continuing",
+                team.name,
+            )
     if not venue:
         return None
 

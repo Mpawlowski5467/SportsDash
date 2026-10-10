@@ -39,7 +39,7 @@ export interface Props {
   active: TabId;
   onChange: (tab: TabId) => void;
   onManageTeams?: () => void;
-  onOpenNotifications?: () => void;
+  onOpenSettings?: () => void;
   children: ReactNode;
 }
 
@@ -85,15 +85,15 @@ function useClock(): string {
 
 /**
  * Gear button with a tiny dropdown: "Manage teams" (the onboarding wizard in
- * manage mode) and "Notifications" (the notification-prefs panel). Closes on
+ * manage mode) and "Settings" (appearance + ticker). Closes on
  * outside click, Escape, or after a selection.
  */
 function SettingsMenu({
   onManageTeams,
-  onOpenNotifications,
+  onOpenSettings,
 }: {
   onManageTeams?: () => void;
-  onOpenNotifications?: () => void;
+  onOpenSettings?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -166,14 +166,14 @@ function SettingsMenu({
               Manage teams
             </button>
           )}
-          {onOpenNotifications && (
+          {onOpenSettings && (
             <button
               type="button"
               role="menuitem"
-              onClick={() => choose(onOpenNotifications)}
+              onClick={() => choose(onOpenSettings)}
               className="block w-full px-3 py-2 text-left text-sm text-zinc-200 transition-colors hover:bg-zinc-800"
             >
-              Notifications
+              Settings
             </button>
           )}
         </div>
@@ -219,7 +219,7 @@ export default function Layout({
   active,
   onChange,
   onManageTeams,
-  onOpenNotifications,
+  onOpenSettings,
   children,
 }: Props) {
   const clock = useClock();
@@ -352,10 +352,10 @@ export default function Layout({
 
           <KioskToggle on={kiosk} onToggle={toggleKiosk} />
 
-          {(onManageTeams || onOpenNotifications) && (
+          {(onManageTeams || onOpenSettings) && (
             <SettingsMenu
               onManageTeams={onManageTeams}
-              onOpenNotifications={onOpenNotifications}
+              onOpenSettings={onOpenSettings}
             />
           )}
         </div>

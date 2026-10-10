@@ -90,7 +90,8 @@ tennis, MMA, golf, motorsport, and volleyball.**
   daily sync: a followed team's roster is re-checked in the hours before
   kickoff, so a same-day scratch reaches you the same afternoon.
   Deduplicated, so the same alert never fires twice.
-- **Themes & kiosk** — four themes (Light, Dark, Newsprint, Stadium), a
+- **Themes & kiosk** — four themes (Dark, Light, Custom — accented with
+  your team's colors — and a WCAG-AAA High contrast), a
   kiosk auto-rotation mode with an idle clock, and an installable PWA.
 
 ## The pages, one by one

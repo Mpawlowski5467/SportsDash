@@ -342,7 +342,7 @@ function BracketColumnView({
       >
         {col.label}
         {col.nodes.length > 1 && (
-          <span className="ml-1 text-zinc-600">{col.nodes.length}</span>
+          <span className="ml-1 text-zinc-500">{col.nodes.length}</span>
         )}
       </h2>
       {col.nodes.length > 0 ? (

@@ -86,7 +86,7 @@ function TickerChip({
         )}
       </span>
 
-      <span className="text-zinc-600">{showScore ? "·" : "@"}</span>
+      <span className="text-zinc-500">{showScore ? "·" : "@"}</span>
 
       <span className="flex items-center gap-1.5">
         <TeamLogo

@@ -87,7 +87,7 @@ export default function App() {
   }
 
   // ThemeProvider lives inside the QueryClientProvider (mounted in main.tsx)
-  // so its stadium-accent effect can read the cached `/teams` payload, and
+  // so its custom-accent effect can read the cached `/teams` payload, and
   // above all app content so the theme switcher updates everything live.
   return (
     <ThemeProvider>
@@ -106,7 +106,7 @@ function AppContent() {
     () => new Set([active]),
   );
   const [manageOpen, setManageOpen] = useState(false);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [firstRunActive, setFirstRunActive] = useState(false);
   const [mapFocus, setMapFocus] = useState<MapFocusTarget | null>(null);
   // Stable so views consuming ManageTeamsContext don't re-render on App state.
@@ -188,7 +188,7 @@ function AppContent() {
         active={active}
         onChange={setActive}
         onManageTeams={() => setManageOpen(true)}
-        onOpenNotifications={() => setNotificationsOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
       >
         {/* Mount-once-visited: a view mounts the first time its tab is
             activated, then stays mounted and is hidden via the `hidden`
@@ -242,8 +242,8 @@ function AppContent() {
           onClose={() => setManageOpen(false)}
         />
       )}
-      {notificationsOpen && (
-        <SettingsView onClose={() => setNotificationsOpen(false)} />
+      {settingsOpen && (
+        <SettingsView onClose={() => setSettingsOpen(false)} />
       )}
     </TeamDetailProvider>
     </ManageTeamsContext.Provider>

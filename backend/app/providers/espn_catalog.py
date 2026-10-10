@@ -21,6 +21,7 @@ from typing import Any
 
 import httpx
 
+from app import useragent
 from app.models.domain import INDIVIDUAL_SPORTS, LEADERBOARD_SPORTS, Sport
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,84 @@ class CatalogTeam:
 # no real league logo: a generic ESPN sport icon (tennis tours) or the
 # ``default-team-logo`` placeholder (Danish/Norwegian leagues), and the
 # TheSportsDB volleyball catalog.  http:// hrefs are normalized to https://.
+# ---------------------------------------------------------------------------
+# Countries — the setup wizard's first drill-down
+# ---------------------------------------------------------------------------
+#
+# ESPN's soccer league codes carry the country in their prefix
+# (``soccer/eng.1``, ``soccer/bra.1``), which is the whole reason a
+# country-first picker is possible without a second data source.  The mapping
+# is spelled out here rather than derived from a lookup table somewhere else:
+# the prefix is ESPN's own vocabulary, not an ISO code — "eng", "sco" and
+# "ned" are not ISO-3166 — so guessing at it would be wrong for exactly the
+# countries a soccer fan cares most about.
+#
+# A code absent from this table (``uefa``, ``fifa``, ``conmebol``,
+# ``concacaf``) is a confederation rather than a country, and its leagues
+# group under "International" in the wizard instead of behind a pin.
+
+
+@dataclass(frozen=True)
+class CatalogCountry:
+    code: str  # ESPN's league-code prefix, e.g. "eng" — NOT an ISO code
+    name: str
+
+
+COUNTRIES: tuple[CatalogCountry, ...] = (
+    CatalogCountry(code="eng", name="England"),
+    CatalogCountry(code="sco", name="Scotland"),
+    CatalogCountry(code="esp", name="Spain"),
+    CatalogCountry(code="ger", name="Germany"),
+    CatalogCountry(code="ita", name="Italy"),
+    CatalogCountry(code="fra", name="France"),
+    CatalogCountry(code="ned", name="Netherlands"),
+    CatalogCountry(code="por", name="Portugal"),
+    CatalogCountry(code="bel", name="Belgium"),
+    CatalogCountry(code="tur", name="Türkiye"),
+    CatalogCountry(code="gre", name="Greece"),
+    CatalogCountry(code="aut", name="Austria"),
+    CatalogCountry(code="sui", name="Switzerland"),
+    CatalogCountry(code="den", name="Denmark"),
+    CatalogCountry(code="nor", name="Norway"),
+    CatalogCountry(code="swe", name="Sweden"),
+    CatalogCountry(code="rus", name="Russia"),
+    CatalogCountry(code="usa", name="United States"),
+    CatalogCountry(code="mex", name="Mexico"),
+    CatalogCountry(code="bra", name="Brazil"),
+    CatalogCountry(code="arg", name="Argentina"),
+)
+
+_COUNTRY_BY_CODE: dict[str, CatalogCountry] = {c.code: c for c in COUNTRIES}
+
+
+def league_country_code(league: CatalogLeague) -> str | None:
+    """The country a league belongs to, or ``None`` for a confederation.
+
+    Reads the prefix of ESPN's league code — ``soccer/eng.1`` -> ``eng`` —
+    and returns it only when :data:`COUNTRIES` knows it, so an unmapped or
+    confederation-scoped competition degrades to "no country" rather than
+    inventing one.  A provider whose keys are not ``sport/code`` shaped (the
+    TheSportsDB volleyball ids are bare numbers) simply has no country.
+    """
+    _, _, code = league.provider_key.partition("/")
+    if not code:
+        return None
+    prefix = code.split(".", 1)[0]
+    return prefix if prefix in _COUNTRY_BY_CODE else None
+
+
+def countries_with_leagues() -> tuple[CatalogCountry, ...]:
+    """Countries that actually have at least one league in the catalog.
+
+    The wizard offers one card per entry, so a country with nothing behind it
+    must not appear — a card that opens an empty list is worse than none.
+    """
+    present = {
+        code for code in (league_country_code(league) for league in CATALOG) if code is not None
+    }
+    return tuple(c for c in COUNTRIES if c.code in present)
+
+
 CATALOG: tuple[CatalogLeague, ...] = (
     CatalogLeague(
         id="nba",
@@ -1241,7 +1320,7 @@ async def _fetch_json(url: str, params: dict[str, str], league_id: str) -> Any:
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(15.0),
-            headers={"User-Agent": "SportsDash/1.0"},
+            headers=useragent.headers(),
             follow_redirects=True,
         ) as client:
             response = await client.get(url, params=params)

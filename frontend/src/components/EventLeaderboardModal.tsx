@@ -2,7 +2,7 @@ import { useId } from "react";
 
 import { formatShortDate } from "../lib/time";
 import type { LeaderRow, SportEvent } from "../types";
-import { NEUTRAL_FALLBACK_COLOR } from "./GameCard";
+import { NEUTRAL_FALLBACK_COLOR } from "./GameRow";
 import Portal from "./Portal";
 import { useModalChrome } from "./modalChrome";
 
@@ -44,7 +44,7 @@ function EventStatus({ event }: { event: SportEvent }) {
     );
   }
   return (
-    <span className="inline-flex items-center rounded-full bg-zinc-800/50 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-zinc-600">
+    <span className="inline-flex items-center rounded-full bg-zinc-800/50 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-zinc-500">
       {event.phase === "postponed" ? "PPD" : "CANC"}
     </span>
   );

@@ -18,7 +18,7 @@
  *
  * The default look (dark kiosk) is Tailwind's stock zinc/amber and is left
  * UNSET so `:root` keeps shipping today's palette. `[data-theme="dark"]`
- * is therefore a no-op alias; the other three remap below.
+ * is therefore a no-op alias; Light, Custom and High contrast remap below.
  *
  * Contrast was chosen for WCAG-AA: body text (zinc-300/400 on the bg ramp)
  * clears 4.5:1; accents stay legible on their typical surfaces.
@@ -37,7 +37,7 @@ html {
  * cards), short of zinc-400 so the faint/secondary hierarchy survives.
  */
 [data-theme="dark"],
-[data-theme="stadium"] {
+[data-theme="custom"] {
   --color-zinc-500: #80808a;
 }
 
@@ -81,61 +81,61 @@ html {
   --color-emerald-500: #047857;
 }
 
-/* ── Newsprint ──────────────────────────────────────────────────────────
- * Warm paper (cream/ivory) with ink-brown text and a muted maroon accent.
- * Serif headings opt-in via the `.theme-newsprint` heading rule below.
- */
-[data-theme="newsprint"] {
-  color-scheme: light;
-
-  --color-zinc-950: #f3ece0; /* aged paper backdrop    */
-  --color-zinc-900: #ece2d2; /* card surface           */
-  --color-zinc-800: #ddd0ba; /* borders / hover        */
-  --color-zinc-700: #c8b79c; /* stronger borders       */
-  --color-zinc-600: #a78f6f; /* muted track            */
-  --color-zinc-500: #75654e; /* faint label (≈4.8:1 AA) */
-  --color-zinc-400: #5c4f3d; /* secondary ink (AA)     */
-  --color-zinc-300: #423829; /* body ink               */
-  --color-zinc-200: #2e261b; /* strong ink             */
-  --color-zinc-100: #241d14; /* heading ink            */
-
-  /* Accent — muted crimson/maroon. */
-  --color-amber-300: #9a2f2a;
-  --color-amber-400: #842420;
-  --color-amber-500: #6b1d1a;
-  --color-amber-900: #f1ddd0; /* badge fill, warm */
-  --color-amber-950: #f7ebe1;
-
-  /* Status, warmed to sit on paper. */
-  --color-red-300: #a02622;
-  --color-red-400: #b32d28;
-  --color-red-500: #c4362f;
-  --color-red-900: #f0d8d2;
-  --color-red-950: #f7e7e2;
-
-  --color-emerald-200: #2f6b48;
-  --color-emerald-300: #357a52;
-  --color-emerald-400: #3e8b5e;
-  --color-emerald-500: #2f6b48;
-
-  /* Serif headline face for the newsprint masthead feel. */
-  --font-sans:
-    "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia,
-    "Times New Roman", serif;
-}
-
-/* ── Stadium ────────────────────────────────────────────────────────────
+/* ── Custom ────────────────────────────────────────────────────────────
  * Keeps the dark base, but the amber accent is driven by `--sd-accent`,
  * which a small effect sets to the focused team's color (default: vibrant
  * amber when no team is in focus). All three amber stops fall back to the
  * stock amber if `--sd-accent` is unset.
  */
-[data-theme="stadium"] {
+[data-theme="custom"] {
   color-scheme: dark;
 
   --color-amber-300: var(--sd-accent, #fbbf24);
   --color-amber-400: var(--sd-accent, #f59e0b);
   --color-amber-500: var(--sd-accent, #d97706);
+}
+
+/* ── High contrast ──────────────────────────────────────────────────────
+ * An accessibility option rather than a look: true black, white headings,
+ * and every text token at WCAG AAA (7:1) or better against both the
+ * backdrop and a card surface — the lowest is the loss-red at 7.89:1.
+ *
+ * Borders are deliberately much lighter than the other dark themes
+ * (#3a3a3a rather than #27272a): at this base a hairline at the usual
+ * value is invisible, and this design leans on rules to separate rows.
+ */
+[data-theme="contrast"] {
+  color-scheme: dark;
+
+  --color-zinc-950: #000000; /* app backdrop            */
+  --color-zinc-900: #0a0a0a; /* card / panel surface    */
+  --color-zinc-800: #3a3a3a; /* borders — lifted, see above */
+  --color-zinc-700: #5a5a5a; /* stronger borders        */
+  --color-zinc-600: #9a9a9a; /* muted icon / track — 7.5:1, so the icons
+                                clear AAA alongside the text */
+  --color-zinc-500: #c0c0c0; /* faint label (11.5:1)    */
+  --color-zinc-400: #d8d8d8; /* secondary text          */
+  --color-zinc-300: #ececec; /* body text               */
+  --color-zinc-200: #f8f8f8; /* strong text             */
+  --color-zinc-100: #ffffff; /* heading text            */
+
+  /* Accent — saturated yellow, the most legible accent on true black. */
+  --color-amber-300: #ffe14d;
+  --color-amber-400: #ffd21a;
+  --color-amber-500: #e6b800;
+  --color-amber-900: #3d3000;
+  --color-amber-950: #2b2200;
+
+  --color-red-300: #ff9d9d;
+  --color-red-400: #ff7b7b;
+  --color-red-500: #ff5252;
+  --color-red-900: #3d0f0f;
+  --color-red-950: #2b0a0a;
+
+  --color-emerald-200: #7dffc4;
+  --color-emerald-300: #4dffae;
+  --color-emerald-400: #1aff98;
+  --color-emerald-500: #00e07f;
 }
 
 body {
@@ -147,12 +147,129 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Newsprint: serif, slightly looser headings for an editorial masthead. */
-[data-theme="newsprint"] h1,
-[data-theme="newsprint"] h2,
-[data-theme="newsprint"] h3 {
-  font-family: var(--font-sans);
+/*
+ * ─────────────────────────────────────────────────────────────────────────
+ * Column layout
+ * ─────────────────────────────────────────────────────────────────────────
+ * The typography layer the app went without. Before this, 149 of 150 text
+ * elements on a page sat between 11px and 14px: page titles, section
+ * headings, team names, stat values and footnotes were all within 3px of
+ * each other, which is why the UI read as flat however the color was
+ * tuned. Themes remap COLOR only, so no amount of palette work could fix
+ * it.
+ *
+ * The scale below is the fix, and it is deliberately small — six sizes
+ * with real gaps between them, plus a reading measure and two rule
+ * weights. Views compose these classes instead of inventing per-component
+ * `text-[11px]`, so the ramp cannot drift again.
+ *
+ * Heading face is a var, not a constant: `--sd-font-heading` defaults to
+ * the self-hosted Space Grotesk, and newsprint points it back at its serif
+ * so the editorial theme keeps its masthead. See the fonts note further
+ * down for why the wordmark itself must never follow `--font-sans`.
+ */
+
+:root {
+  --sd-measure: 940px; /* the reading column                     */
+  --sd-measure-wide: 1180px; /* month grid / map chrome — earns width  */
+  --sd-font-heading: var(--sd-font-display);
+}
+
+.sd-measure {
+  max-width: var(--sd-measure);
+  margin-inline: auto;
+}
+
+.sd-measure-wide {
+  max-width: var(--sd-measure-wide);
+  margin-inline: auto;
+}
+
+/* ── Type scale ───────────────────────────────────────────────────────── */
+
+.sd-title {
+  font-family: var(--sd-font-heading);
+  font-size: 1.875rem; /* 30px */
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.sd-title-sm {
+  font-family: var(--sd-font-heading);
+  font-size: 1.25rem; /* 20px */
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.sd-lede {
+  font-size: 1.1875rem; /* 19px — the primary line of a row */
   letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+
+.sd-body {
+  font-size: 0.9375rem; /* 15px */
+  line-height: 1.45;
+}
+
+.sd-meta {
+  font-size: 0.8125rem; /* 13px — venue, broadcast, source */
+}
+
+.sd-micro {
+  font-size: 0.6875rem; /* 11px — the floor; nothing smaller */
+}
+
+.sd-eyebrow {
+  font-family: var(--sd-font-heading);
+  font-size: 0.75rem; /* 12px */
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+/* Figures: tabular so columns of numbers line up, in the heading face so
+ * scores and times read as data rather than prose. */
+.sd-figure {
+  font-family: var(--sd-font-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Rules ────────────────────────────────────────────────────────────────
+ * Column separates with rules, not card borders and fills. Two weights
+ * only: `sd-rule` under a section heading, `sd-hair` between rows. */
+
+.sd-rule {
+  border-bottom: 2px solid var(--color-zinc-700);
+}
+
+.sd-hair {
+  border-top: 1px solid var(--color-zinc-800);
+}
+
+/* A listing row: fixed gutter (time or date), the content, a trailing
+ * figure. The gutter is what makes a column of rows scannable. */
+.sd-row {
+  display: grid;
+  grid-template-columns: 108px 1fr auto;
+  align-items: baseline;
+  gap: 1.5rem;
+}
+
+@media (max-width: 640px) {
+  /* Two columns at phone widths, which means the trailing figure has to be
+   * told where to go: auto-placement drops it into the gutter on the next
+   * row, left-aligned under the time, which reads as a stray value. Put it
+   * under the content it belongs to instead. */
+  .sd-row {
+    grid-template-columns: 84px 1fr;
+  }
+
+  .sd-row > :last-child {
+    grid-column: 2;
+  }
 }
 
 /* Thin scrollbars that follow the active palette. */

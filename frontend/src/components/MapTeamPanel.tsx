@@ -119,12 +119,10 @@ export default function MapTeamPanel({
               size="lg"
             />
             <div className="min-w-0 flex-1">
-              <h2 className="truncate text-base font-semibold text-zinc-100">
+              <h2 className="sd-title-sm truncate text-zinc-100">
                 {shown.name}
               </h2>
-              <p className="truncate text-xs uppercase tracking-wide text-zinc-500">
-                {leagueLabel}
-              </p>
+              <p className="sd-eyebrow truncate text-zinc-500">{leagueLabel}</p>
             </div>
             <button
               type="button"
@@ -159,7 +157,7 @@ export default function MapTeamPanel({
             )}
 
             {shown.next_opponent && (
-              <section className="mb-4 rounded-lg border border-zinc-800 bg-zinc-800/40 px-3 py-2.5">
+              <section className="sd-hair mb-4 px-1 py-3">
                 <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
                   Next match
                 </p>
@@ -175,7 +173,7 @@ export default function MapTeamPanel({
             )}
 
             {travel && (
-              <section className="mb-4 rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2.5">
+              <section className="sd-hair mb-4 px-1 py-3">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
                     Travel · next away game
@@ -338,7 +336,7 @@ function MatchRow({
             "truncate " + (involves ? "text-zinc-100" : "text-zinc-300")
           }
         >
-          {game.away.name} <span className="text-zinc-600">v</span>{" "}
+          {game.away.name} <span className="text-zinc-500">v</span>{" "}
           {game.home.name}
         </span>
       </div>

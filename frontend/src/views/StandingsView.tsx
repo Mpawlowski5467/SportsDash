@@ -37,9 +37,37 @@ function formatGoalDiff(gd: number | null): string {
   return gd > 0 ? `+${gd}` : String(gd);
 }
 
+// Numeric columns are FIXED width and the team column takes the slack, so
+// a row can be spanned in one eye movement. They used to share the table's
+// full width evenly, which on a wide monitor left a dead gap between the
+// club and its record.
+/**
+ * Whether a provider group label is just the league's own name again.
+ *
+ * ESPN labels an ungrouped table with a restatement of the competition
+ * ("2026-27 English Premier League" under a league already titled "Premier
+ * League"), which stacked three near-identical headings on the view. A real
+ * grouping ("Eastern Conference", "AL West") is not an echo and still
+ * renders.
+ */
+function seasonLabel(season: string): string {
+  // Providers ship the season as a sentence ("2026-27 English Premier
+  // League"), which restates the title it sits beside. Keep the part that
+  // is actually the season; fall back to the whole string if it has no
+  // leading year.
+  const match = /^\d{4}(?:[-/]\d{2,4})?/.exec(season.trim());
+  return match === null ? season : match[0];
+}
+
+function echoesLeagueName(group: string, league: string): boolean {
+  const norm = (value: string) => value.toLowerCase().replace(/[^a-z]+/g, " ").trim();
+  return norm(group).includes(norm(league));
+}
+
 const HEADER_CELL =
-  "sticky top-0 z-10 bg-zinc-950 px-2 py-2 text-xs font-medium uppercase tracking-wider text-zinc-500";
-const NUM_CELL = "px-2 py-1.5 text-right tabular-nums text-zinc-300";
+  "sd-eyebrow sticky top-0 z-10 bg-zinc-950 px-2 py-2.5 text-zinc-500";
+const NUM_CELL =
+  "sd-figure w-14 px-2 py-2 text-right text-[15px] text-zinc-400";
 
 function StandingsRow({
   row,
@@ -390,9 +418,9 @@ export default function StandingsView() {
       groups.some((group) => group.nested);
     body = (
       <>
-        <div className="flex items-baseline justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-zinc-200">
+        <div className="sd-rule flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 pb-3">
+          <div className="flex items-baseline gap-3">
+            <h2 className="sd-title text-zinc-100">
               {standings.league_name}
             </h2>
             {standings.is_stale && (
@@ -404,7 +432,9 @@ export default function StandingsView() {
               </span>
             )}
           </div>
-          <span className="text-xs text-zinc-500">{standings.season}</span>
+          <span className="sd-meta text-zinc-500" title={standings.season}>
+            {seasonLabel(standings.season)}
+          </span>
         </div>
         {grouped ? (
           groups.map((group) => (
@@ -412,10 +442,8 @@ export default function StandingsView() {
               key={group.name ?? "ungrouped"}
               className="flex flex-col gap-2"
             >
-              {group.name !== null && (
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
-                  {group.name}
-                </h3>
+              {group.name !== null && !echoesLeagueName(group.name, standings.league_name) && (
+                <h3 className="sd-eyebrow text-zinc-500">{group.name}</h3>
               )}
               {group.nested ? (
                 group.subgroups.map((sub) => (
@@ -455,7 +483,7 @@ export default function StandingsView() {
           />
         )}
         {standings.fetched_at !== null && (
-          <p className="text-xs text-zinc-500">
+          <p className="sd-micro text-zinc-500">
             Updated {formatDateTime(standings.fetched_at)}
           </p>
         )}
@@ -464,7 +492,7 @@ export default function StandingsView() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="sd-measure flex flex-col gap-6 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <Select
           options={leagueOptions}

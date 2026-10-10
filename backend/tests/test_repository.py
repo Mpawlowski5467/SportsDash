@@ -1547,3 +1547,119 @@ async def test_most_common_home_venue_none_without_home_games(
     seeded: AsyncSession,
 ) -> None:
     assert await repository.most_common_home_venue(seeded, TEAM_COMETS) is None
+
+
+async def test_most_common_home_venue_by_name_finds_a_side_with_no_teams_row(
+    seeded: AsyncSession,
+) -> None:
+    """A whole-competition side has no ``teams`` row but does have fixtures.
+
+    This is the case the id-keyed query structurally cannot answer: a
+    national side followed via ``follow_all`` is stored on its games by
+    name only, so without the by-name tally it has no venue fallback and
+    drops off the map entirely.
+    """
+    now = utcnow()
+    await repository.upsert_games(
+        seeded,
+        [
+            make_game(
+                "mock:nation-home-1",
+                start_time=now + timedelta(days=1),
+                home_name="Ashport Republic",
+                venue="Republic Arena",
+            ),
+            make_game(
+                "mock:nation-home-2",
+                start_time=now + timedelta(days=3),
+                home_name="Ashport Republic",
+                venue="Republic Arena",
+            ),
+            # A one-off neutral host must lose the tally, not win it.
+            make_game(
+                "mock:nation-home-3",
+                start_time=now + timedelta(days=5),
+                home_name="Ashport Republic",
+                venue="Harbor Neutral Ground",
+            ),
+        ],
+    )
+    await seeded.flush()
+
+    venue = await repository.most_common_home_venue_by_name(seeded, LEAGUE_ID, "Ashport Republic")
+    assert venue == "Republic Arena"
+
+
+async def test_most_common_home_venue_by_name_is_case_insensitive(
+    seeded: AsyncSession,
+) -> None:
+    """Provider casing drifts between the catalog and the fixture rows."""
+    now = utcnow()
+    await repository.upsert_games(
+        seeded,
+        [
+            make_game(
+                "mock:nation-case",
+                start_time=now + timedelta(days=1),
+                home_name="Ashport Republic",
+                venue="Republic Arena",
+            )
+        ],
+    )
+    await seeded.flush()
+
+    assert (
+        await repository.most_common_home_venue_by_name(seeded, LEAGUE_ID, "ASHPORT REPUBLIC")
+        == "Republic Arena"
+    )
+
+
+async def test_most_common_home_venue_by_name_ignores_away_only_sides(
+    seeded: AsyncSession,
+) -> None:
+    """A name that only ever plays away borrows nobody else's ground."""
+    now = utcnow()
+    await repository.upsert_games(
+        seeded,
+        [
+            make_game(
+                "mock:nation-away",
+                start_time=now + timedelta(days=1),
+                home_name="Ashport Republic",
+                away_name="Rivermont Union",
+                venue="Republic Arena",
+            )
+        ],
+    )
+    await seeded.flush()
+
+    assert (
+        await repository.most_common_home_venue_by_name(seeded, LEAGUE_ID, "Rivermont Union")
+        is None
+    )
+
+
+async def test_most_common_home_venue_by_name_stays_inside_its_league(
+    seeded: AsyncSession,
+) -> None:
+    """Names collide across leagues; a tally must not cross that boundary."""
+    now = utcnow()
+    await repository.upsert_games(
+        seeded,
+        [
+            make_game(
+                "mock:nation-league",
+                start_time=now + timedelta(days=1),
+                home_name="Ashport Republic",
+                venue="Republic Arena",
+            )
+        ],
+    )
+    await seeded.flush()
+
+    assert (
+        await repository.most_common_home_venue_by_name(
+            seeded, "some-other-league", "Ashport Republic"
+        )
+        is None
+    )

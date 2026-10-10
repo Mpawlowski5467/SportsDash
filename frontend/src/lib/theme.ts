@@ -14,7 +14,23 @@
 
 import { accentOnDark } from "./color";
 
-export type ThemeId = "dark" | "light" | "newsprint" | "stadium";
+export type ThemeId = "dark" | "light" | "custom" | "contrast";
+
+/**
+ * Themes that used to exist, and what a stored choice maps to now.
+ *
+ * The id is persisted in localStorage, so dropping one has to be handled
+ * rather than ignored: without this a returning user's stored "stadium"
+ * would fail validation and silently reset them to the default. "stadium"
+ * was renamed (same behaviour, clearer name); the rest were retired and
+ * land on the closest survivor.
+ */
+const LEGACY_THEME_IDS: Record<string, ThemeId> = {
+  stadium: "custom",
+  floodlight: "dark",
+  ember: "dark",
+  newsprint: "light",
+};
 
 export interface ThemeOption {
   id: ThemeId;
@@ -40,15 +56,15 @@ export const THEMES: readonly ThemeOption[] = [
     dark: false,
   },
   {
-    id: "newsprint",
-    label: "Newsprint",
-    description: "Warm paper and ink-brown text with a serif headline face.",
-    dark: false,
+    id: "custom",
+    label: "Custom",
+    description: "The dark base, accented with your followed team's colors.",
+    dark: true,
   },
   {
-    id: "stadium",
-    label: "Stadium",
-    description: "Dark base with an accent driven by the team in focus.",
+    id: "contrast",
+    label: "High contrast",
+    description: "True black and white type, every text tone at WCAG AAA.",
     dark: true,
   },
 ];
@@ -74,6 +90,9 @@ export function getTheme(): ThemeId {
     if (isThemeId(stored)) {
       return stored;
     }
+    if (stored !== null && Object.hasOwn(LEGACY_THEME_IDS, stored)) {
+      return LEGACY_THEME_IDS[stored];
+    }
   } catch {
     // Storage unavailable (private mode, disabled cookies) — use default.
   }
@@ -96,7 +115,7 @@ export function applyTheme(theme: ThemeId): void {
 }
 
 /**
- * Persist and apply a theme. When switching away from "stadium" the
+ * Persist and apply a theme. When switching away from "custom" the
  * dynamic `--sd-accent` override is cleared so the next dark/stadium
  * session starts from the default accent.
  */
@@ -106,31 +125,31 @@ export function setTheme(theme: ThemeId): void {
   } catch {
     // Persisting is best-effort; still apply for this session.
   }
-  if (theme !== "stadium") {
-    clearStadiumAccent();
+  if (theme !== "custom") {
+    clearCustomAccent();
   }
   applyTheme(theme);
 }
 
 /**
- * Stadium dynamic accent. Sets the `--sd-accent` custom property on
- * `<html>`; `index.css` maps the amber ramp to it under
- * `[data-theme="stadium"]`. A no-op (clears the override) when given a
+ * The Custom theme's dynamic accent. Sets the `--sd-accent` custom
+ * property on `<html>`; `index.css` maps the amber ramp to it under
+ * `[data-theme="custom"]`. A no-op (clears the override) when given a
  * falsy color so the CSS fallback (a vibrant amber) takes over.
  *
  * The accent lands on TEXT over the dark base, so a too-dark team color
  * (navy, maroon, black) would be near-invisible: it is lifted toward a
  * readable tone (hue preserved) before being applied.
  */
-export function setStadiumAccent(color: string | null | undefined): void {
+export function setCustomAccent(color: string | null | undefined): void {
   const root = document.documentElement;
   if (color) {
     root.style.setProperty("--sd-accent", accentOnDark(color));
   } else {
-    clearStadiumAccent();
+    clearCustomAccent();
   }
 }
 
-export function clearStadiumAccent(): void {
+export function clearCustomAccent(): void {
   document.documentElement.style.removeProperty("--sd-accent");
 }

@@ -698,6 +698,40 @@ async def most_common_home_venue(session: AsyncSession, team_id: str) -> str | N
     return row[0] if row is not None else None
 
 
+async def most_common_home_venue_by_name(
+    session: AsyncSession, league_id: str, team_name: str
+) -> str | None:
+    """The venue a *named* side hosts at most often, from stored home games.
+
+    The same tally as :func:`most_common_home_venue`, keyed by name within
+    one league instead of by ``team_id``.  A whole-competition team (a
+    national side followed via ``follow_all``) has no ``teams`` row, so the
+    id-keyed query can never find it — yet its fixtures are stored like any
+    other and carry the ground it plays on.  Without this, a competition
+    team whose venue the provider does not know had no fallback at all and
+    simply left the map.
+
+    Names are compared through SQL's own ``lower()`` on both sides so the
+    two agree whatever the backend does with non-ASCII (SQLite's is
+    ASCII-only, Postgres' is not) — matching a name to itself must not
+    depend on that.  ``None`` when no home game under that name has a venue.
+    """
+    stmt = (
+        select(GameORM.venue, func.count().label("n"))
+        .where(
+            GameORM.league_id == league_id,
+            func.lower(GameORM.home_name) == func.lower(team_name),
+            GameORM.venue.is_not(None),
+        )
+        .group_by(GameORM.venue)
+        .order_by(func.count().desc(), GameORM.venue.asc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    return row[0] if row is not None else None
+
+
 async def league_has_games_in_window(
     session: AsyncSession,
     league_id: str,

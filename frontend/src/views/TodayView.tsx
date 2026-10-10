@@ -1,7 +1,7 @@
 import { localKeyFromDate, parseLocalDateKey } from "../lib/time";
 import { useMemo, useState } from "react";
 import { useGameOdds, useOnThisDay, useTeams, useToday } from "../hooks";
-import GameCard, { NEUTRAL_FALLBACK_COLOR } from "../components/GameCard";
+import GameRow, { NEUTRAL_FALLBACK_COLOR } from "../components/GameRow";
 import EventLeaderboardModal from "../components/EventLeaderboardModal";
 import StaleBanner from "../components/StaleBanner";
 import {
@@ -163,13 +163,16 @@ function OnThisDayRow({ game }: { game: Game }) {
   const nameClass = (side: "home" | "away") =>
     winner === side ? "font-semibold text-zinc-100" : "text-zinc-300";
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-medium tabular-nums text-zinc-400">
+    <div className="sd-hair sd-body flex items-baseline gap-4 py-2">
+      <span className="sd-figure shrink-0 text-[13px] text-zinc-500">
         {anniversaryYear(game)}
       </span>
-      <span className="min-w-0 flex-1 truncate">
+      {/* Wraps rather than truncates: inside the reading measure there is
+          room for the whole line, and a clipped scoreline is worse than a
+          two-line one. */}
+      <span className="min-w-0 flex-1 text-balance">
         <span className={nameClass("away")}>{game.away.name}</span>{" "}
-        <span className="tabular-nums text-zinc-400">{scoreline(game)}</span>{" "}
+        <span className="sd-figure text-zinc-400">{scoreline(game)}</span>{" "}
         <span className={nameClass("home")}>{game.home.name}</span>
       </span>
     </div>
@@ -179,9 +182,9 @@ function OnThisDayRow({ game }: { game: Game }) {
 /** One followed team's anniversary block: a name label, then its finals. */
 function OnThisDayTeamBlock({ team }: { team: OnThisDayTeam }) {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5">
-      <p className="text-sm font-semibold text-zinc-100">{team.team_name}</p>
-      <div className="mt-1.5 space-y-1">
+    <div>
+      <p className="sd-body font-semibold text-zinc-100">{team.team_name}</p>
+      <div className="mt-1.5">
         {team.games.map((game) => (
           <OnThisDayRow key={game.id} game={game} />
         ))}
@@ -331,37 +334,47 @@ export default function TodayView() {
       : null;
 
   return (
-    <div className="space-y-4">
+    <div className="sd-measure space-y-9 py-2">
       {stale && (
         <StaleBanner
           message="Connection lost — showing the last loaded scores."
           onRetry={() => void todayQuery.refetch()}
         />
       )}
-      <header className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold text-zinc-100">{weekday}</h1>
-          <p className="text-sm text-zinc-400">{longDate}</p>
-        </div>
-        {games.length > 0 && (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-xs text-zinc-400">
-            <span className={liveCount > 0 ? "font-medium text-red-400" : ""}>
-              {liveCount} live
-            </span>
-            <span aria-hidden="true">·</span>
-            <span>{upcomingCount} upcoming</span>
-            <span aria-hidden="true">·</span>
-            <span>{finalCount} final</span>
-          </span>
-        )}
+      {/* One heading, with the date and the counts as a subordinate line
+          beneath it — the counts used to sit far right as a pill, which read
+          as a second, competing headline. */}
+      <header className="sd-rule flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 pb-3.5">
+        <h1 className="sd-title text-zinc-100">{weekday}</h1>
+        <p className="sd-meta flex items-center gap-2 text-zinc-500">
+          <span>{longDate}</span>
+          {games.length > 0 && (
+            <>
+              <span aria-hidden="true" className="text-zinc-500">
+                ·
+              </span>
+              <span className={liveCount > 0 ? "font-semibold text-red-400" : ""}>
+                {liveCount} live
+              </span>
+              <span aria-hidden="true" className="text-zinc-500">
+                ·
+              </span>
+              <span>{upcomingCount} upcoming</span>
+              <span aria-hidden="true" className="text-zinc-500">
+                ·
+              </span>
+              <span>{finalCount} final</span>
+            </>
+          )}
+        </p>
       </header>
 
       {events.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        <section>
+          <h2 className="sd-eyebrow sd-rule pb-2.5 text-zinc-500">
             Leaderboards
           </h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {events.map((event) => (
               <EventCard
                 key={event.id}
@@ -375,23 +388,21 @@ export default function TodayView() {
       )}
 
       {games.length === 0 && events.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <p className="text-base font-medium text-zinc-300">No games today</p>
-          <p className="mt-1 text-sm text-zinc-500">
+        <div className="py-20">
+          <p className="sd-title-sm text-zinc-300">No games today</p>
+          <p className="sd-meta mt-2 text-zinc-500">
             Check the Calendar tab for upcoming games.
           </p>
         </div>
       ) : (
         games.length > 0 && (
-          <section className="space-y-2">
+          <section>
             {events.length > 0 && (
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                Games
-              </h2>
+              <h2 className="sd-eyebrow sd-rule pb-2.5 text-zinc-500">Games</h2>
             )}
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div>
               {games.map((game) => (
-                <GameCard
+                <GameRow
                   key={game.id}
                   game={game}
                   teamColors={teamColors}
@@ -407,11 +418,11 @@ export default function TodayView() {
       {/* Sits OUTSIDE the games/empty-state conditional above, so the
           anniversaries render on quiet days too. */}
       {onThisDayTeams.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        <section>
+          <h2 className="sd-eyebrow sd-rule pb-2.5 text-zinc-500">
             On this day
           </h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-4 grid grid-cols-1 gap-x-12 gap-y-7 md:grid-cols-2">
             {onThisDayTeams.map((team) => (
               <OnThisDayTeamBlock key={team.team_id} team={team} />
             ))}

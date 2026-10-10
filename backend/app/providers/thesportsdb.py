@@ -40,7 +40,7 @@ from typing import Any
 
 import httpx
 
-from app import timeutil
+from app import timeutil, useragent
 from app.config import get_settings
 from app.providers.http_util import get_with_retry
 from app.services import tsdb_client
@@ -522,7 +522,7 @@ class TheSportsDbProvider:
             self._client = httpx.AsyncClient(
                 base_url=tsdb_client.TSDB_BASE_URL,
                 timeout=httpx.Timeout(get_settings().provider_timeout_seconds),
-                headers={"User-Agent": "SportsDash/1.0"},
+                headers=useragent.headers(),
                 follow_redirects=True,
             )
         return self._client

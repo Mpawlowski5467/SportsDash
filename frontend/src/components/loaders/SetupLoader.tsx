@@ -4,8 +4,14 @@ import { usePrefersReducedMotion } from "../../lib/usePrefersReducedMotion";
 
 /**
  * Prompt 3 — the new-user "Setting up your dashboard" build loader. A breathing
- * mark with an orbiting accent arc on the left, status + progress on the right,
- * on a white card.
+ * mark with an orbiting accent arc on the left, status + progress on the right.
+ *
+ * It sat on a hardcoded white card, which made the final step of setup the one
+ * screen in the app that ignored the theme — a white slab on the dark kiosk
+ * backdrop. Surfaces and type now read the palette vars, so it follows every
+ * theme like everything else. The brand orange stays hardcoded on purpose:
+ * index.css calls it out as the loaders' accent, deliberately separate from
+ * the app's amber UI accent.
  *
  * Demo mode (no props): the status text cycles and the bar loops. In production
  * pass real `progress` (0–1) and `status` to drive them; the bar becomes
@@ -65,9 +71,11 @@ export default function SetupLoader({ progress, status, className, style }: Setu
         maxWidth: 600,
         padding: "26px 30px",
         borderRadius: 18,
-        backgroundColor: "#FFFFFF",
-        boxShadow: "0 18px 48px -24px rgba(21, 23, 28, 0.45)",
-        color: "#15171C",
+        // Transparent, not a surface colour: the loader is the only thing on
+        // the screen at this point, so a card around it is chrome with
+        // nothing to separate it from.
+        backgroundColor: "transparent",
+        color: "var(--color-zinc-100)",
         ...style,
       }}
     >
@@ -114,7 +122,7 @@ export default function SetupLoader({ progress, status, className, style }: Setu
             fontSize: 11,
             textTransform: "uppercase",
             letterSpacing: "0.16em",
-            color: "#A9A69B",
+            color: "var(--color-zinc-500)",
           }}
         >
           NEW USER · SETTING UP
@@ -125,7 +133,7 @@ export default function SetupLoader({ progress, status, className, style }: Setu
             fontWeight: 700,
             fontSize: 24,
             letterSpacing: "-0.01em",
-            color: "#15171C",
+            color: "var(--color-zinc-100)",
             margin: "6px 0 0",
           }}
         >
@@ -143,7 +151,9 @@ export default function SetupLoader({ progress, status, className, style }: Setu
               flexShrink: 0,
             }}
           />
-          <span style={{ fontSize: 14, color: "#55534B" }}>{statusText}</span>
+          <span style={{ fontSize: 14, color: "var(--color-zinc-400)" }}>
+            {statusText}
+          </span>
         </div>
 
         <div
@@ -152,7 +162,7 @@ export default function SetupLoader({ progress, status, className, style }: Setu
             height: 7,
             maxWidth: 420,
             borderRadius: 4,
-            backgroundColor: "#ECEAE3",
+            backgroundColor: "var(--color-zinc-800)",
             overflow: "hidden",
           }}
         >

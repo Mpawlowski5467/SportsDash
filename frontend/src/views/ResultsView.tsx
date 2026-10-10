@@ -160,8 +160,8 @@ function ResultRow({
   const awayMeta = game.away.team_id ? teamMeta[game.away.team_id] : undefined;
   const homeMeta = game.home.team_id ? teamMeta[game.home.team_id] : undefined;
   return (
-    <li className="sd-stagger-item flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm">
-      <span className="w-14 shrink-0 text-xs tabular-nums text-zinc-500">
+    <li className="sd-stagger-item sd-hair sd-body flex items-center gap-4 px-1 py-2.5">
+      <span className="sd-figure w-16 shrink-0 text-[13px] text-zinc-500">
         {formatShortDate(game.start_time)}
       </span>
       <span
@@ -171,7 +171,7 @@ function ResultRow({
       >
         {outcome ?? "–"}
       </span>
-      <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate tabular-nums">
+      <span className="sd-figure flex min-w-0 flex-1 items-center gap-1.5 truncate">
         <TeamLogo
           logoUrl={game.away.logo_url ?? awayMeta?.logo_url}
           name={game.away.name}
@@ -182,7 +182,7 @@ function ResultRow({
         <span className={awayIsMine ? mineClass : otherClass}>
           {sideLabel(game.away)} {game.away.score ?? "—"}
         </span>
-        <span className="text-zinc-600">@</span>
+        <span className="text-zinc-500">@</span>
         <TeamLogo
           logoUrl={game.home.logo_url ?? homeMeta?.logo_url}
           name={game.home.name}
@@ -334,14 +334,14 @@ export default function ResultsView() {
     );
   } else {
     body = (
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-7">
         <StreakChips summary={summary} />
         {groups.map((group) => (
           <section key={group.label}>
-            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+            <h2 className="sd-eyebrow sd-rule mb-1 pb-2.5 text-zinc-500">
               {group.label}
             </h2>
-            <ul className="flex flex-col gap-1.5">
+            <ul className="flex flex-col">
               {group.games.map((game) => (
                 <ResultRow
                   key={game.id}
@@ -359,7 +359,7 @@ export default function ResultsView() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="sd-measure flex flex-col gap-6 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <Select
           options={teamOptions}

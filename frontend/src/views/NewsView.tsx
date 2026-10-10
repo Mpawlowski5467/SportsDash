@@ -121,61 +121,66 @@ function NewsCard({
 }) {
   const [imageFailed, setImageFailed] = useState(false);
   const showImage = item.image_url !== null && !imageFailed;
+  // Headline-led, not image-led: source and age sit in the gutter, the
+  // story gets the primary line, and the picture is demoted to a small
+  // trailing thumbnail. A card grid sized every story the same regardless
+  // of what it said.
   return (
     <button
       type="button"
       onClick={() => onSelect(item)}
-      className="group flex flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/60 text-left transition-colors hover:border-zinc-700 hover:bg-zinc-900"
+      className="sd-row sd-hair group items-start py-5 text-left"
     >
+      <span className="flex flex-col gap-1">
+        <span className="sd-meta truncate font-semibold text-zinc-400">
+          {item.source}
+        </span>
+        <span className="sd-figure text-[13px] text-zinc-500">
+          {item.published_at !== null
+            ? relativeTime(item.published_at)
+            : "recently"}
+        </span>
+        <span
+          className="sd-micro mt-0.5 truncate font-semibold"
+          title={badge.name}
+          style={{ color: badge.color ?? undefined }}
+        >
+          {badge.label}
+        </span>
+      </span>
+
+      <span className="flex min-w-0 flex-col gap-2">
+        <span className="sd-lede font-semibold text-balance text-zinc-100 group-hover:underline">
+          {item.title}
+        </span>
+        {item.summary !== null && (
+          <p className="sd-body line-clamp-2 text-pretty text-zinc-400">
+            {item.summary}
+          </p>
+        )}
+      </span>
+
       {showImage ? (
         <img
           src={item.image_url ?? undefined}
           alt=""
-          className="aspect-[16/9] w-full bg-zinc-800 object-cover"
+          className="hidden h-20 w-32 shrink-0 rounded bg-zinc-800 object-cover sm:block"
           onError={() => setImageFailed(true)}
         />
       ) : (
-        <div
-          className="flex aspect-[16/9] w-full items-center justify-center bg-zinc-800/40"
-          style={{
-            backgroundColor: withAlpha(badge.color, 0.1),
-          }}
+        <span
+          aria-hidden="true"
+          className="hidden h-20 w-32 shrink-0 items-center justify-center rounded sm:flex"
+          style={{ backgroundColor: withAlpha(badge.color, 0.1) }}
         >
           <span
-            className="text-2xl font-bold tracking-wide"
+            className="sd-figure text-xl font-bold"
             style={{ color: withAlpha(badge.color, 0.5) }}
           >
             {badge.label}
           </span>
-        </div>
-      )}
-      <div className="flex flex-1 flex-col gap-1.5 p-3">
-        <span className="line-clamp-2 font-medium leading-snug text-zinc-100 group-hover:underline">
-          {item.title}
         </span>
-        {item.summary !== null && (
-          <p className="line-clamp-2 text-sm text-zinc-400">{item.summary}</p>
-        )}
-        <div className="mt-auto flex items-center gap-x-2 pt-1 text-xs text-zinc-500">
-          <span className="truncate">{item.source}</span>
-          <span aria-hidden>·</span>
-          <span className="whitespace-nowrap">
-            {item.published_at !== null
-              ? relativeTime(item.published_at)
-              : "recently"}
-          </span>
-          <span
-            className="ml-auto shrink-0 rounded px-1.5 py-0.5 font-semibold text-zinc-300"
-            title={badge.name}
-            style={{
-              color: badge.color ?? undefined,
-              backgroundColor: withAlpha(badge.color, 0.12),
-            }}
-          >
-            {badge.label}
-          </span>
-        </div>
-      </div>
+      )}
     </button>
   );
 }
@@ -280,7 +285,7 @@ export default function NewsView() {
     );
   } else {
     body = (
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="flex flex-col">
         {items.map((item) => (
           <NewsCard
             key={item.id}
@@ -298,8 +303,8 @@ export default function NewsView() {
     : undefined;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-3">
+    <div className="sd-measure flex flex-col gap-5 py-2">
+      <div className="sd-rule flex items-start justify-between gap-3 pb-4">
         <NewsPills
           teams={teams}
           competitions={competitions}
