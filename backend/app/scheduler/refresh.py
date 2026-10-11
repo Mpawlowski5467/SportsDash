@@ -1062,8 +1062,10 @@ def _superseded() -> bool:
     schedule, standings and roster loops, between a schedule or event fetch
     and its write, and after each stage.  A superseded pass returns from
     there — nothing is cancelled, so the call already in flight completes
-    and is discarded.  The news, enrichment and stadium stages have none
-    inside: whichever is running finishes first.
+    and is discarded.  The stadium sweep is handed this check as well (see
+    ``_competition_stadiums_stage``) and asks it between leagues, between
+    teams and after a rate-limit pause.  The news and enrichment stages have
+    none inside: whichever is running finishes first.
     """
     return _running_generation is not None and _running_generation != _follow_generation
 
@@ -1118,6 +1120,24 @@ async def daily_refresh() -> None:
             _running_generation = None
 
 
+async def _competition_stadiums_stage() -> None:
+    """The stadium sweep as a stage of a pass: it leaves early once superseded.
+
+    The sweep sleeps between the teams it resolves, longer once TheSportsDB
+    has refused a lookup and longer still for each team it refused (the
+    delays are in ``scheduler/common.py``), so a field of a hundred takes
+    minutes and a throttled one tens of minutes.  With no checkpoint inside,
+    a save landing during it left the newly followed team without schedule,
+    standings or roster for all that time.  Handed ``_superseded``, the
+    sweep leaves within one team; what it has written stays, and the sweep
+    of the pass that follows resolves the rest.
+
+    The sweep is looked up when the stage runs, so a test that replaces
+    ``refresh_competition_stadiums`` in this module still takes effect.
+    """
+    await refresh_competition_stadiums(should_stop=_superseded)
+
+
 async def _daily_refresh() -> None:
     """One pass of :func:`daily_refresh`, run under its single-flight lock.
 
@@ -1149,7 +1169,7 @@ async def _daily_refresh() -> None:
         # After schedules, so the host-venue path can read near fixtures —
         # pre-resolve every follow_all field's home stadiums for the map view,
         # in or out of season.
-        refresh_competition_stadiums,
+        _competition_stadiums_stage,
         # After schedules, so the upcoming-games map has venue coordinates
         # ready (away grounds the host table / stadium index don't already
         # cover).
