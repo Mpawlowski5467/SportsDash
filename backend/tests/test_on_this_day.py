@@ -275,6 +275,62 @@ async def test_on_this_day_empty_is_200(
     assert body["date"] == local_today(get_settings().tzinfo).isoformat()
 
 
+async def test_on_this_day_without_redis_remembers_seasons_but_not_an_outage(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without Redis the assembled list is rebuilt on every request, from
+    seasons held in-process.
+
+    The list is cached whatever the scan found, and a scan that ran while
+    ESPN was failing finds nothing: kept in-process, that empty list would be
+    the team's anniversaries for the rest of the day.  So ``onthisday:`` is
+    not on the in-process allowlist.  What saves the upstream calls is one
+    level down — each season the scan pulled whole is held, and the Results
+    season picker reuses it too."""
+    monkeypatch.setattr(get_settings(), "provider_max_retries", 0)
+    today = local_today(get_settings().tzinfo)
+    match_season = str(utcnow().year - 1)
+    payload = {"events": [_final_event("otd-1", _local_game_iso(_past_match_day(today), 20))]}
+    espn_down = True
+    seasons_asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        season = request.url.params.get("season", "")
+        seasons_asked.append(season)
+        if espn_down:
+            return httpx.Response(503, text="schedule down")
+        if season == match_season:
+            return httpx.Response(200, json=payload)
+        return httpx.Response(200, json={"events": []})
+
+    _route_history(monkeypatch, handler)
+
+    outage = await client.get("/api/history/on-this-day")
+    assert outage.status_code == 200
+    assert outage.json()["teams"] == []
+    assert seasons_asked
+    # Nothing of the failed scan was kept: not the list, not a season.
+    assert not cache._local
+
+    espn_down = False
+    recovered = await client.get("/api/history/on-this-day")
+    assert [group["team_id"] for group in recovered.json()["teams"]] == [TEAM_ID]
+    assert not [key for key in cache._local if key.startswith("onthisday:")]
+
+    # The season that came back with games is held; one that answered with
+    # nothing is not cached, so the next scan asks about it again.
+    seasons_asked.clear()
+    again = await client.get("/api/history/on-this-day")
+    assert again.json() == recovered.json()
+    assert seasons_asked
+    assert match_season not in seasons_asked
+
+    season = await client.get(f"/api/history/results/{TEAM_ID}", params={"season": match_season})
+    assert season.status_code == 200
+    assert [game["id"] for game in season.json()] == ["espn:otd-1"]
+    assert match_season not in seasons_asked  # served from the scan's cached season
+
+
 async def test_on_this_day_cache_hit_short_circuits(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

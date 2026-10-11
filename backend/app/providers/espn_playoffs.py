@@ -43,6 +43,15 @@ _REAL_ROUND = re.compile(
 _GENERIC_ROUND_LABELS = frozenset({"", "playoff", "playoffs", "playoff series"})
 
 
+class EspnPlayoffsError(Exception):
+    """Raised when the playoff scoreboard cannot be fetched/decoded.
+
+    Kept apart from an empty bracket on purpose: "ESPN did not answer" must
+    not read as "no series are being played", or an outage would replace a
+    bracket on screen with the off-season state.
+    """
+
+
 @dataclass(frozen=True)
 class PlayoffSide:
     name: str
@@ -136,8 +145,10 @@ def _side(competitor: dict) -> PlayoffSide:
 async def fetch_playoff_bracket(provider_key: str, sport: Sport) -> list[PlayoffRound]:
     """Playoff rounds (each a list of series) for a league; ``[]`` if none.
 
-    Never raises — a network/parse failure logs and returns ``[]`` so the
-    bracket route degrades to "no active bracket".
+    ``[]`` means there is nothing to draw: an unsupported sport, or ESPN
+    answered and listed no playoff series.  A network/parse failure is not
+    that — it logs and raises :class:`EspnPlayoffsError`, so the bracket
+    route can answer 503 instead of "no active bracket".
     """
     if sport not in _PLAYOFF_SPORTS:
         return []
@@ -167,9 +178,11 @@ async def fetch_playoff_bracket(provider_key: str, sport: Sport) -> list[Playoff
                     provider_key,
                 )
                 events = await _fetch_month_buckets(client, url, start, end)
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError) as exc:
         logger.warning("espn_playoffs: fetch failed for %s", provider_key, exc_info=True)
-        return []
+        raise EspnPlayoffsError(
+            f"Failed to fetch ESPN playoffs for {provider_key!r}: {exc}"
+        ) from exc
     return _rounds_from_events(events)
 
 

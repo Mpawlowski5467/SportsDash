@@ -2,7 +2,7 @@
 
 The matchup's stored "last meetings" only cover the near window the
 games table keeps; this walks the followed team's past seasons (via the
-redis-cached season-results service, so the upstream cost is paid once)
+cached season-results service, so the upstream cost is paid once)
 and tallies every meeting with the given opponent.
 
 Matched by display name, exactly like ``repository.head_to_head`` — the

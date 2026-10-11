@@ -1,4 +1,5 @@
 import { StrictMode } from "react";
+import { startFreshnessKeeper } from "./lib/freshness";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
@@ -20,6 +21,7 @@ const queryClient = new QueryClient({
     },
   },
 });
+startFreshnessKeeper(queryClient);
 
 const rootElement = document.getElementById("root");
 if (rootElement === null) {

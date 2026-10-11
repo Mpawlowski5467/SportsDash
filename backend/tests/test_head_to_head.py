@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
+from app.models.domain import Game, GamePhase, GameState
 from app.models.orm import LeagueORM, TeamORM
+from app.providers import espn_history
 from app.schemas import GameOut, GameSideOut
-from app.services import head_to_head, season_results
+from app.services import cache, head_to_head, season_results
 from app.timeutil import utcnow
 
 LEAGUE = LeagueORM(
@@ -138,4 +142,65 @@ async def test_record_skips_scoreless_games(monkeypatch: pytest.MonkeyPatch) -> 
         monkeypatch,
         {year: [_meeting("espn:m1", us_home=True, us_score=None, them_score=None)]},
     )
+    assert await head_to_head.build_record(LEAGUE, TEAM, "Tidewater FC") is None
+
+
+def _season_final(season: int, us_score: int, them_score: int) -> Game:
+    """The one meeting of a season, as the season archive returns it."""
+    game_id = f"espn:{season}"
+    return Game(
+        id=game_id,
+        league_id=LEAGUE.id,
+        home_name=TEAM.name,
+        away_name="Tidewater FC",
+        start_time=datetime(season, 3, 1, tzinfo=timezone.utc),
+        home_team_id=TEAM.id,
+        state=GameState(
+            game_id=game_id, phase=GamePhase.FINAL, home_score=us_score, away_score=them_score
+        ),
+    )
+
+
+async def test_record_in_an_espn_outage_counts_only_the_seasons_still_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A documented limit, pinned so the contract and the code cannot drift
+    (CONTRACTS, *Data freshness* → Known limits).
+
+    The record is tallied from five cached team-seasons, and a season that
+    could not be fetched reads the same as one with no meetings.  So in an
+    ESPN outage the record does not go away with the other ESPN sections:
+    it SHRINKS, as this year's key and last year's (6 h) run out ahead of
+    the three older ones (7 d), and is still reported as five seasons.  The
+    real season cache runs here, on a clock moved by hand, so the TTLs are
+    the code's own.
+    """
+    year = utcnow().year
+    scores = {year: (3, 0), year - 1: (2, 1), year - 2: (0, 1), year - 3: (1, 1), year - 4: (0, 2)}
+    clock = [1_800_000_000.0]
+    monkeypatch.setattr(cache, "_now", lambda: clock[0])
+    espn_up = True
+
+    async def fake_fetch(league: object, team: object, season: int) -> list[Game]:
+        if not espn_up:
+            raise espn_history.EspnHistoryError([])
+        return [_season_final(season, *scores[season])]
+
+    monkeypatch.setattr(espn_history, "fetch_season_results", fake_fetch)
+
+    whole = await head_to_head.build_record(LEAGUE, TEAM, "Tidewater FC")
+    assert whole is not None
+    assert (whole.wins, whole.draws, whole.losses) == (2, 1, 2)
+
+    # ESPN goes down, and the two short-lived keys run out.
+    espn_up = False
+    clock[0] += 6 * 3600 + 1
+    partial = await head_to_head.build_record(LEAGUE, TEAM, "Tidewater FC")
+    assert partial is not None
+    assert (partial.wins, partial.draws, partial.losses) == (0, 1, 2)
+    assert [game.id for game in partial.meetings] == [f"espn:{year - n}" for n in (2, 3, 4)]
+    assert partial.seasons == head_to_head.SEASONS_BACK  # the heading still says five
+
+    # Only once no cached season holds a meeting is there no record at all.
+    clock[0] += 7 * 24 * 3600
     assert await head_to_head.build_record(LEAGUE, TEAM, "Tidewater FC") is None

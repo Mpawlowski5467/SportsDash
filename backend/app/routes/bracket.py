@@ -5,7 +5,11 @@ serves the US leagues' best-of-N playoff series from ESPN
 (``espn_playoffs``), grouped into rounds.  Returns empty rounds when the
 league isn't a supported sport or isn't currently in its playoffs (e.g. MLB
 in June) — the frontend shows a clean "no active bracket" state then.
-Cached in Redis since playoff series change only between games.
+Cached (``services/cache``) since playoff series change only between games.
+
+A failed ESPN fetch is not "no playoffs": with nothing cached it answers
+503, so a refresh that lands in an outage leaves the bracket already on
+screen alone instead of replacing it with the off-season state.
 """
 
 from __future__ import annotations
@@ -48,7 +52,12 @@ async def bracket(league_id: str, session: AsyncSession = Depends(get_session)) 
     if cached is not None:
         return BracketOut(**cached)
 
-    rounds = await espn_playoffs.fetch_playoff_bracket(league.provider_key, sport)
+    try:
+        rounds = await espn_playoffs.fetch_playoff_bracket(league.provider_key, sport)
+    except espn_playoffs.EspnPlayoffsError:
+        # Already logged by the provider.  Nothing is cached, so the next
+        # request asks ESPN again.
+        raise HTTPException(status_code=503, detail="Upstream provider unavailable") from None
     result = BracketOut(
         league_id=league.id,
         league_name=league.name,
@@ -76,8 +85,9 @@ async def bracket(league_id: str, session: AsyncSession = Depends(get_session)) 
             for rnd in rounds
         ],
     )
-    # Only cache a non-empty bracket; an empty result may just be a transient
-    # fetch miss and should be retried on the next request.
+    # Only cache a non-empty bracket.  An empty one is ESPN saying no series
+    # are being played (a failed fetch raised above); it stays uncached so the
+    # first series of a postseason shows on the next request, not a TTL later.
     if result.rounds:
         await cache.cache_set_json(cache_key, result.model_dump(), _CACHE_TTL_SECONDS)
     return result

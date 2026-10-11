@@ -82,3 +82,23 @@ async def test_leaders_include_provider_headshots_and_skip_bad_records(monkeypat
     rows = await espn_leaders.fetch_league_leaders("basketball/harbor", Sport.BASKETBALL)
     assert len(rows) == 1
     assert rows[0].photo_url == "https://img.example/rowan.png"
+
+
+async def test_leaders_fetch_failure_raises_instead_of_reading_as_empty(monkeypatch):
+    """``[]`` is kept for a feed that answered with nothing; one that cannot
+    be fetched is a typed error, so the route can tell an outage apart."""
+    answers = [
+        httpx.Response(503, text="feed down"),
+        httpx.Response(200, json={"categories": [], "athletes": []}),
+    ]
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(
+        espn_leaders.httpx,
+        "AsyncClient",
+        lambda **kwargs: client_type(
+            **kwargs, transport=httpx.MockTransport(lambda req: answers.pop(0))
+        ),
+    )
+    with pytest.raises(espn_leaders.EspnLeadersError):
+        await espn_leaders.fetch_league_leaders("basketball/harbor", Sport.BASKETBALL)
+    assert await espn_leaders.fetch_league_leaders("basketball/harbor", Sport.BASKETBALL) == []
