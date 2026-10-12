@@ -1,333 +1,473 @@
-import { withAlpha } from "../lib/color";
-import { useMemo, useState, type ReactNode } from "react";
-import { useNews, useRefreshNews, useTeams } from "../hooks";
-import { relativeTime } from "../lib/time";
-import type { League, NewsItem, NewsScope, Team } from "../types";
-import NewsDetailPanel from "../components/NewsDetailPanel";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+import { Button, Loading, Notice, RefreshIcon } from "../components/bs";
+import { useManageTeams } from "../components/ManageTeamsContext";
+import { useIsActiveTab } from "../components/NavigateContext";
+import NewsDetailPanel, { type NewsSource } from "../components/NewsDetailPanel";
 import StaleBanner from "../components/StaleBanner";
+import {
+  NEWS_REFETCH_MS,
+  useNewsFeeds,
+  useRefreshNews,
+  useTeams,
+} from "../hooks";
+import { errorText } from "../lib/errorText";
+import { formatTime, localKeyFromDate } from "../lib/time";
+import { useNow } from "../lib/useNow";
+import type { NewsItem } from "../types";
+import ScopeFilter from "./news/ScopeFilter";
+import StoryList from "./news/StoryList";
+import TopStory from "./news/TopStory";
+import {
+  ALL_KEY,
+  FEED_REQUEST,
+  feedOf,
+  feedOverdue,
+  filterEntries,
+  filterKind,
+  markFor,
+  moreNote,
+  quietCaveat,
+  quietEntries,
+  quietHeadline,
+  refreshFailedLine,
+  refreshLineSpent,
+  refreshedLine,
+  scopeCount,
+  topNote,
+  type Feed,
+  type FilterEntry,
+  type ScopeCount,
+} from "./news/model";
 
-/** What a news card shows for its source: a followed team or a competition. */
-interface NewsBadge {
-  name: string; // full display name (team or competition)
-  label: string; // short code for the corner chip
-  color: string | null; // team color; null for competitions (no per-league color)
-}
+/** How often the "37m ago" beside the top story is worked out again. */
+const AGE_TICK_MS = 60_000;
 
-/** Short uppercase code for a competition badge, e.g. "FIFA World Cup" → "FWC". */
-function leagueCode(name: string): string {
-  const words = name.split(/\s+/).filter(Boolean);
-  if (words.length <= 1) return (words[0] ?? "").slice(0, 3).toUpperCase();
-  return words
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 3)
-    .toUpperCase();
-}
+/**
+ * What the last press of Refresh came to: which filter it was a refresh
+ * of, and the viewer's day it finished on (the line gives a time of day,
+ * which means nothing once the day has changed). `seq` counts results, so
+ * a second failure is a new alert and is read out again.
+ */
+type RefreshNote = { seq: number; scope: FilterEntry; day: string } & (
+  | { kind: "done"; at: string; inserted: number }
+  | { kind: "failed"; detail: string }
+);
 
-/** Resolve a news item to its badge (team takes precedence over competition). */
-function badgeFor(
-  item: NewsItem,
-  teamsById: Record<string, Team>,
-  leaguesById: Record<string, League>,
-): NewsBadge {
-  if (item.team_id) {
-    const team = teamsById[item.team_id];
-    if (team)
-      return { name: team.name, label: team.abbreviation, color: team.color };
-  }
-  if (item.league_id) {
-    const league = leaguesById[item.league_id];
-    if (league)
-      return { name: league.name, label: leagueCode(league.name), color: null };
-  }
-  const fallback = item.team_id ?? item.league_id ?? "News";
-  return { name: fallback, label: fallback.slice(0, 3).toUpperCase(), color: null };
-}
-
-/** Convert a hex color to an rgba() string at the given alpha. */
-
-const PILL_ACTIVE =
-  "flex items-center gap-1.5 rounded-full border border-zinc-600 bg-zinc-800 px-3 py-1 text-sm font-medium text-zinc-100";
-const PILL_INACTIVE =
-  "flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-sm text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-200";
-
-function NewsPills({
-  teams,
-  competitions,
-  scope,
-  onSelect,
-}: {
-  teams: Team[];
-  competitions: League[];
-  scope: NewsScope | undefined;
-  onSelect: (scope: NewsScope | undefined) => void;
-}) {
+/** The page's name, beside the controls that choose what is on it. */
+function PageHead({ children }: { children?: ReactNode }) {
   return (
-    <div className="flex flex-wrap gap-2">
-      <button
-        type="button"
-        onClick={() => onSelect(undefined)}
-        className={scope === undefined ? PILL_ACTIVE : PILL_INACTIVE}
-      >
-        All
-      </button>
-      {teams.map((team) => {
-        const active = scope?.teamId === team.id;
-        return (
-          <button
-            key={`team:${team.id}`}
-            type="button"
-            onClick={() => onSelect({ teamId: team.id })}
-            className={active ? PILL_ACTIVE : PILL_INACTIVE}
-          >
-            <span
-              className="inline-block size-2 rounded-full"
-              style={{ backgroundColor: team.color ?? "#52525b" }}
-              aria-hidden
-            />
-            {team.name}
-          </button>
-        );
-      })}
-      {competitions.map((league) => {
-        const active = scope?.leagueId === league.id;
-        return (
-          <button
-            key={`league:${league.id}`}
-            type="button"
-            onClick={() => onSelect({ leagueId: league.id })}
-            className={active ? PILL_ACTIVE : PILL_INACTIVE}
-          >
-            <span
-              className="inline-block size-2 rounded-full border border-zinc-500"
-              aria-hidden
-            />
-            {league.name}
-          </button>
-        );
-      })}
-    </div>
+    <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-5 gap-y-1">
+        <h1 className="bs-title">News</h1>
+      </div>
+      {children}
+    </header>
   );
 }
 
-function NewsCard({
-  item,
-  badge,
-  onSelect,
-}: {
-  item: NewsItem;
-  badge: NewsBadge;
-  onSelect: (item: NewsItem) => void;
-}) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const showImage = item.image_url !== null && !imageFailed;
-  // Headline-led, not image-led: source and age sit in the gutter, the
-  // story gets the primary line, and the picture is demoted to a small
-  // trailing thumbnail. A card grid sized every story the same regardless
-  // of what it said.
+/** The shapes of the page while a payload is on its way. */
+function PageLoading({ label }: { label: string }) {
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(item)}
-      className="sd-row sd-hair group items-start py-5 text-left"
-    >
-      <span className="flex flex-col gap-1">
-        <span className="sd-meta truncate font-semibold text-zinc-400">
-          {item.source}
-        </span>
-        <span className="sd-figure text-[13px] text-zinc-500">
-          {item.published_at !== null
-            ? relativeTime(item.published_at)
-            : "recently"}
-        </span>
-        <span
-          className="sd-micro mt-0.5 truncate font-semibold"
-          title={badge.name}
-          style={{ color: badge.color ?? undefined }}
-        >
-          {badge.label}
-        </span>
-      </span>
-
-      <span className="flex min-w-0 flex-col gap-2">
-        <span className="sd-lede font-semibold text-balance text-zinc-100 group-hover:underline">
-          {item.title}
-        </span>
-        {item.summary !== null && (
-          <p className="sd-body line-clamp-2 text-pretty text-zinc-400">
-            {item.summary}
-          </p>
-        )}
-      </span>
-
-      {showImage ? (
-        <img
-          src={item.image_url ?? undefined}
-          alt=""
-          className="hidden h-20 w-32 shrink-0 rounded bg-zinc-800 object-cover sm:block"
-          onError={() => setImageFailed(true)}
-        />
-      ) : (
-        <span
-          aria-hidden="true"
-          className="hidden h-20 w-32 shrink-0 items-center justify-center rounded sm:flex"
-          style={{ backgroundColor: withAlpha(badge.color, 0.1) }}
-        >
-          <span
-            className="sd-figure text-xl font-bold"
-            style={{ color: withAlpha(badge.color, 0.5) }}
-          >
-            {badge.label}
-          </span>
-        </span>
-      )}
-    </button>
+    <Loading label={label} className="flex flex-col gap-7">
+      <div>
+        <div className="border-t-[3px] border-rule">
+          <div className="h-[2.125rem] w-28 bg-hair" />
+        </div>
+        <div className="h-64 border border-t-0 border-rule bg-tint sm:h-[21.25rem]" />
+      </div>
+      <div>
+        <div className="border-t-[3px] border-rule">
+          <div className="h-[2.125rem] w-36 bg-hair" />
+        </div>
+        <div className="border border-t-0 border-rule bg-tint">
+          {Array.from({ length: 5 }, (_, index) => (
+            <div
+              key={index}
+              className="h-[5.5rem] border-t border-hair first:border-t-0"
+            />
+          ))}
+        </div>
+      </div>
+    </Loading>
   );
 }
 
+/**
+ * Refresh: asks the server to collect new stories now, for the filter on
+ * screen. While it runs the button says so and its icon turns (only where
+ * motion is welcome); it stays focusable, so a keyboard user is not dropped
+ * to the top of the page when it finishes.
+ */
 function RefreshButton({
   busy,
+  tall,
   onClick,
 }: {
   busy: boolean;
+  /** Level with the row of segments (48px with its frame) beside it. */
+  tall: boolean;
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={busy}
-      aria-label="Refresh news"
-      className="flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100 disabled:cursor-default disabled:opacity-60"
+    <Button
+      aria-label={busy ? "Refreshing news" : "Refresh news"}
+      aria-disabled={busy || undefined}
+      onClick={busy ? undefined : onClick}
+      className={
+        // Wide enough for "Refreshing", so the button does not grow when
+        // pressed and push the filter beside it sideways.
+        "min-w-[9.25rem] flex-none gap-2 pl-3.5 pr-[1.125rem]" +
+        (tall ? " min-h-12" : "") +
+        (busy ? " cursor-progress" : "")
+      }
     >
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={`h-4 w-4 ${busy ? "animate-spin" : ""}`}
-        aria-hidden="true"
-      >
-        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-        <path d="M21 3v5h-5" />
-        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-        <path d="M3 21v-5h5" />
-      </svg>
-      {busy ? "Refreshing…" : "Refresh"}
-    </button>
+      <RefreshIcon spinning={busy} />
+      {busy ? "Refreshing" : "Refresh"}
+    </Button>
   );
 }
 
-export default function NewsView() {
-  const teamsQuery = useTeams();
-  const [scope, setScope] = useState<NewsScope | undefined>(undefined);
-  const [selected, setSelected] = useState<NewsItem | null>(null);
-  const newsQuery = useNews(scope);
-  const refresh = useRefreshNews(scope);
-
-  const teams = useMemo(() => teamsQuery.data?.teams ?? [], [teamsQuery.data?.teams]);
-  const leagues = useMemo(() => teamsQuery.data?.leagues ?? [], [teamsQuery.data?.leagues]);
-  // Whole-competition follows (e.g. World Cup) get their own pill — they have
-  // no team rows, so their news is keyed by league instead.
-  const competitions = useMemo(
-    () => leagues.filter((league) => league.follow_all),
-    [leagues],
+/**
+ * What the last refresh came to, in a line of its own under the page head.
+ * Under the head, not inside it: the head sets its controls on the title's
+ * foot, so a line added to them would lift Refresh from under the pointer
+ * that has just pressed it.
+ */
+function RefreshLine({
+  note,
+  onScreen,
+  listed,
+}: {
+  note: RefreshNote | null;
+  /** The filter on screen is the one that was refreshed. */
+  onScreen: boolean;
+  /** There are stories under the line. */
+  listed: boolean;
+}) {
+  if (note === null) return null;
+  if (note.kind === "failed") {
+    return (
+      <p
+        key={note.seq}
+        role="alert"
+        className="m-0 text-sm font-medium text-alert sm:text-right"
+      >
+        {refreshFailedLine(note.detail, listed)}
+      </p>
+    );
+  }
+  return (
+    <p key={note.seq} role="status" className="bs-note m-0 sm:text-right">
+      {refreshedLine(note.at, note.inserted, note.scope, onScreen)}
+    </p>
   );
-  const teamsById = useMemo(() => {
-    const map: Record<string, Team> = {};
-    for (const team of teams) map[team.id] = team;
-    return map;
-  }, [teams]);
-  const leaguesById = useMemo(() => {
-    const map: Record<string, League> = {};
-    for (const league of leagues) map[league.id] = league;
-    return map;
-  }, [leagues]);
+}
+
+/**
+ * The newest stories for everything followed: the newest one large, the
+ * rest in a list under it, and a filter to one team, athlete or competition
+ * at a time. A row opens the in-app reader; the arrows go to the source.
+ *
+ * Every filter has a feed of its own, asked for side by side. That is what
+ * lets each filter carry a true count (the unfiltered feed is only the
+ * newest fifty of everything, in which a busy team crowds the rest out),
+ * lets a follow be called quiet only when its own feed is empty, and makes
+ * a change of filter instant.
+ */
+export default function NewsView() {
+  const openManageTeams = useManageTeams();
+  const teamsQuery = useTeams();
+  const [chosen, setChosen] = useState<string>(ALL_KEY);
+  const [selected, setSelected] = useState<NewsItem | null>(null);
+  const [refreshNote, setRefreshNote] = useState<RefreshNote | null>(null);
+  const refreshSeq = useRef(0);
+  const showing = useIsActiveTab("news");
+  // "37m ago" is a function of the clock, not of a payload.
+  const now = useNow(AGE_TICK_MS);
+
+  const teams = teamsQuery.data?.teams;
+  const leagues = teamsQuery.data?.leagues;
+  const entries = useMemo(
+    () => filterEntries(teams ?? [], leagues ?? []),
+    [teams, leagues],
+  );
+  const scopes = useMemo(() => entries.map((entry) => entry.scope), [entries]);
+  // The five-minute reads run only while News is the tab on screen: the
+  // view stays mounted behind the others, and a round is a request per
+  // follow.
+  const queries = useNewsFeeds(scopes, FEED_REQUEST, showing);
+
+  // Back on screen (the kiosk rotation comes round every minute or so), a
+  // feed that missed its beat meanwhile is read at once. No dependency
+  // list: it has to see the feeds as they are now, and does nothing except
+  // on the render where the tab comes back.
+  const wasShowing = useRef(showing);
+  useEffect(() => {
+    const returned = showing && !wasShowing.current;
+    wasShowing.current = showing;
+    if (!returned) return;
+    const at = Date.now();
+    for (const query of queries) {
+      const readAt = Math.max(query.dataUpdatedAt, query.errorUpdatedAt);
+      if (!query.isFetching && feedOverdue(readAt, at, NEWS_REFETCH_MS)) {
+        void query.refetch();
+      }
+    }
+  });
+
+  // A filter whose follow has gone (unfollowed since) falls back to All.
+  const active = entries.find((entry) => entry.key === chosen) ?? entries[0];
+  const refresh = useRefreshNews(active.scope);
+
+  const feeds = new Map<string, Feed | null>();
+  entries.forEach((entry, index) => {
+    feeds.set(entry.key, feedOf(queries[index]?.data));
+  });
+  const allFeed = feeds.get(ALL_KEY) ?? null;
+  const counts = new Map<string, ScopeCount | null>();
+  for (const entry of entries) {
+    counts.set(entry.key, scopeCount(entry, feeds.get(entry.key) ?? null, allFeed));
+  }
+
+  const activeQuery = queries[entries.indexOf(active)];
+  const activeFeed = feeds.get(active.key) ?? null;
+  const answered = activeFeed !== null;
+
+  // While a newly chosen filter is still on its way, the list already on
+  // screen stays where it is, so the page does not drop to a skeleton and
+  // jump back. `heldKey` is the last filter whose stories were shown.
+  const [heldKey, setHeldKey] = useState<string>(ALL_KEY);
+  useEffect(() => {
+    if (answered) setHeldKey(active.key);
+  }, [answered, active.key]);
+  const held = entries.find((entry) => entry.key === heldKey);
+  const heldFeed = held === undefined ? null : (feeds.get(held.key) ?? null);
+  // An empty list is not held: "No stories for Bournemouth" under a
+  // pressed Chelsea, with nothing on the page loading, would read as
+  // Chelsea's answer.
+  const holding = !answered && heldFeed !== null && heldFeed.stories.length > 0;
+  const shown = answered ? active : holding ? held : undefined;
+  const shownFeed = answered ? activeFeed : holding ? heldFeed : null;
+  const waiting = !answered && shown !== undefined;
+
+  const selectedSource = useMemo<NewsSource | undefined>(() => {
+    if (selected === null) return undefined;
+    const mark = markFor(selected, entries, leagues ?? []);
+    return {
+      name: mark.name,
+      color: mark.color,
+      abbreviation: mark.abbreviation,
+      context: mark.context,
+    };
+  }, [selected, entries, leagues]);
 
   if (teamsQuery.isError && !teamsQuery.data) {
     return (
-      <p className="text-sm text-red-400">
-        Failed to load teams: {teamsQuery.error?.message ?? "unknown error"}
-      </p>
+      <div className="flex flex-col gap-7">
+        <PageHead />
+        <Notice
+          title="News"
+          alert
+          headline="Couldn’t load teams"
+          action={{ label: "Retry", onClick: () => void teamsQuery.refetch() }}
+        >
+          {`The request failed${errorText(teamsQuery.error)}.`}
+        </Notice>
+      </div>
     );
   }
-  if (!teamsQuery.data) {
-    return <p className="text-sm text-zinc-500">Loading teams…</p>;
+  if (!teamsQuery.data || leagues === undefined) {
+    return (
+      <div className="flex flex-col gap-7">
+        <PageHead />
+        <PageLoading label="Loading teams" />
+      </div>
+    );
+  }
+  if (entries.length === 1) {
+    return (
+      <div className="flex flex-col gap-7">
+        <PageHead />
+        <Notice
+          title="News"
+          headline="Nothing followed yet"
+          action={{ label: "Manage teams", onClick: openManageTeams }}
+        >
+          Follow a team, a player or a competition to see its stories here.
+        </Notice>
+      </div>
+    );
   }
 
-  const items = newsQuery.data;
-  const scopeName = scope?.teamId
-    ? teamsById[scope.teamId]?.name
-    : scope?.leagueId
-      ? leaguesById[scope.leagueId]?.name
-      : undefined;
+  const pickFilter = (key: string) => {
+    setChosen(key);
+    // The line under the controls is about the filter that was refreshed.
+    setRefreshNote(null);
+  };
+  const runRefresh = () => {
+    const scope = active;
+    // Which result this is, what it was a refresh of, and the day it came.
+    const made = (at: Date) => {
+      refreshSeq.current += 1;
+      return { seq: refreshSeq.current, scope, day: localKeyFromDate(at) };
+    };
+    refresh.mutate(undefined, {
+      onSuccess: (result) => {
+        const at = new Date();
+        setRefreshNote({
+          ...made(at),
+          kind: "done",
+          at: formatTime(at.toISOString()),
+          inserted: result.inserted,
+        });
+      },
+      onError: (error) =>
+        setRefreshNote({
+          ...made(new Date()),
+          kind: "failed",
+          detail: errorText(error),
+        }),
+    });
+  };
 
-  // A failed poll must not blank a grid that already loaded — the full-width
-  // error is for "nothing to show at all"; otherwise the cached articles stay
-  // up behind a stale banner (same policy as TodayView).
+  const scopeName = active.kind === "all" ? null : active.name;
+  const stale = Boolean(activeQuery?.isError) && answered;
+  // The last result stays in its line while the next refresh runs (the
+  // button says that one is running): taking it out for those seconds
+  // pulled the page up under the reader and pushed it down again. It goes
+  // when the day changes, since it gives only a time of day. And "3 new
+  // stories" is not said over a list that could not be read again
+  // afterwards: the banner says the stories on screen are the last ones
+  // loaded.
+  const refreshLine =
+    refreshNote === null ||
+    refreshLineSpent(refreshNote.day, localKeyFromDate(now)) ||
+    (stale && refreshNote.kind === "done")
+      ? null
+      : refreshNote;
+  let listed = false;
   let body: ReactNode;
-  if (newsQuery.isError && !items) {
+  if (activeQuery?.isError && !answered) {
     body = (
-      <p className="text-sm text-red-400">
-        Failed to load news: {newsQuery.error?.message ?? "unknown error"}
-      </p>
+      <Notice
+        title="News"
+        alert
+        headline="Couldn’t load news"
+        action={{ label: "Retry", onClick: () => void activeQuery.refetch() }}
+      >
+        {`The request failed${errorText(activeQuery.error)}.`}
+      </Notice>
     );
-  } else if (!items) {
-    body = <p className="text-sm text-zinc-500">Loading news…</p>;
-  } else if (items.length === 0) {
+  } else if (shown === undefined || shownFeed === null) {
     body = (
-      <p className="text-sm text-zinc-500">
-        No news yet{scopeName ? ` for ${scopeName}` : ""}. Hit Refresh to pull
-        the latest, or wait for the next scheduled refresh.
-      </p>
+      <PageLoading
+        label={
+          active.kind === "all"
+            ? "Loading news"
+            : `Loading stories for ${active.name}`
+        }
+      />
+    );
+  } else if (shownFeed.stories.length === 0) {
+    const caveat = quietCaveat(shown, entries, leagues, counts);
+    body = (
+      <Notice
+        title="News"
+        headline={
+          shown.kind === "all"
+            ? "No stories yet"
+            : quietHeadline(shown, entries, leagues, counts)
+        }
+      >
+        {(shown.kind === "all"
+          ? "Nothing has been collected yet for what you follow. "
+          : caveat === null
+            ? ""
+            : `${caveat} `) +
+          "Refresh collects the latest now; otherwise new stories arrive with the next scheduled collection."}
+      </Notice>
     );
   } else {
+    const [top, ...rest] = shownFeed.stories;
+    const minutes = Math.round(NEWS_REFETCH_MS / 60_000);
+    listed = true;
     body = (
-      <div className="flex flex-col">
-        {items.map((item) => (
-          <NewsCard
-            key={item.id}
-            item={item}
-            badge={badgeFor(item, teamsById, leaguesById)}
-            onSelect={setSelected}
-          />
-        ))}
-      </div>
+      <>
+        <TopStory
+          story={top}
+          mark={markFor(top, entries, leagues)}
+          note={
+            waiting ? `Loading stories for ${active.name}` : topNote(shown, entries)
+          }
+          aside={`Checks for new stories every ${minutes} minutes`}
+          busy={waiting}
+        />
+        <StoryList
+          stories={rest}
+          entries={entries}
+          leagues={leagues}
+          quiet={shown.kind === "all" && !waiting ? quietEntries(entries, feeds) : []}
+          counts={counts}
+          note={moreNote(shownFeed)}
+          busy={waiting}
+          onOpen={setSelected}
+        />
+      </>
     );
   }
 
-  const selectedBadge = selected
-    ? badgeFor(selected, teamsById, leaguesById)
-    : undefined;
-
   return (
-    <div className="sd-measure flex flex-col gap-5 py-2">
-      <div className="sd-rule flex items-start justify-between gap-3 pb-4">
-        <NewsPills
-          teams={teams}
-          competitions={competitions}
-          scope={scope}
-          onSelect={setScope}
+    <div className="flex flex-col gap-7">
+      {stale && (
+        <StaleBanner
+          message={
+            scopeName === null
+              ? "Connection lost — showing the last loaded stories."
+              : `Connection lost — showing the last loaded stories for ${scopeName}.`
+          }
+          onRetry={() => void activeQuery?.refetch()}
         />
-        <RefreshButton busy={refresh.isPending} onClick={() => refresh.mutate()} />
+      )}
+
+      <div className="flex flex-col gap-2.5">
+        <PageHead>
+          {/* From a tablet up Refresh stays beside the filter, which keeps
+              to its own share of the row (scrolling inside it, or from a
+              wide window wrapping); on a phone the filter is a strip of
+              its own and Refresh goes under it. */}
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3 sm:flex-nowrap">
+            <ScopeFilter
+              entries={entries}
+              counts={counts}
+              value={active.key}
+              onChange={pickFilter}
+            />
+            <RefreshButton
+              busy={refresh.isPending}
+              tall={filterKind(entries) === "segments"}
+              onClick={runRefresh}
+            />
+          </div>
+        </PageHead>
+        <RefreshLine
+          note={refreshLine}
+          onScreen={refreshLine?.scope.key === active.key}
+          listed={listed}
+        />
       </div>
-      {refresh.isError && (
-        <p className="text-sm text-red-400">
-          Refresh failed: {refresh.error?.message ?? "unknown error"}
+
+      {waiting && (
+        <p role="status" className="sr-only">
+          {`Loading stories for ${active.name}`}
         </p>
       )}
-      {newsQuery.isError && items && (
-        <StaleBanner
-          message="Connection lost — showing the last loaded articles."
-          onRetry={() => void newsQuery.refetch()}
-        />
-      )}
+
       {body}
+
       <NewsDetailPanel
         item={selected}
-        source={selectedBadge}
+        source={selectedSource}
         onClose={() => setSelected(null)}
       />
     </div>

@@ -1,517 +1,285 @@
-import { withAlpha } from "../lib/color";
-import { useMemo, useState, type ReactNode } from "react";
-import { useSetupLeagues, useStandings, useTeams } from "../hooks";
-import { formatDateTime } from "../lib/time";
-import type { Sport, StandingRow } from "../types";
-import TeamLogo from "../components/TeamLogo";
-import Select, { type SelectOption } from "../components/Select";
-import { useOpenNation, useOpenTeam } from "../components/TeamDetailPanel";
-import { useManageTeams } from "../components/ManageTeamsContext";
+import { useCallback, type ReactNode } from "react";
+
+import { FollowMark, Loading, Notice, Segmented, Tag } from "../components/bs";
 import StaleBanner from "../components/StaleBanner";
-import { CURRENT_SEASON, seasonOptions, supportsArchives } from "../lib/seasons";
+import { useTheme } from "../components/ThemeProvider";
+import { useStandings, useTeams } from "../hooks";
+import { errorText } from "../lib/errorText";
+import { formatDateTime } from "../lib/time";
+import type { League, StandingRow } from "../types";
+import LeadersBlock from "./league/LeadersBlock";
+import {
+  expectsOneTable,
+  hasTeamTable,
+  isRankingTable,
+  layoutStandings,
+} from "./league/model";
+import { Controls, useTeamLookup } from "./league/parts";
+import StandingsTable from "./league/StandingsTable";
+import TeamPanel from "./league/TeamPanel";
 
-/** Per-team display metadata pulled from the /teams payload, keyed by id. */
-interface TeamMeta {
-  logo_url: string | null;
-  abbreviation: string | null;
-  color: string | null;
-}
-
-const FALLBACK_ACCENT = "#a1a1aa";
-
-/** Convert a hex color to an rgba() string at the given alpha. */
-/** ".667" style — three decimals, leading zero stripped. */
-function formatPct(pct: number | null): string {
-  if (pct === null) return "—";
-  const fixed = pct.toFixed(3);
-  return fixed.startsWith("0") ? fixed.slice(1) : fixed;
-}
-
-function formatGamesBack(gb: number | null): string {
-  if (gb === null || gb === 0) return "—";
-  return Number.isInteger(gb) ? gb.toFixed(0) : gb.toFixed(1);
-}
-
-function formatGoalDiff(gd: number | null): string {
-  if (gd === null) return "—";
-  return gd > 0 ? `+${gd}` : String(gd);
-}
-
-// Numeric columns are FIXED width and the team column takes the slack, so
-// a row can be spanned in one eye movement. They used to share the table's
-// full width evenly, which on a wide monitor left a dead gap between the
-// club and its record.
 /**
- * Whether a provider group label is just the league's own name again.
+ * The row of tables: equal columns, as many as fit at 352px or more each
+ * (three across at 1440px, as mocked). A grid, so a table left alone on the
+ * last line is as wide as the ones above it and their columns line up.
+ */
+const TABLES =
+  "grid grid-cols-[repeat(auto-fill,minmax(min(100%,22rem),1fr))] items-stretch gap-7";
+/** A table in that row: capped at 560px where a column is wider than that. */
+const TABLE = "max-w-[35rem]";
+/**
+ * The one table of a single-table league, with the leaders and the team
+ * panel beside it: it grows to its cap first, so its names have the room
+ * before the wider column takes the rest.
+ */
+const TABLE_BESIDE = "max-w-[35rem] flex-[2_1_25.875rem]";
+
+/**
+ * The Standings sub-view, and the page the mockup draws: the league's
+ * tables (one conference at a time where there are divisions), the top of
+ * its leaders board, and the followed team's panel.
  *
- * ESPN labels an ungrouped table with a restatement of the competition
- * ("2026-27 English Premier League" under a league already titled "Premier
- * League"), which stacked three near-identical headings on the view. A real
- * grouping ("Eastern Conference", "AL West") is not an echo and still
- * renders.
+ * A past season shows its tables only: the leaders board and the team's
+ * fixtures and results exist for the current season alone.
  */
-function seasonLabel(season: string): string {
-  // Providers ship the season as a sentence ("2026-27 English Premier
-  // League"), which restates the title it sits beside. Keep the part that
-  // is actually the season; fall back to the whole string if it has no
-  // leading year.
-  const match = /^\d{4}(?:[-/]\d{2,4})?/.exec(season.trim());
-  return match === null ? season : match[0];
-}
-
-function echoesLeagueName(group: string, league: string): boolean {
-  const norm = (value: string) => value.toLowerCase().replace(/[^a-z]+/g, " ").trim();
-  return norm(group).includes(norm(league));
-}
-
-const HEADER_CELL =
-  "sd-eyebrow sticky top-0 z-10 bg-zinc-950 px-2 py-2.5 text-zinc-500";
-const NUM_CELL =
-  "sd-figure w-14 px-2 py-2 text-right text-[15px] text-zinc-400";
-
-function StandingsRow({
-  row,
-  sport,
-  teamMeta,
-  leagueId,
+export default function StandingsView({
+  league,
+  seasonYear,
+  onCurrentSeason,
+  group,
+  onGroup,
+  teamId,
+  onTeam,
 }: {
-  row: StandingRow;
-  sport: Sport;
-  teamMeta: Record<string, TeamMeta>;
-  leagueId: string;
+  league: League;
+  /** The archive season picked, or undefined for the live table. */
+  seasonYear: number | undefined;
+  onCurrentSeason: () => void;
+  /** The conference picked, when the league has them. */
+  group: string | null;
+  onGroup: (group: string) => void;
+  /** The followed team picked for the panel, when there are several. */
+  teamId: string | null;
+  onTeam: (teamId: string) => void;
 }) {
-  const openTeam = useOpenTeam();
-  const openNation = useOpenNation();
-  // Tennis/MMA rankings are individuals — no team/nation page to open.
-  const clickable = sport !== "tennis" && sport !== "mma";
-  const followed = row.team_id !== null;
-  const meta = followed ? teamMeta[row.team_id as string] : undefined;
-  const accent = meta?.color ?? FALLBACK_ACCENT;
-  // Tennis/MMA rankings list players/fighters by name — no crest to show.
-  const showLogo = sport !== "tennis" && sport !== "mma";
-  // A followed team (carries an internal id) opens its detail overlay.
-  const teamCell = (
-    <>
-      {showLogo && (
-        <TeamLogo
-          // Prefer the per-row crest the API now sends for every team;
-          // fall back to a followed team's /teams metadata.
-          logoUrl={row.logo_url ?? meta?.logo_url}
-          name={row.team_name}
-          abbreviation={row.abbreviation ?? meta?.abbreviation}
-          color={row.color ?? meta?.color}
-          size="sm"
-        />
-      )}
-      <span
-        className={followed ? "font-semibold text-zinc-100" : "text-zinc-300"}
-      >
-        {row.team_name}
-      </span>
-    </>
-  );
-  return (
-    <tr
-      className="sd-stagger-item"
-      style={
-        followed
-          ? {
-              backgroundColor: withAlpha(accent, 0.08),
-              borderLeft: `2px solid ${accent}`,
-            }
-          : { borderLeft: "2px solid transparent" }
-      }
-    >
-      <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">
-        {row.rank}
-      </td>
-      <td className="px-2 py-1.5">
-        {clickable ? (
-          <button
-            type="button"
-            onClick={() =>
-              followed
-                ? openTeam(row.team_id as string)
-                : openNation(leagueId, row.team_name)
-            }
-            className="flex items-center gap-2 text-left transition-colors hover:text-amber-400"
-            title={`View ${row.team_name}`}
-          >
-            {teamCell}
-          </button>
-        ) : (
-          <span className="flex items-center gap-2">{teamCell}</span>
-        )}
-      </td>
-      {sport === "tennis" ? (
-        <td className={`${NUM_CELL} font-medium text-zinc-100`}>
-          {row.points ?? "—"}
-        </td>
-      ) : (
-        <>
-          <td className={NUM_CELL}>{row.wins}</td>
-          {sport === "soccer" ? (
-        <>
-          <td className={NUM_CELL}>{row.draws ?? "—"}</td>
-          <td className={NUM_CELL}>{row.losses}</td>
-          <td className={NUM_CELL}>{formatGoalDiff(row.goal_diff)}</td>
-          <td className={`${NUM_CELL} font-medium text-zinc-100`}>
-            {row.points ?? "—"}
-          </td>
-        </>
-      ) : sport === "hockey" ? (
-        <>
-          <td className={NUM_CELL}>{row.losses}</td>
-          <td className={NUM_CELL}>{row.ot_losses ?? "—"}</td>
-          <td className={`${NUM_CELL} font-medium text-zinc-100`}>
-            {row.points ?? "—"}
-          </td>
-        </>
-      ) : sport === "football" ? (
-        <>
-          <td className={NUM_CELL}>{row.losses}</td>
-          <td className={NUM_CELL}>{row.draws ?? "—"}</td>
-          <td className={NUM_CELL}>{formatPct(row.win_pct)}</td>
-        </>
-      ) : sport === "volleyball" ? (
-        <>
-          <td className={NUM_CELL}>{row.losses}</td>
-          <td className={`${NUM_CELL} font-medium text-zinc-100`}>
-            {row.points ?? "—"}
-          </td>
-        </>
-      ) : (
-        <>
-          <td className={NUM_CELL}>{row.losses}</td>
-          <td className={NUM_CELL}>{formatPct(row.win_pct)}</td>
-          <td className={NUM_CELL}>{formatGamesBack(row.games_back)}</td>
-        </>
-      )}
-        </>
-      )}
-    </tr>
-  );
-}
-
-function StandingsTable({
-  rows,
-  sport,
-  teamMeta,
-  leagueId,
-}: {
-  rows: StandingRow[];
-  sport: Sport;
-  teamMeta: Record<string, TeamMeta>;
-  leagueId: string;
-}) {
-  return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr>
-          <th className={`${HEADER_CELL} w-10 text-right`}>#</th>
-          <th className={`${HEADER_CELL} text-left`}>
-            {sport === "tennis" ? "Player" : "Team"}
-          </th>
-          {sport === "tennis" ? (
-            <th className={`${HEADER_CELL} text-right`}>Pts</th>
-          ) : (
-            <>
-              <th className={`${HEADER_CELL} text-right`}>W</th>
-              {sport === "soccer" ? (
-                <>
-                  <th className={`${HEADER_CELL} text-right`}>D</th>
-                  <th className={`${HEADER_CELL} text-right`}>L</th>
-                  <th className={`${HEADER_CELL} text-right`}>GD</th>
-                  <th className={`${HEADER_CELL} text-right`}>Pts</th>
-                </>
-              ) : sport === "hockey" ? (
-                <>
-                  <th className={`${HEADER_CELL} text-right`}>L</th>
-                  <th className={`${HEADER_CELL} text-right`}>OTL</th>
-                  <th className={`${HEADER_CELL} text-right`}>PTS</th>
-                </>
-              ) : sport === "football" ? (
-                <>
-                  <th className={`${HEADER_CELL} text-right`}>L</th>
-                  <th className={`${HEADER_CELL} text-right`}>T</th>
-                  <th className={`${HEADER_CELL} text-right`}>PCT</th>
-                </>
-              ) : sport === "volleyball" ? (
-                <>
-                  <th className={`${HEADER_CELL} text-right`}>L</th>
-                  <th className={`${HEADER_CELL} text-right`}>Pts</th>
-                </>
-              ) : (
-                <>
-                  <th className={`${HEADER_CELL} text-right`}>L</th>
-                  <th className={`${HEADER_CELL} text-right`}>PCT</th>
-                  <th className={`${HEADER_CELL} text-right`}>GB</th>
-                </>
-              )}
-            </>
-          )}
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-zinc-800">
-        {rows.map((row) => (
-          <StandingsRow
-            key={`${row.rank}-${row.team_name}`}
-            row={row}
-            sport={sport}
-            teamMeta={teamMeta}
-            leagueId={leagueId}
-          />
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-interface Subgroup {
-  name: string | null;
-  rows: StandingRow[];
-}
-interface Group {
-  name: string | null;
-  // Whether ANY row in this group carries a division (subgroup). When false the
-  // group renders as one flat table; when true it splits into per-division
-  // mini-tables.
-  nested: boolean;
-  subgroups: Subgroup[];
-}
-
-/**
- * Bucket rows by `group`, then by `subgroup` within each group — preserving
- * first-seen order from the API at both levels. A group is `nested` only when
- * at least one of its rows has a non-null subgroup; otherwise its single
- * subgroup (keyed null) renders as one flat table (today's behavior).
- */
-function groupStandings(rows: StandingRow[]): Group[] {
-  const byGroup = new Map<string | null, Map<string | null, StandingRow[]>>();
-  for (const row of rows) {
-    let subs = byGroup.get(row.group);
-    if (subs === undefined) {
-      subs = new Map();
-      byGroup.set(row.group, subs);
-    }
-    const bucket = subs.get(row.subgroup);
-    if (bucket !== undefined) bucket.push(row);
-    else subs.set(row.subgroup, [row]);
-  }
-  return [...byGroup.entries()].map(([name, subs]) => ({
-    name,
-    nested: [...subs.keys()].some((sub) => sub !== null),
-    subgroups: [...subs.entries()].map(([subName, subRows]) => ({
-      name: subName,
-      rows: subRows,
-    })),
-  }));
-}
-
-export default function StandingsView() {
-  const openManageTeams = useManageTeams();
   const teamsQuery = useTeams();
-  const setupLeaguesQuery = useSetupLeagues();
-  const [selected, setSelected] = useState<string | undefined>(undefined);
+  const standingsQuery = useStandings(league.id, seasonYear);
+  // The panel's record and place are the live table's, whatever is shown.
+  const liveStandings = useStandings(league.id).data;
+  const lookup = useTeamLookup(league);
+  const { favoriteTeam } = useTheme();
 
-  const leagues = useMemo(() => teamsQuery.data?.leagues ?? [], [teamsQuery.data?.leagues]);
-  // Ignore a selection that no longer exists — re-running setup replaces
-  // the followed leagues, which would leave `selected` pointing at a 404.
-  const leagueId = leagues.some((league) => league.id === selected)
-    ? selected
-    : leagues[0]?.id;
-  const league = leagues.find((entry) => entry.id === leagueId);
-  // Past-season archive picker (espn team sports only).
-  const [seasonSel, setSeasonSel] = useState<string>(CURRENT_SEASON);
-  const archives = supportsArchives(league);
-  const seasonYear =
-    archives && seasonSel !== CURRENT_SEASON ? Number(seasonSel) : undefined;
-  const standingsQuery = useStandings(leagueId, seasonYear);
-
-  // League logos for the selector (the /teams rows don't carry one).
-  const leagueOptions: SelectOption[] = useMemo(() => {
-    const logoById: Record<string, string | null> = {};
-    for (const cat of setupLeaguesQuery.data?.leagues ?? []) {
-      logoById[cat.id] = cat.logo_url;
-    }
-    return leagues.map((league) => ({
-      id: league.id,
-      label: league.name,
-      logoUrl: logoById[league.id],
-    }));
-  }, [leagues, setupLeaguesQuery.data]);
-
-  const teamMeta = useMemo(() => {
-    const map: Record<string, TeamMeta> = {};
-    for (const team of teamsQuery.data?.teams ?? []) {
-      map[team.id] = {
-        logo_url: team.logo_url,
-        abbreviation: team.abbreviation,
-        color: team.color,
-      };
-    }
-    return map;
-  }, [teamsQuery.data]);
-
-  if (teamsQuery.isError && !teamsQuery.data) {
-    return (
-      <p className="text-sm text-red-400">
-        Failed to load leagues: {teamsQuery.error?.message ?? "unknown error"}
-      </p>
-    );
-  }
-  if (!teamsQuery.data) {
-    return <p className="text-sm text-zinc-500">Loading leagues…</p>;
-  }
-  if (leagues.length === 0) {
-    return (
-      <div className="flex flex-col items-start gap-3">
-        <p className="text-sm text-zinc-500">No leagues followed yet — follow a league to see its standings here.</p>
-        <button
-          type="button"
-          onClick={openManageTeams}
-          className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
-        >
-          Manage teams
-        </button>
-      </div>
-    );
-  }
+  const teams = (teamsQuery.data?.teams ?? []).filter(
+    (team) => team.league_id === league.id,
+  );
+  // A past season's rows carry no followed-team id, so a row is also
+  // matched to a followed team by name.
+  const followedId = useCallback(
+    (row: StandingRow): string | null =>
+      row.team_id ??
+      (teamsQuery.data?.teams ?? []).find(
+        (team) => team.league_id === league.id && team.name === row.team_name,
+      )?.id ??
+      null,
+    [teamsQuery.data, league.id],
+  );
 
   const standings = standingsQuery.data;
+  const live = seasonYear === undefined;
+  const ranking = isRankingTable(league.sport);
 
-  // Only replace the table when there is nothing cached to show; a failed
-  // refetch keeps the last table up behind a stale banner (see TodayView).
+  const shownTeam =
+    teams.find((team) => team.id === teamId) ??
+    teams.find((team) => team.id === favoriteTeam?.id) ??
+    teams[0];
+
+  // The two blocks beside (or under) the tables. `sized` gives them the
+  // mocked widths in a row; stacked in a column they take its width.
+  const leaders = (sized: boolean) =>
+    live ? (
+      <LeadersBlock
+        league={league}
+        lookup={lookup}
+        className={sized ? "flex-[999_1_35rem]" : undefined}
+      />
+    ) : null;
+  const panel = (sized: boolean) =>
+    live && shownTeam !== undefined && hasTeamTable(league.sport) ? (
+      <TeamPanel
+        league={league}
+        teams={teams}
+        teamId={shownTeam.id}
+        onTeam={onTeam}
+        standings={liveStandings}
+        lookup={lookup}
+        className={sized ? "flex-[1_1_27.5rem]" : undefined}
+      />
+    ) : null;
+  /** The mocked second row: the leaders wide, the team's panel beside them. */
+  const below = (
+    <div className="flex flex-wrap items-stretch gap-7 empty:hidden">
+      {leaders(true)}
+      {panel(true)}
+    </div>
+  );
+  /**
+   * One table (a single-table league): the leaders and the team's panel
+   * stand beside it instead of under it, so a twenty-row table does not
+   * leave the rest of the row empty.
+   */
+  const beside = (table: ReactNode) => (
+    <div className="flex flex-wrap items-start gap-7">
+      {table}
+      {/* The basis is the least the two blocks read well at (the team
+          panel's mocked 440px); a wider one would drop the column under
+          the table on a tablet and leave the table beside nothing. */}
+      <div className="flex min-w-0 flex-[3_1_27.5rem] flex-col gap-7 empty:hidden">
+        {leaders(false)}
+        {panel(false)}
+      </div>
+    </div>
+  );
+
+  let controls: ReactNode = null;
   let body: ReactNode;
+
+  // Only replace the tables when there is nothing cached to show; a failed
+  // refetch keeps the last table up behind a stale banner.
   if (standingsQuery.isError && !standings) {
-    body =
-      seasonYear !== undefined ? (
-        <p className="text-sm text-zinc-500">
-          The {seasonSel} season isn&apos;t available from the provider for
-          this league.
-        </p>
-      ) : (
-        <p className="text-sm text-red-400">
-          Failed to load standings:{" "}
-          {standingsQuery.error?.message ?? "unknown error"}
-        </p>
-      );
-  } else if (!standings) {
-    body = <p className="text-sm text-zinc-500">Loading standings…</p>;
-  } else if (standings.rows.length === 0) {
-    body =
-      standings.sport === "mma" ? (
-        <p className="text-sm text-zinc-500">
-          Rankings not available for this league.
-        </p>
-      ) : (
-        <p className="text-sm text-zinc-500">
-          No standings yet for {standings.league_name}. Standings refresh once a
-          day, so they will appear after the next daily refresh.
-        </p>
-      );
-  } else {
-    const groups = groupStandings(standings.rows);
-    // Flat single table only when every row is both group- and subgroup-less.
-    const grouped =
-      groups.some((group) => group.name !== null) ||
-      groups.some((group) => group.nested);
     body = (
       <>
-        <div className="sd-rule flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 pb-3">
-          <div className="flex items-baseline gap-3">
-            <h2 className="sd-title text-zinc-100">
-              {standings.league_name}
-            </h2>
-            {standings.is_stale && (
-              <span
-                title="The source hasn't updated recently — this may be out of date."
-                className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400"
-              >
-                Possibly out of date
-              </span>
-            )}
-          </div>
-          <span className="sd-meta text-zinc-500" title={standings.season}>
-            {seasonLabel(standings.season)}
-          </span>
-        </div>
-        {grouped ? (
-          groups.map((group) => (
-            <div
-              key={group.name ?? "ungrouped"}
-              className="flex flex-col gap-2"
-            >
-              {group.name !== null && !echoesLeagueName(group.name, standings.league_name) && (
-                <h3 className="sd-eyebrow text-zinc-500">{group.name}</h3>
-              )}
-              {group.nested ? (
-                group.subgroups.map((sub) => (
-                  <div
-                    key={sub.name ?? "undivided"}
-                    className="flex flex-col gap-1"
-                  >
-                    {sub.name !== null && (
-                      <h4 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-                        {sub.name}
-                      </h4>
-                    )}
-                    <StandingsTable
-                      rows={sub.rows}
-                      sport={standings.sport}
-                      teamMeta={teamMeta}
-                      leagueId={standings.league_id}
-                    />
-                  </div>
-                ))
-              ) : (
-                <StandingsTable
-                  rows={group.subgroups[0]?.rows ?? []}
-                  sport={standings.sport}
-                  teamMeta={teamMeta}
-                  leagueId={standings.league_id}
-                />
-              )}
-            </div>
-          ))
+        {seasonYear !== undefined ? (
+          <Notice
+            title="Standings"
+            headline={`No ${seasonYear} table`}
+            action={{ label: "Current season", onClick: onCurrentSeason }}
+          >
+            The {seasonYear} season isn&rsquo;t available from the provider
+            for this league.
+          </Notice>
         ) : (
-          <StandingsTable
-            rows={standings.rows}
-            sport={standings.sport}
-            teamMeta={teamMeta}
-            leagueId={standings.league_id}
-          />
+          <Notice
+            title="Standings"
+            alert
+            action={{
+              label: "Retry",
+              onClick: () => void standingsQuery.refetch(),
+            }}
+          >
+            Couldn&rsquo;t load the standings
+            {errorText(standingsQuery.error)}
+          </Notice>
         )}
-        {standings.fetched_at !== null && (
-          <p className="sd-micro text-zinc-500">
-            Updated {formatDateTime(standings.fetched_at)}
-          </p>
-        )}
+        {below}
       </>
     );
+  } else if (!standings) {
+    // The placeholder stands where the table most likely will, so the
+    // blocks around it stay put when the table arrives.
+    body = expectsOneTable(league.sport) ? (
+      beside(
+        <Loading label="Loading standings" rows={10} className={TABLE_BESIDE} />,
+      )
+    ) : (
+      <>
+        <div className={TABLES}>
+          <Loading label="Loading standings" rows={6} className={TABLE} />
+        </div>
+        {below}
+      </>
+    );
+  } else if (standings.rows.length === 0) {
+    body = (
+      <>
+        <Notice
+          title="Standings"
+          headline={
+            standings.sport === "mma" ? "No rankings" : "No standings yet"
+          }
+        >
+          {standings.sport === "mma"
+            ? "Rankings not available for this league."
+            : `No standings yet for ${standings.league_name}. Standings refresh once a day, so they will appear after the next daily refresh.`}
+        </Notice>
+        {below}
+      </>
+    );
+  } else {
+    const layout = layoutStandings(
+      standings,
+      group,
+      (row) => followedId(row) !== null,
+    );
+    const anyFollowed = standings.rows.some((row) => followedId(row) !== null);
+    const tagged = !ranking && layout.tables.some((table) => table.rows.length > 1);
+
+    controls = (
+      <>
+        {layout.groups.length > 1 && layout.active !== null && (
+          <Segmented
+            label="Conference"
+            value={layout.active}
+            onChange={onGroup}
+            options={layout.groups.map((name) => ({ value: name, label: name }))}
+            className="max-sm:w-full"
+          />
+        )}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm font-medium text-ink-2 sm:ml-auto">
+          {tagged && (
+            <span className="inline-flex items-center gap-2">
+              <Tag>Leader</Tag>
+              {layout.leaderWord}
+            </span>
+          )}
+          {anyFollowed && (
+            <span className="inline-flex items-center gap-2">
+              <FollowMark boxed label={null} />
+              {ranking ? "Player you follow" : "Team you follow"}
+            </span>
+          )}
+          {standings.is_stale && (
+            <Tag title="The source hasn't updated recently — this may be out of date.">
+              Possibly out of date
+            </Tag>
+          )}
+          {standings.fetched_at !== null && (
+            <span>Updated {formatDateTime(standings.fetched_at)}</span>
+          )}
+        </div>
+      </>
+    );
+
+    const table = (
+      data: (typeof layout.tables)[number],
+      className: string = TABLE,
+    ) => (
+      <StandingsTable
+        key={data.key}
+        table={data}
+        sport={standings.sport}
+        leagueId={standings.league_id}
+        followedId={followedId}
+        lookup={lookup}
+        className={className}
+      />
+    );
+
+    body =
+      layout.tables.length === 1 ? (
+        beside(table(layout.tables[0], TABLE_BESIDE))
+      ) : (
+        <>
+          <div className={TABLES}>
+            {layout.tables.map((data) => table(data))}
+          </div>
+          {below}
+        </>
+      );
   }
 
   return (
-    <div className="sd-measure flex flex-col gap-6 py-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Select
-          options={leagueOptions}
-          value={leagueId}
-          onChange={(id) => {
-            setSelected(id);
-            setSeasonSel(CURRENT_SEASON); // a new league starts on its live table
-          }}
-          ariaLabel="Choose league"
-        />
-        {archives && (
-          <Select
-            options={seasonOptions()}
-            value={seasonSel}
-            onChange={setSeasonSel}
-            ariaLabel="Choose season"
-          />
-        )}
-      </div>
+    <>
+      <Controls>{controls}</Controls>
       {standingsQuery.isError && standings && (
         <StaleBanner
           message="Connection lost — showing the last loaded table."
@@ -519,6 +287,6 @@ export default function StandingsView() {
         />
       )}
       {body}
-    </div>
+    </>
   );
 }

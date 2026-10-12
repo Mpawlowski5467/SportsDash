@@ -71,11 +71,16 @@ await safely("today", async () => {
   await shoot("today");
 });
 
-// Calendar — month grid (FullCalendar).
+// Calendar — the week of day columns (the default view). CalendarView marks
+// whichever of its three grids is up with data-calendar-grid="week" |
+// "month" | "agenda"; it is there once the range's games have loaded.
 await safely("calendar", async () => {
   await view(1200, 1320);
   await tab("Calendar");
-  await page.locator(".fc").first().waitFor({ timeout: 15000 });
+  await page
+    .locator('[data-calendar-grid="week"]')
+    .first()
+    .waitFor({ timeout: 15000 });
   await sleep(1800);
   await shoot("calendar");
 });
@@ -96,11 +101,11 @@ await safely("leaders", async () => {
   await shoot("leaders");
 });
 
-// Bracket — playoff series / knockout (BracketView's picker = "Choose bracket").
+// Bracket — playoff series / knockout (the page's one league picker).
 await safely("bracket", async () => {
   await subtab("Bracket");
   await sleep(400);
-  await pick("Choose bracket", LEAGUES.bracket);
+  await pick("Choose league", LEAGUES.bracket);
   await view(1200, 660);
   await sleep(800);
   await shoot("bracket");

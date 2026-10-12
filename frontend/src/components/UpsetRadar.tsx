@@ -1,88 +1,173 @@
-import { formatMoneyline } from "../lib/odds";
-import { detectSignal, type UpsetSignal } from "../lib/whyWatch";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import { useGameOdds } from "../hooks";
 import type { Game } from "../types";
+import {
+  ODDS_BATCH,
+  joiner,
+  liveUpsetSentence,
+  marketSentence,
+  matchupNames,
+  pickerWhen,
+  radarFootnote,
+  radarNote,
+  radarSignals,
+  type RadarSignal,
+} from "../views/matchup/model";
+import { SheetNote, SideBlock } from "../views/matchup/parts";
+import { SectionHead, SpotChip } from "./bs";
 
 /**
- * A compact strip across the top of the matchup previews that flags upcoming
- * games where the model and the market disagree — i.e. the betting underdog is
- * the model's favorite. Odds are fetched in one batch for all the visible
- * games; games without both a win-probability and a moneyline (soccer often
- * has neither) simply never flag, so the strip is frequently empty and shows a
- * quiet placeholder rather than erroring.
+ * How old the odds on screen may get before the batch is read again. The
+ * query is keyed by the list of games, so on its own it is asked once per
+ * list and a projection or a line published later never reached the radar.
+ * The same beat as the Matchup preview's, and like it only while the view
+ * is the tab on screen: each read costs the server provider calls.
  */
-export default function UpsetRadar({ games }: { games: Game[] }) {
-  const ids = useMemo(() => games.map((g) => g.id), [games]);
+const ODDS_REFRESH_MS = 10 * 60_000;
+
+/** One flagged game. Pressing it puts that game on screen. */
+function SignalCard({
+  signal,
+  pressed,
+  today,
+  onSelect,
+}: {
+  signal: RadarSignal;
+  pressed: boolean;
+  today: string;
+  onSelect: (gameId: string) => void;
+}) {
+  const { game, live, market } = signal;
+  const when = pickerWhen(game, today);
+  const sentence = "text-[1.3125rem] font-semibold leading-[1.3]";
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={() => onSelect(game.id)}
+      className={
+        "bs-focus-inset flex min-h-11 flex-1 cursor-pointer flex-col items-start justify-center gap-3 border-t border-hair px-5 py-[1.125rem] text-left first:border-t-0 " +
+        (pressed ? "bs-inverse" : "bg-sheet text-ink hover:bg-tint")
+      }
+    >
+      <span className="flex flex-wrap items-center gap-2 font-condensed font-bold leading-none">
+        {/* The blocks are codes; the names are said once, in words. */}
+        <span className="sr-only">{matchupNames(game)}, </span>
+        <SideBlock side={game.away} leagueId={game.league_id} />
+        <span aria-hidden="true" className="text-base font-semibold text-muted">
+          {joiner(game.sport)}
+        </span>
+        <SideBlock side={game.home} leagueId={game.league_id} />
+        {when.live ? (
+          <SpotChip className="ml-1">{when.text}</SpotChip>
+        ) : (
+          <span className="ml-1 text-base font-semibold uppercase tracking-[0.06em] text-ink-2">
+            {when.text}
+          </span>
+        )}
+      </span>
+      {live !== null && (
+        <span className={sentence}>{liveUpsetSentence(game, live)}</span>
+      )}
+      {market !== null && (
+        <span className={live === null ? sentence : "text-sm text-ink-2"}>
+          {marketSentence(market)}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/**
+ * The games on offer that are running against expectation, as cards that
+ * select the game. Two kinds are flagged: the one the radar always had
+ * (the betting underdog is the model's favourite, live or not), and a live
+ * game whose leader was the model's underdog before the start. Odds come
+ * in one batch for every listed game; a game with no projection (soccer,
+ * hockey) simply never flags, so the sheet is often a single quiet line.
+ */
+export default function UpsetRadar({
+  games,
+  currentId,
+  today,
+  showing,
+  onSelect,
+}: {
+  /** The games on offer, with their live scores. */
+  games: readonly Game[];
+  /** The game on screen: its card is the pressed one. */
+  currentId?: string;
+  /** The viewer's own day (`viewerDay`): a card's bare time means this one. */
+  today: string;
+  /** The view is the tab on screen: the odds are kept fresh only then. */
+  showing: boolean;
+  onSelect: (gameId: string) => void;
+}) {
+  // The endpoint prices the first sixty ids and drops the rest in silence.
+  const ids = useMemo(
+    () => games.slice(0, ODDS_BATCH).map((game) => game.id),
+    [games],
+  );
+  // The list of games changes through the day (one ends, the day turns),
+  // and each list is a query of its own. The freshness keeper's key default
+  // lets the last list's odds stand in until the new ones land, or the
+  // cards would give way to "Scanning the slate" and come back on every
+  // change.
   const oddsQuery = useGameOdds(ids);
   const oddsById = oddsQuery.data;
-
-  const signals = useMemo(() => {
-    if (oddsById === undefined) return [];
-    const out: UpsetSignal[] = [];
-    for (const game of games) {
-      const odds = oddsById[game.id];
-      if (odds === undefined) continue;
-      const signal = detectSignal(game, odds);
-      if (signal !== null) out.push(signal);
-    }
-    return out;
-  }, [games, oddsById]);
+  const oddsAt = Math.max(oddsQuery.dataUpdatedAt, oddsQuery.errorUpdatedAt);
+  const refetchOdds = oddsQuery.refetch;
+  const priced = ids.length > 0;
+  useEffect(() => {
+    if (!showing || !priced || oddsAt === 0) return;
+    const timer = window.setTimeout(
+      () => void refetchOdds(),
+      Math.max(0, ODDS_REFRESH_MS - (Date.now() - oddsAt)),
+    );
+    return () => window.clearTimeout(timer);
+  }, [showing, priced, oddsAt, refetchOdds]);
+  const signals = useMemo(
+    () => radarSignals(games, oddsById),
+    [games, oddsById],
+  );
+  const viewing = signals.some((signal) => signal.game.id === currentId);
 
   return (
-    <section>
-      <h2 className="sd-eyebrow sd-rule mb-3 flex items-center gap-2 pb-2.5 text-zinc-500">
-        <svg
-          viewBox="0 0 20 20"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="h-3.5 w-3.5 text-amber-400"
-          aria-hidden="true"
-        >
-          <circle cx="10" cy="10" r="7.5" />
-          <circle cx="10" cy="10" r="3.5" />
-          <path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2" />
-        </svg>
-        Upset radar
-      </h2>
-
-      {signals.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-zinc-800 px-3 py-2.5 text-xs text-zinc-500">
-          {oddsQuery.isLoading
-            ? "Scanning the slate for upset signals…"
-            : "No upset signals right now."}
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-1.5">
-          {signals.map((signal) => (
-            <li
-              key={signal.gameId}
-              className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm"
-            >
-              <span className="text-amber-400" aria-hidden="true">
-                ▲
-              </span>
-              <span className="text-zinc-300">
-                Model likes{" "}
-                <span className="font-semibold text-zinc-100">
-                  {signal.underdogAbbr}
-                </span>{" "}
-                <span className="tabular-nums text-amber-400">
-                  ({signal.winPct}%)
-                </span>{" "}
-                — line has them at{" "}
-                <span className="font-semibold tabular-nums text-zinc-100">
-                  {formatMoneyline(signal.moneyline)}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+    <section
+      aria-label="Upset radar"
+      className="flex min-w-0 flex-[1_1_23.75rem] flex-col"
+    >
+      <SectionHead
+        title="Upset radar"
+        note={signals.length > 0 ? radarNote(signals.length) : undefined}
+      />
+      <div className="bs-sheet flex flex-auto flex-col">
+        {signals.length > 0 ? (
+          <>
+            {signals.map((signal) => (
+              <SignalCard
+                key={signal.game.id}
+                signal={signal}
+                pressed={signal.game.id === currentId}
+                today={today}
+                onSelect={onSelect}
+              />
+            ))}
+            <p className="m-0 border-t border-hair px-5 pb-[0.8125rem] pt-3 text-sm text-ink-2">
+              {radarFootnote(viewing, signals.length)}
+            </p>
+          </>
+        ) : oddsQuery.isLoading ? (
+          <SheetNote status>Scanning the slate for upset signals…</SheetNote>
+        ) : oddsQuery.isError && oddsById === undefined ? (
+          <SheetNote onRetry={() => void oddsQuery.refetch()}>
+            Couldn&rsquo;t scan the slate for upset signals.
+          </SheetNote>
+        ) : (
+          <SheetNote>No upset signals right now.</SheetNote>
+        )}
+      </div>
     </section>
   );
 }

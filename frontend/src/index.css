@@ -3,148 +3,976 @@
 
 /*
  * ─────────────────────────────────────────────────────────────────────────
- * Theme system (Phase 8)
+ * Box Score: tokens
  * ─────────────────────────────────────────────────────────────────────────
- * Tailwind v4 emits utility classes like `bg-zinc-900` / `text-amber-400`
- * as references to palette CSS vars (`var(--color-zinc-900)` …). Themes are
- * implemented by REMAPPING those palette vars under a `[data-theme]`
- * attribute on <html> — the ~23 components keep their existing utility
- * classes and re-theme automatically.
+ * The look is a printed scorecard: sharp corners, heavy ink rules and
+ * hairlines instead of rounded cards, and one spot colour that is only ever
+ * a fill (with ink text on it) or a small square marker. Every colour in the
+ * app resolves to one of the semantic tokens below, so a theme is a token
+ * swap and never a second set of components.
  *
- * The ramp the app actually uses (see grep in CONTRACTS Phase 8):
- *   background → text scale:  zinc 950 900 800 700 600 500 400 300 200 100
- *   accent:                   amber 300 400 500 (+ 900/950 badge fills)
- *   status:                   red 300 400 500 (+ 900/950), emerald 200..500
+ *   <html data-theme="light | dark | contrast" data-palette="brand | team">
  *
- * The default look (dark kiosk) is Tailwind's stock zinc/amber and is left
- * UNSET so `:root` keeps shipping today's palette. `[data-theme="dark"]`
- * is therefore a no-op alias; Light, Custom and High contrast remap below.
+ * `data-theme` is the base. `data-palette="team"` recolours the spot from
+ * the favourite team, on the light and dark bases only: High contrast keeps
+ * its own spot so its AAA guarantee cannot be broken by a club colour.
+ * Both attributes are set before first paint by the bootstrap in index.html
+ * and kept in step by lib/theme.ts.
  *
- * Contrast was chosen for WCAG-AA: body text (zinc-300/400 on the bg ramp)
- * clears 4.5:1; accents stay legible on their typical surfaces.
+ * The selectors are attribute selectors, not `html[…]`, on purpose: any
+ * element can carry them, and everything inside re-resolves. The settings
+ * swatches and the pieces gallery (#sd-pieces) show a theme that way without
+ * applying it to the page.
+ *
+ * Text contrast: every text token below clears WCAG AA (4.5:1) on every
+ * surface it is used on; High contrast clears AAA (7:1). The ratios are in
+ * the comments so a change to a value is a change you can check.
  */
 
-html {
-  color-scheme: dark;
+@theme {
+  --font-sans:
+    "Barlow", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  --font-condensed:
+    "Barlow Condensed", "Arial Narrow", ui-sans-serif, system-ui, sans-serif;
+
+  /* Sharp corners everywhere: the radius scale is flat. */
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-4xl: 0px;
 }
 
-/* ── Dark (default) + Stadium: secondary-text floor ─────────────────────
- * The dark base otherwise leaves the stock palette UNSET (see header).
- * Exception: stock zinc-500 (#71717a) on the #09090b base is only ~4.1:1 —
- * below the WCAG AA 4.5:1 the header commits to — and text-zinc-500 is the
- * app's most common secondary-text class. Lift it a step on both
- * dark-based themes (#80808a ≈ 5.1:1 on the base, ≈4.5:1 on zinc-900
- * cards), short of zinc-400 so the faint/secondary hierarchy survives.
- */
-[data-theme="dark"],
-[data-theme="custom"] {
-  --color-zinc-500: #80808a;
+/* `inline`, so `bg-sheet` compiles to `var(--bs-sheet)` itself and follows
+ * whichever theme scope the element sits in, not the value at :root. */
+@theme inline {
+  --color-ground: var(--bs-ground);
+  --color-sheet: var(--bs-sheet);
+  --color-tint: var(--bs-tint);
+  --color-rule: var(--bs-rule);
+  --color-hair: var(--bs-hair);
+  --color-hover: var(--bs-hover);
+  --color-ink: var(--bs-ink);
+  --color-ink-2: var(--bs-ink-2);
+  --color-muted: var(--bs-muted);
+  --color-spot: var(--bs-spot);
+  --color-on-spot: var(--bs-on-spot);
+  --color-spot-text: var(--bs-spot-text);
+  --color-block: var(--bs-block);
+  --color-on-block: var(--bs-on-block);
+  --color-on-block-2: var(--bs-on-block-2);
+  --color-block-rule: var(--bs-block-rule);
+  --color-tab: var(--bs-tab);
+  --color-on-tab: var(--bs-on-tab);
+  --color-band: var(--bs-band);
+  --color-on-band: var(--bs-on-band);
+  --color-on-band-2: var(--bs-on-band-2);
+  --color-band-rule: var(--bs-band-rule);
+  --color-alert: var(--bs-alert);
+  --color-draw: var(--bs-draw);
+  --color-on-draw: var(--bs-on-draw);
 }
 
-/* ── Light ──────────────────────────────────────────────────────────────
- * Near-white surfaces, dark ink. The bg scale (950→100) is inverted so the
- * darkest token (zinc-950, used as the app backdrop) becomes the lightest
- * paper, and the lightest token (zinc-100, used for primary text) becomes
- * near-black. Amber accent darkened to stay readable on white.
- */
+/* Section tabs and the current nav item have their own pair so a theme can
+ * colour them apart from the block. Today every theme leaves them equal;
+ * declared on every scope so a nested scope re-resolves them. */
+:root,
+[data-theme] {
+  --bs-tab: var(--bs-block);
+  --bs-on-tab: var(--bs-on-block);
+}
+
+/* ── Light: exactly as mocked, and the default ───────────────────────── */
+:root,
 [data-theme="light"] {
   color-scheme: light;
 
-  --color-zinc-950: #f8fafc; /* app backdrop          */
-  --color-zinc-900: #f1f5f9; /* card / panel surface   */
-  --color-zinc-800: #e2e8f0; /* borders / hover fill   */
-  --color-zinc-700: #cbd5e1; /* stronger borders       */
-  --color-zinc-600: #94a3b8; /* muted icon / track     */
-  --color-zinc-500: #64748b; /* faint label text       */
-  --color-zinc-400: #475569; /* secondary text (AA)    */
-  --color-zinc-300: #334155; /* body text              */
-  --color-zinc-200: #1e293b; /* strong text            */
-  --color-zinc-100: #0f172a; /* primary heading text   */
+  --bs-ground: #f1f2f4; /* the page                                    */
+  --bs-sheet: #ffffff; /* sheets, the masthead                         */
+  --bs-tint: #f6f7f8; /* tinted block inside a sheet                   */
+  --bs-rule: #c6cbd3; /* 1px sheet border                              */
+  --bs-hair: #d9dde3; /* inner hairline between rows                   */
+  --bs-hover: #d9dde3; /* fill under a hovered control — ink 13.6:1     */
 
-  /* Accent — amber pulled darker for contrast on light surfaces. */
-  --color-amber-300: #d97706;
-  --color-amber-400: #b45309;
-  --color-amber-500: #92400e;
-  --color-amber-900: #fef3c7; /* badge fill (light) w/ dark text */
-  --color-amber-950: #fffbeb;
+  --bs-ink: #101418; /* text, heavy rules — 18.5:1 sheet, 16.5:1 ground */
+  --bs-ink-2: #3b444f; /* secondary text — 9.9:1 sheet, 8.8:1 ground    */
+  --bs-muted: #5e6875; /* labels — 5.7:1 sheet, 5.1:1 ground, 5.3:1 tint */
 
-  /* Status. */
-  --color-red-300: #b91c1c;
-  --color-red-400: #dc2626;
-  --color-red-500: #ef4444;
-  --color-red-900: #fee2e2;
-  --color-red-950: #fef2f2;
+  /* The spot is a fill. Ink reads on it at 5.6:1; white would not (3.3:1),
+   * and the orange itself as text on a sheet would not either, which is why
+   * the only spot-derived text is the deeper --bs-spot-text (5.6:1 sheet,
+   * 5.0:1 ground), used for link hover. */
+  --bs-spot: #e8643c;
+  --bs-on-spot: #101418;
+  --bs-spot-text: #b93e16;
+  /* Keylines, drawn only when a spot fill is under 3:1 against what it sits
+   * on and would otherwise be lost. Transparent means "not needed". Measured
+   * against the sheet and the tint (3.3:1 and 3.1:1 here); on the page
+   * ground the orange is 2.97:1 and unkeyed, as mocked. */
+  --bs-spot-edge: transparent; /* on a sheet or a tinted block */
+  --bs-spot-edge-block: transparent; /* on a block or the band */
 
-  --color-emerald-200: #047857;
-  --color-emerald-300: #059669;
-  --color-emerald-400: #10b981;
-  --color-emerald-500: #047857;
+  /* The inverted block: followed-team row, W square, solid button. */
+  --bs-block: #101418;
+  --bs-on-block: #ffffff; /* 18.5:1 */
+  --bs-on-block-2: #b4bcc7; /* 9.7:1 */
+  --bs-block-rule: #3b444f;
+  /* The score line under the masthead. */
+  --bs-band: #101418;
+  --bs-on-band: #ffffff;
+  --bs-on-band-2: #b4bcc7;
+  --bs-band-rule: #3b444f;
+  --bs-band-edge: transparent;
+
+  /* Genuine failures only (the API is unreachable, a save did not land).
+   * Results are told apart by fill, never by colour: a win is a solid
+   * block, a loss an outline, and a draw this mid-tone fill between them. */
+  --bs-alert: #b42318; /* 6.6:1 sheet, 5.9:1 ground */
+  --bs-draw: #c6cbd3;
+  --bs-on-draw: #101418; /* 11.4:1 */
 }
 
-/* ── Custom ────────────────────────────────────────────────────────────
- * Keeps the dark base, but the amber accent is driven by `--sd-accent`,
- * which a small effect sets to the focused team's color (default: vibrant
- * amber when no team is in focus). All three amber stops fall back to the
- * stock amber if `--sd-accent` is unset.
+/* ── Dark: the same layout with the tokens inverted ──────────────────────
+ * Section tabs, the current nav item and the followed-team row flip to a
+ * light block with ink text. The score line stays a dark band, one step
+ * below the ground, under the masthead's light rule.
+ *
+ * Rules are set to the same ratios against the sheet as the light theme's
+ * (1.68 for the border, 1.36 for the hairline), which is why they are a
+ * step lighter than a straight inversion would give.
  */
-[data-theme="custom"] {
+[data-theme="dark"] {
   color-scheme: dark;
 
-  --color-amber-300: var(--sd-accent, #fbbf24);
-  --color-amber-400: var(--sd-accent, #f59e0b);
-  --color-amber-500: var(--sd-accent, #d97706);
+  --bs-ground: #101418;
+  --bs-sheet: #171c22;
+  --bs-tint: #13181e;
+  --bs-rule: #3a424c;
+  --bs-hair: #2d343d;
+  --bs-hover: #2d343d; /* ink 11.3:1 */
+
+  --bs-ink: #f1f2f4; /* 15.3:1 sheet, 16.5:1 ground */
+  --bs-ink-2: #b4bcc7; /* 8.9:1 sheet, 9.7:1 ground  */
+  --bs-muted: #8b95a1; /* 5.6:1 sheet, 6.1:1 ground  */
+
+  --bs-spot: #e8643c;
+  --bs-on-spot: #101418; /* 5.6:1 */
+  --bs-spot-text: #e8643c; /* 5.2:1 sheet, 5.6:1 ground */
+  --bs-spot-edge: transparent; /* 5.2:1 against the sheet  */
+  --bs-spot-edge-block: #101418; /* 2.97:1 against the light block */
+
+  --bs-block: #f1f2f4;
+  --bs-on-block: #101418; /* 16.5:1 */
+  --bs-on-block-2: #3b444f; /* 8.8:1 */
+  --bs-block-rule: #c6cbd3;
+  --bs-band: #0a0d10;
+  --bs-on-band: #f1f2f4;
+  --bs-on-band-2: #b4bcc7; /* 10.2:1 */
+  --bs-band-rule: #3b444f;
+  --bs-band-edge: transparent;
+
+  --bs-alert: #ff8a7a; /* 7.5:1 sheet, 8.1:1 ground */
+  --bs-draw: #3a424c;
+  --bs-on-draw: #f1f2f4; /* 9.1:1 */
 }
 
-/* ── High contrast ──────────────────────────────────────────────────────
- * An accessibility option rather than a look: true black, white headings,
- * and every text token at WCAG AAA (7:1) or better against both the
- * backdrop and a card surface — the lowest is the loss-red at 7.89:1.
- *
- * Borders are deliberately much lighter than the other dark themes
- * (#3a3a3a rather than #27272a): at this base a hairline at the usual
- * value is invisible, and this design leans on rules to separate rows.
+/* ── High contrast ───────────────────────────────────────────────────────
+ * An accessibility option rather than a look: true black, white ink, and
+ * every text tone at WCAG AAA (7:1) or better; the lowest is the label tone
+ * at 11.0:1 on a tinted block. Borders clear 3:1 so a rule is a real edge.
  */
 [data-theme="contrast"] {
   color-scheme: dark;
 
-  --color-zinc-950: #000000; /* app backdrop            */
-  --color-zinc-900: #0a0a0a; /* card / panel surface    */
-  --color-zinc-800: #3a3a3a; /* borders — lifted, see above */
-  --color-zinc-700: #5a5a5a; /* stronger borders        */
-  --color-zinc-600: #9a9a9a; /* muted icon / track — 7.5:1, so the icons
-                                clear AAA alongside the text */
-  --color-zinc-500: #c0c0c0; /* faint label (11.5:1)    */
-  --color-zinc-400: #d8d8d8; /* secondary text          */
-  --color-zinc-300: #ececec; /* body text               */
-  --color-zinc-200: #f8f8f8; /* strong text             */
-  --color-zinc-100: #ffffff; /* heading text            */
+  --bs-ground: #000000;
+  --bs-sheet: #000000;
+  --bs-tint: #141414;
+  --bs-rule: #7a7a7a; /* 4.9:1 */
+  --bs-hair: #5c5c5c; /* 3.1:1 */
+  /* Not the hairline here: that grey is lifted so a rule is a real edge,
+   * which makes it too light to sit under white text at AAA. */
+  --bs-hover: #3d3d3d; /* ink 10.9:1 */
 
-  /* Accent — saturated yellow, the most legible accent on true black. */
-  --color-amber-300: #ffe14d;
-  --color-amber-400: #ffd21a;
-  --color-amber-500: #e6b800;
-  --color-amber-900: #3d3000;
-  --color-amber-950: #2b2200;
+  --bs-ink: #ffffff;
+  --bs-ink-2: #ededed;
+  --bs-muted: #c8c8c8; /* 12.6:1 */
 
-  --color-red-300: #ff9d9d;
-  --color-red-400: #ff7b7b;
-  --color-red-500: #ff5252;
-  --color-red-900: #3d0f0f;
-  --color-red-950: #2b0a0a;
+  --bs-spot: #ffd21a;
+  --bs-on-spot: #000000; /* 14.5:1 */
+  --bs-spot-text: #ffd21a;
+  --bs-spot-edge: transparent;
+  --bs-spot-edge-block: #000000; /* yellow on the white block is 1.5:1 */
 
-  --color-emerald-200: #7dffc4;
-  --color-emerald-300: #4dffae;
-  --color-emerald-400: #1aff98;
-  --color-emerald-500: #00e07f;
+  --bs-block: #ffffff;
+  --bs-on-block: #000000;
+  --bs-on-block-2: #2b2b2b; /* 14.2:1 */
+  --bs-block-rule: #5c5c5c;
+  --bs-band: #000000;
+  --bs-on-band: #ffffff;
+  --bs-on-band-2: #d8d8d8; /* 14.7:1 */
+  --bs-band-rule: #7a7a7a;
+  --bs-band-edge: #ffffff; /* black band on a black page: give it an edge */
+
+  --bs-alert: #ff9d9d; /* 10.6:1 */
+  --bs-draw: #c8c8c8;
+  --bs-on-draw: #000000; /* 12.6:1 */
+}
+
+/* ── Team: the spot becomes the favourite team's colour ──────────────────
+ * A colour choice on top of the Light or Dark base. lib/theme.ts measures
+ * the team colour against the base and sets these on <html>:
+ *
+ *   --sd-accent             the fill (the team colour, nudged only if
+ *                           neither ink nor paper would read on it)
+ *   --sd-on-accent          ink or paper, whichever contrasts more
+ *   --sd-accent-text        the colour moved until it reads as text
+ *   --sd-accent-edge        a keyline, when the fill is lost on a sheet
+ *   --sd-accent-edge-block  the same, on a block or the band
+ *
+ * With no team colour to hand the variables are unset and each falls back
+ * to the base's own spot.
+ */
+[data-theme="light"][data-palette="team"] {
+  --bs-spot: var(--sd-accent, #e8643c);
+  --bs-on-spot: var(--sd-on-accent, #101418);
+  --bs-spot-text: var(--sd-accent-text, #b93e16);
+  --bs-spot-edge: var(--sd-accent-edge, transparent);
+  --bs-spot-edge-block: var(--sd-accent-edge-block, transparent);
+}
+
+[data-theme="dark"][data-palette="team"] {
+  --bs-spot: var(--sd-accent, #e8643c);
+  --bs-on-spot: var(--sd-on-accent, #101418);
+  --bs-spot-text: var(--sd-accent-text, #e8643c);
+  --bs-spot-edge: var(--sd-accent-edge, transparent);
+  --bs-spot-edge-block: var(--sd-accent-edge-block, #101418);
+}
+
+/* ── The legacy ramp ─────────────────────────────────────────────────────
+ * Components written before Box Score colour themselves with Tailwind's
+ * zinc / amber / red / emerald utilities, which compile to these palette
+ * variables. Pointing the ramp at the tokens brings them into every theme
+ * without touching their markup. It is a bridge: new code uses the token
+ * utilities (bg-sheet, text-ink, border-rule, …), and a family leaves this
+ * block when nothing uses it any more.
+ *
+ * The old accent was amber TEXT. Box Score has no accent text, so amber
+ * resolves to ink: emphasis by weight, not by colour.
+ *
+ * A custom property is substituted where it is declared, so the ramp is
+ * declared again on the two scopes that change what the tokens mean;
+ * otherwise a legacy utility inside the score line would keep the page's ink.
+ */
+:root,
+[data-theme],
+.bs-inverse,
+.bs-band {
+  --color-zinc-950: var(--bs-ground); /* app backdrop          */
+  --color-zinc-900: var(--bs-sheet); /* card / panel surface   */
+  --color-zinc-800: var(--bs-hair); /* borders / chip fill     */
+  --color-zinc-700: var(--bs-rule); /* stronger borders        */
+  --color-zinc-600: color-mix(in srgb, var(--bs-muted) 60%, var(--bs-rule));
+  --color-zinc-500: var(--bs-muted); /* faint label text       */
+  --color-zinc-400: var(--bs-ink-2); /* secondary text         */
+  --color-zinc-300: var(--bs-ink); /* body text                */
+  --color-zinc-200: var(--bs-ink); /* strong text              */
+  --color-zinc-100: var(--bs-ink); /* heading text             */
+
+  --color-amber-200: var(--bs-ink);
+  --color-amber-300: var(--bs-ink);
+  --color-amber-400: var(--bs-ink);
+  --color-amber-500: var(--bs-ink);
+  --color-amber-900: var(--bs-tint);
+  --color-amber-950: var(--bs-tint);
+
+  --color-red-300: var(--bs-alert);
+  --color-red-400: var(--bs-alert);
+  --color-red-500: var(--bs-alert);
+  --color-red-900: color-mix(in srgb, var(--bs-alert) 14%, var(--bs-sheet));
+  --color-red-950: color-mix(in srgb, var(--bs-alert) 8%, var(--bs-sheet));
+
+  --color-emerald-200: var(--bs-ink);
+  --color-emerald-300: var(--bs-ink);
+  --color-emerald-400: var(--bs-ink);
+  --color-emerald-500: var(--bs-ink);
+  --color-emerald-900: var(--bs-tint);
+
+  /* Strays outside the four families: a second chart series, two status
+   * chips. The playing-surface greens and yellows in LineupView are
+   * illustrations, not theme colours, and are left alone. */
+  --color-sky-400: var(--bs-ink-2);
+  --color-sky-500: var(--bs-ink-2);
+  --color-rose-400: var(--bs-alert);
+  --color-orange-400: var(--bs-ink);
+  --color-orange-500: var(--bs-ink);
+}
+
+/* High contrast lifts its rule and hairline greys so a border is a real
+ * edge. The legacy markup also uses those two stops as FILLS under text,
+ * where the lifted greys would drop white text under AAA; here they stay
+ * dark (white reads at 10.9:1 and 7.1:1). */
+[data-theme="contrast"],
+[data-theme="contrast"] :is(.bs-inverse, .bs-band) {
+  --color-zinc-800: #3d3d3d;
+  --color-zinc-700: #595959;
+}
+
+/* Tailwind's radius scale is flattened in @theme above; these two are not
+ * on the scale (`rounded` is a fixed 0.25rem, `rounded-full` is infinite). */
+.rounded,
+.rounded-full {
+  border-radius: 0;
+}
+
+/* The sticky masthead's height, for everything that sits under it (the
+ * score line, the side drawers, the map). One 68px row from 1280px; below
+ * that the nav takes a second 44px row, and the first row is 56px on a
+ * phone. Always plus the 3px rule. */
+:root {
+  --bs-masthead-h: calc(6.25rem + 3px);
+}
+
+@media (width >= 40rem) {
+  :root {
+    --bs-masthead-h: calc(7rem + 3px);
+  }
+}
+
+@media (width >= 80rem) {
+  :root {
+    --bs-masthead-h: calc(4.25rem + 3px);
+  }
+}
+
+/* A control scrolled into view by the keyboard must not stop under the
+ * sticky masthead, or under the score line that sticks below it from
+ * 1024px (2.75rem and its 1px edge). */
+html {
+  scroll-padding-top: var(--bs-masthead-h);
+}
+
+@media (width >= 64rem) {
+  html {
+    scroll-padding-top: calc(var(--bs-masthead-h) + 2.75rem + 1px);
+  }
+}
+
+/* Kiosk: one layout, scaled to fill the wall. Sizes are written in rem, so
+ * growing the root grows the whole sheet. 100vw / 90 is 16px at the 1440px
+ * the design is drawn at; narrower windows stay at 100%, and the cap stops a
+ * very wide display turning the page into a poster. */
+html[data-kiosk] {
+  font-size: clamp(100%, calc(100vw / 90), 175%);
 }
 
 body {
   margin: 0;
-  background-color: var(--color-zinc-950);
-  color: var(--color-zinc-100);
+  background-color: var(--bs-ground);
+  color: var(--bs-ink);
   font-family: var(--font-sans);
+  font-size: 0.9375rem; /* 15px */
+  line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────
+ * Box Score: shared pieces
+ * ─────────────────────────────────────────────────────────────────────────
+ * The recurring parts of the scorecard, as component classes on the tokens
+ * above. React wrappers live in components/bs; the classes exist so plain
+ * markup (a table row, a map popup built in JS) can wear the same pieces.
+ *
+ * Sizes are rem so the kiosk scale reaches them; rule weights are px so a
+ * hairline stays a hairline at any scale. Everything sits in the components
+ * layer, so a utility on the same element still wins.
+ */
+
+@layer base {
+  /* A two-tone ring: ink outside, a sheet-coloured gap inside. One of the
+   * two always shows, whether the control sits on a sheet or on ink. */
+  :focus-visible {
+    outline: 2px solid var(--bs-ink);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 2px var(--bs-sheet);
+  }
+
+  /* The page itself takes focus only by script, when a view sends the user
+   * to another tab; a ring round the whole page would say nothing. */
+  main:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+}
+
+@layer components {
+  /* A ring drawn inside the control, for controls in a strip that clips
+   * what spills outside it (the nav row, the score line) or that share a
+   * frame with their neighbours (a segmented control). It takes the
+   * control's own text colour, which always contrasts with its own fill:
+   * light on the current nav item, ink on the others. */
+  .bs-focus-inset:focus-visible,
+  .bs-seg > :focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: -6px;
+    box-shadow: none;
+  }
+
+  /* A control that is itself an inverted block (a chosen option): inside
+   * it ink and sheet are swapped, which would draw the page ring ink on
+   * ink. Use the pair the page around it sees. */
+  .bs-inverse:focus-visible {
+    outline-color: var(--bs-block);
+    box-shadow: 0 0 0 2px var(--bs-on-block);
+  }
+
+  /* ...unless its ring is drawn inside it (the chosen option of a list,
+   * where focus lands on open): then the ring is its own text colour. */
+  .bs-inverse.bs-focus-inset:focus-visible {
+    outline-color: currentColor;
+    box-shadow: none;
+  }
+
+  /* ── Scopes ──────────────────────────────────────────────────────────
+   * Content inside an inverted block (a followed-team row) or the score
+   * line reads its text and rule tokens as usual; these scopes swap what
+   * those tokens mean, so the same markup works on ink. */
+  .bs-inverse {
+    --bs-ink: var(--bs-on-block);
+    --bs-ink-2: var(--bs-on-block-2);
+    --bs-muted: var(--bs-on-block-2);
+    --bs-rule: var(--bs-block-rule);
+    --bs-hair: var(--bs-block-rule);
+    --bs-sheet: var(--bs-block);
+    --bs-ground: var(--bs-block);
+    --bs-tint: color-mix(in srgb, var(--bs-on-block) 14%, var(--bs-block));
+    --bs-hover: color-mix(in srgb, var(--bs-on-block) 20%, var(--bs-block));
+    /* Spot-derived and alert text are tuned against sheets, not ink. */
+    --bs-spot-text: var(--bs-on-block);
+    --bs-alert: var(--bs-on-block);
+    --bs-spot-edge: var(--bs-spot-edge-block);
+    background-color: var(--bs-block);
+    color: var(--bs-on-block);
+  }
+
+  .bs-band {
+    --bs-ink: var(--bs-on-band);
+    --bs-ink-2: var(--bs-on-band-2);
+    --bs-muted: var(--bs-on-band-2);
+    --bs-rule: var(--bs-band-rule);
+    --bs-hair: var(--bs-band-rule);
+    --bs-sheet: var(--bs-band);
+    --bs-ground: var(--bs-band);
+    --bs-tint: color-mix(in srgb, var(--bs-on-band) 14%, var(--bs-band));
+    --bs-hover: color-mix(in srgb, var(--bs-on-band) 20%, var(--bs-band));
+    --bs-spot-text: var(--bs-on-band);
+    --bs-alert: var(--bs-on-band);
+    --bs-spot-edge: var(--bs-spot-edge-block);
+    background-color: var(--bs-band);
+    color: var(--bs-on-band);
+    border-bottom: 1px solid var(--bs-band-edge);
+  }
+
+  /* Pieces that are themselves the ink block would be ink on ink inside a
+   * scope: there they take the scope's text colour as their fill. */
+  :is(.bs-inverse, .bs-band)
+    :is(
+      .bs-wl--w,
+      .bs-tab,
+      .bs-btn--solid,
+      .bs-btn[aria-pressed="true"],
+      .bs-btn[aria-checked="true"],
+      .bs-seg > [aria-pressed="true"],
+      .bs-seg > [aria-selected="true"]
+    ) {
+    border-color: var(--bs-ink);
+    background-color: var(--bs-ink);
+    color: var(--bs-sheet);
+  }
+
+  /* ── Page head: the screen's name, very large, and a deck beside it ─── */
+  .bs-title {
+    margin: 0;
+    font-family: var(--font-condensed);
+    /* 116px at the 1440px the design is drawn at; fluid below it, so a
+     * long weekday still fits a phone. */
+    font-size: clamp(3.5rem, 14vw, 7.25rem);
+    font-weight: 700;
+    line-height: 0.82;
+    letter-spacing: -0.01em;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+  }
+
+  .bs-deck {
+    font-family: var(--font-condensed);
+    font-size: clamp(1.25rem, 5vw, 1.875rem);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--bs-ink-2);
+  }
+
+  /* ── Section: a 3px ink rule carrying an inverted tab and a note ───── */
+  .bs-section-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0 0.75rem;
+    border-top: 3px solid var(--bs-ink);
+  }
+
+  /* The tab and its note: the tab hangs from the rule, the note centres on
+   * the tab and wraps under it when the row is too narrow. */
+  .bs-section-head__main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    min-width: 0;
+  }
+
+  /* A little air above and below the note. Beside the tab it changes
+   * nothing (the tab is taller); a note long enough to wrap under the tab
+   * no longer sits flush against the sheet below it. */
+  .bs-section-head > .bs-note,
+  .bs-section-head__main > .bs-note {
+    padding-block: 0.25rem;
+  }
+
+  .bs-section-head__aside {
+    margin-left: auto;
+    align-self: center;
+  }
+
+  .bs-section-head__aside--start {
+    align-self: flex-start;
+  }
+
+  .bs-tab {
+    margin: 0;
+    padding: 0.25rem 0.75rem 0.375rem;
+    background-color: var(--bs-tab);
+    color: var(--bs-on-tab);
+    font-family: var(--font-condensed);
+    font-size: 1.0625rem; /* 17px */
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .bs-note {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--bs-ink-2);
+  }
+
+  /* The sheet under a section head: the head's rule is its top edge. */
+  .bs-sheet {
+    background-color: var(--bs-sheet);
+    border: 1px solid var(--bs-rule);
+  }
+
+  .bs-section-head + .bs-sheet {
+    border-top: 0;
+  }
+
+  /* Small caps: table headers, key/value keys, field labels. */
+  .bs-label {
+    font-family: var(--font-condensed);
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--bs-muted);
+  }
+
+  .bs-link {
+    /* A 44px target; the negative margin stops it growing the row the link
+     * sits in (a section head is 34px tall). */
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    margin-block: -0.75rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--bs-ink);
+    text-decoration: underline;
+  }
+
+  .bs-link:hover {
+    color: var(--bs-spot-text);
+  }
+
+  /* ── Buttons: square, 44px, a 2px ink frame ─────────────────────────── */
+  .bs-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.625rem;
+    min-height: 2.75rem;
+    margin: 0;
+    padding: 0 1.25rem;
+    border: 2px solid var(--bs-ink);
+    background-color: var(--bs-sheet);
+    color: var(--bs-ink);
+    font-family: var(--font-condensed);
+    font-size: 1.0625rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .bs-btn:hover:not(:disabled) {
+    background-color: var(--bs-hover);
+  }
+
+  /* On a tinted block or the ground: the frame alone, nothing filled. */
+  .bs-btn--ghost {
+    background-color: transparent;
+  }
+
+  .bs-btn--solid,
+  .bs-btn[aria-pressed="true"],
+  .bs-btn[aria-checked="true"] {
+    border-color: var(--bs-block);
+    background-color: var(--bs-block);
+    color: var(--bs-on-block);
+    /* A spot chip or marker inside now sits on the block. */
+    --bs-spot-edge: var(--bs-spot-edge-block);
+  }
+
+  /* A step toward the text colour; mixed from the pair itself so it holds
+   * in every theme (the text stays above 10:1). Not inside a scope, where
+   * the solid is already flipped and has nothing darker to go to. */
+  :is(
+      .bs-btn--solid,
+      .bs-btn[aria-pressed="true"],
+      .bs-btn[aria-checked="true"]
+    ):hover:not(:disabled):not(:is(.bs-inverse, .bs-band) *) {
+    border-color: color-mix(in srgb, var(--bs-block) 82%, var(--bs-on-block));
+    background-color: color-mix(
+      in srgb,
+      var(--bs-block) 82%,
+      var(--bs-on-block)
+    );
+  }
+
+  .bs-btn:disabled {
+    border-color: var(--bs-rule);
+    background-color: var(--bs-sheet);
+    color: var(--bs-muted);
+    cursor: not-allowed;
+  }
+
+  /* An icon alone: a 44px square. */
+  .bs-btn--icon {
+    width: 2.75rem;
+    padding: 0;
+  }
+
+  /* The page-level pickers (league, season): 52px with a 22px label. */
+  .bs-btn--lg {
+    gap: 0.75rem;
+    min-height: 3.25rem;
+    padding: 0 0.875rem 0 1.125rem;
+    font-size: 1.375rem;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Segmented control: buttons sharing one ink frame ────────────────
+   * The frame is the control's background showing through 2px gaps, so the
+   * items can wrap onto a second row at phone width and still read as one
+   * control. `--joined` is the single-row form whose total height matches
+   * a 44px button beside it. */
+  .bs-seg {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 2px;
+    background-color: var(--bs-ink);
+  }
+
+  .bs-seg > * {
+    flex: 1 1 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.625rem;
+    min-height: 2.75rem;
+    margin: 0;
+    padding: 0 1.25rem;
+    border: 0;
+    background-color: var(--bs-sheet);
+    color: var(--bs-ink);
+    font-family: var(--font-condensed);
+    font-size: 1.0625rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .bs-seg > :hover {
+    background-color: var(--bs-hover);
+  }
+
+  .bs-seg > [aria-pressed="true"],
+  .bs-seg > [aria-selected="true"],
+  .bs-seg > [aria-current]:not([aria-current="false"]) {
+    background-color: var(--bs-block);
+    color: var(--bs-on-block);
+    --bs-spot-edge: var(--bs-spot-edge-block);
+  }
+
+  /* The single-row form: each item carries its own 2px frame and overlaps
+   * the next by it, so every item is a full 44px target and the control is
+   * level with a 44px button beside it. */
+  .bs-seg--joined {
+    flex-wrap: nowrap;
+    gap: 0;
+    padding: 0;
+    background-color: transparent;
+  }
+
+  .bs-seg--joined > * {
+    border: 2px solid var(--bs-ink);
+  }
+
+  .bs-seg--joined > * + * {
+    margin-left: -2px;
+  }
+
+  .bs-seg--joined > [aria-pressed="true"],
+  .bs-seg--joined > [aria-selected="true"] {
+    border-color: var(--bs-block);
+  }
+
+  /* ── Team mark: a square block of the team's colour ──────────────────
+   * The colour and the text on it arrive inline (TeamBlock measures the
+   * contrast); without a colour the block is the neutral tint. The faint
+   * keyline keeps a white or near-ground club colour from dissolving. */
+  .bs-team {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    width: 2.125rem; /* 34 × 26, the row size */
+    height: 1.625rem;
+    /* TeamBlock supplies the team's colour and the text that reads on it as
+     * custom properties; without them the block is the neutral tint. */
+    background-color: var(--bs-team-fill, var(--bs-tint));
+    color: var(--bs-team-on, var(--bs-ink));
+    font-family: var(--font-condensed);
+    font-size: 0.9375rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  /* High contrast holds the code on a team colour to 7:1 like every other
+   * text: the same colour, nudged further until ink or paper clears it. */
+  [data-theme="contrast"] .bs-team {
+    background-color: var(--bs-team-fill-aaa, var(--bs-tint));
+    color: var(--bs-team-on-aaa, var(--bs-ink));
+  }
+
+  /* Only where the block would dissolve into the page: no colour at all,
+   * or a colour within a whisker of a sheet (white on Light, navy on Dark).
+   * The mockups' blocks have no edge, so a clear colour gets none. */
+  .bs-team--edge {
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--bs-ink) 28%, transparent);
+  }
+
+  .bs-team--40 {
+    width: 2.5rem; /* 40 × 26, the Matchup picker */
+    font-size: 1.1875rem;
+    letter-spacing: 0.02em;
+  }
+
+  .bs-team--52 {
+    width: 3.25rem;
+    height: 3.25rem;
+    font-size: 1.375rem;
+    letter-spacing: 0.02em;
+  }
+
+  .bs-team--56 {
+    width: 3.5rem;
+    height: 3.5rem;
+    font-size: 1.5rem;
+    letter-spacing: 0.02em;
+  }
+
+  .bs-team--60 {
+    width: 3.75rem;
+    height: 3.75rem;
+    font-size: 1.5rem;
+    letter-spacing: 0.02em;
+  }
+
+  .bs-team--64 {
+    width: 4rem; /* the live game */
+    height: 4rem;
+    font-size: 1.625rem;
+    letter-spacing: 0.02em;
+  }
+
+  /* A four-letter code in a three-letter box. */
+  .bs-team--tight {
+    font-size: 0.8125rem;
+    letter-spacing: -0.02em;
+  }
+
+  .bs-team--40.bs-team--tight {
+    font-size: 0.9375rem;
+  }
+
+  :is(.bs-team--52, .bs-team--56, .bs-team--60, .bs-team--64).bs-team--tight {
+    font-size: 1.25rem;
+  }
+
+  /* ── Result squares: W solid, L outlined, D a mid-tone fill ─────────── */
+  .bs-wl {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 1.625rem; /* 26 */
+    height: 1.625rem;
+    font-family: var(--font-condensed);
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .bs-wl--24 {
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 0.9375rem;
+  }
+
+  .bs-wl--30 {
+    width: 1.875rem;
+    height: 1.875rem;
+    font-size: 1.0625rem;
+  }
+
+  .bs-wl--34 {
+    width: 2.125rem;
+    height: 2.125rem;
+    font-size: 1.25rem;
+  }
+
+  .bs-wl--w {
+    background-color: var(--bs-block);
+    color: var(--bs-on-block);
+  }
+
+  .bs-wl--l {
+    border: 2px solid var(--bs-ink);
+    color: var(--bs-ink);
+  }
+
+  .bs-wl--d {
+    background-color: var(--bs-draw);
+    color: var(--bs-on-draw);
+  }
+
+  /* A run of result squares. */
+  .bs-form {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  /* ── The spot: a fill with ink on it, or a small square ─────────────── */
+  .bs-spot {
+    display: inline-block;
+    padding: 0.0625rem 0.4375rem;
+    background-color: var(--bs-spot);
+    color: var(--bs-on-spot);
+    box-shadow: inset 0 0 0 1px var(--bs-spot-edge);
+    font-family: var(--font-condensed);
+    font-size: 0.9375rem;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  /* "Today" over a date cell. */
+  .bs-spot--sm {
+    padding: 0.125rem 0.375rem;
+    font-size: 0.8125rem;
+    line-height: 1;
+  }
+
+  /* Beside a big score. */
+  .bs-spot--lg {
+    padding: 0.125rem 0.5625rem;
+    font-size: 1.25rem;
+    line-height: 1.2;
+  }
+
+  .bs-mark {
+    flex: none;
+    display: inline-block;
+    width: 0.625rem;
+    height: 0.625rem;
+    background-color: var(--bs-spot);
+    box-shadow: inset 0 0 0 1px var(--bs-spot-edge);
+  }
+
+  .bs-mark--lg {
+    width: 0.75rem;
+    height: 0.75rem;
+  }
+
+  /* The marker boxed in ink, for a legend on a light sheet. */
+  .bs-mark-box {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    background-color: var(--bs-block);
+    --bs-spot-edge: var(--bs-spot-edge-block);
+  }
+
+  /* An outlined tag ("Leader"): ink, never the spot. */
+  .bs-tag {
+    flex: none;
+    display: inline-block;
+    padding: 0 0.3125rem;
+    border: 1px solid var(--bs-ink);
+    color: var(--bs-ink);
+    font-family: var(--font-condensed);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
 }
 
 /*
@@ -170,8 +998,9 @@ body {
  */
 
 :root {
-  --sd-measure: 940px; /* the reading column                     */
-  --sd-measure-wide: 1180px; /* month grid / map chrome — earns width  */
+  /* rem, so the kiosk scale reaches the column as well as the type. */
+  --sd-measure: 58.75rem; /* 940px: the reading column              */
+  --sd-measure-wide: 73.75rem; /* 1180px: month grid / map chrome   */
   --sd-font-heading: var(--sd-font-display);
 }
 
@@ -253,7 +1082,7 @@ body {
  * figure. The gutter is what makes a column of rows scannable. */
 .sd-row {
   display: grid;
-  grid-template-columns: 108px 1fr auto;
+  grid-template-columns: 6.75rem 1fr auto;
   align-items: baseline;
   gap: 1.5rem;
 }
@@ -264,7 +1093,7 @@ body {
    * row, left-aligned under the time, which reads as a stray value. Put it
    * under the content it belongs to instead. */
   .sd-row {
-    grid-template-columns: 84px 1fr;
+    grid-template-columns: 5.25rem 1fr;
   }
 
   .sd-row > :last-child {
@@ -392,15 +1221,20 @@ body {
     transform: translateY(0);
   }
 
-  /* Score-change flash: the score <span> is re-keyed on its value, so it
-   * remounts and replays this brief accent flash whenever the score moves. */
-  .sd-score {
+  /* Score-change flash. `.sd-score` is the figure and never animates by
+   * itself; `ScoreFigure` (components/bs) adds `.sd-score--flash` for one
+   * pulse when the value changes while the figure is on screen. A class
+   * that stayed on would replay on every tab switch and kiosk rotation,
+   * because a view shown again after `display: none` restarts its
+   * animations. Keep the length in step with SCORE_FLASH_MS. Size only:
+   * Box Score has no accent text colour to flash to, and the figure sits
+   * on ink in the score line and on a sheet elsewhere. */
+  .sd-score--flash {
     animation: sd-score-flash 700ms ease-out;
   }
 
   @keyframes sd-score-flash {
     0% {
-      color: var(--color-amber-400);
       transform: scale(1.18);
     }
     100% {
@@ -408,17 +1242,19 @@ body {
     }
   }
 
-  /* Live scoreboard ticker: the duplicated chip track slides left by exactly
-   * one copy (-50%) for a seamless loop. Duration is set inline from the chip
-   * count so the speed stays even regardless of how many games there are.
-   * Hovering the bar pauses it so a score can be read / clicked. Reduced
-   * motion gets no animation (the bar falls back to a manual scroll strip). */
+  /* Score line: when the cells do not fit on one row the duplicated track
+   * slides left by exactly one copy (-50%) for a seamless loop. Duration is
+   * set inline from the cell count so the speed stays even regardless of how
+   * many games there are. Hovering or focusing the line pauses it so a score
+   * can be read / clicked. Under reduced motion ScoreTicker never asks for
+   * the animation: the line is a manual scroll strip instead. */
   .sd-ticker-animate {
     animation: sd-ticker-scroll 60s linear infinite;
     will-change: transform;
   }
 
-  .sd-ticker:hover .sd-ticker-animate {
+  .sd-ticker:hover .sd-ticker-animate,
+  .sd-ticker:focus-within .sd-ticker-animate {
     animation-play-state: paused;
   }
 

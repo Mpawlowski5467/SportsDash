@@ -30,14 +30,22 @@ import { TeamDetailProvider } from "./components/TeamDetailPanel";
 import SportsDashSplash from "./components/loaders/SportsDashSplash";
 import SportsDashSpinner from "./components/loaders/SportsDashSpinner";
 import { ManageTeamsContext } from "./components/ManageTeamsContext";
+import {
+  ActiveTabContext,
+  NavigateContext,
+  type NavigationParams,
+  type NavigationRequest,
+} from "./components/NavigateContext";
 
-// Heavy, route-specific deps (MapLibre ~megabyte, FullCalendar) are split out
+// Heavy, route-specific views (MapLibre's ~megabyte, the Calendar) are split out
 // so they only download when their tab is first opened — keeping the initial
-// bundle small. LoaderGallery is a dev-only showcase (#sd-loaders), so it
-// stays out of the production critical path too.
+// bundle small. LoaderGallery and PiecesGallery are dev-only showcases
+// (#sd-loaders, #sd-pieces), so they stay out of the production critical
+// path too.
 const MapView = lazy(() => import("./views/MapView"));
 const CalendarView = lazy(() => import("./views/CalendarView"));
 const LoaderGallery = lazy(() => import("./components/loaders/LoaderGallery"));
+const PiecesGallery = lazy(() => import("./components/bs/PiecesGallery"));
 
 const VIEWS: Record<TabId, ComponentType> = {
   today: TodayView,
@@ -57,13 +65,9 @@ function Splash({ error, onRetry }: { error?: string; onRetry?: () => void }) {
     <SportsDashSplash>
       {error !== undefined && (
         <div className="flex items-center gap-3">
-          <p className="text-sm text-red-400">{error}</p>
+          <p className="m-0 font-medium text-alert">{error}</p>
           {onRetry && (
-            <button
-              type="button"
-              onClick={onRetry}
-              className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
-            >
+            <button type="button" onClick={onRetry} className="bs-btn">
               Retry
             </button>
           )}
@@ -84,6 +88,19 @@ export default function App() {
     return (
       <Suspense fallback={null}>
         <LoaderGallery />
+      </Suspense>
+    );
+  }
+
+  // The shared Box Score pieces in every theme, at /#sd-pieces. It may carry
+  // a query (#sd-pieces?theme=dark&palette=team), hence the prefix match.
+  if (
+    typeof window !== "undefined" &&
+    window.location.hash.startsWith("#sd-pieces")
+  ) {
+    return (
+      <Suspense fallback={null}>
+        <PiecesGallery />
       </Suspense>
     );
   }
@@ -123,6 +140,25 @@ function AppContent() {
     setActive("map");
   }, []);
   const clearFocus = useCallback(() => setMapFocus(null), []);
+
+  // A view sending the user to another tab ("Full standings" on Today). A
+  // click in the nav leaves the page where it is; this is a jump from deep
+  // in one page to the top of another, so it scrolls there and hands the
+  // keyboard to the page instead of dropping focus on <body>.
+  const [navRequest, setNavRequest] = useState<NavigationRequest | null>(null);
+  const navigate = useCallback((tab: TabId, params?: NavigationParams) => {
+    setNavRequest({ tab, ...params, nonce: Date.now() });
+    setActive(tab);
+  }, []);
+  useEffect(() => {
+    if (navRequest === null) return;
+    window.scrollTo(0, 0);
+    document.getElementById("sd-main")?.focus({ preventScroll: true });
+  }, [navRequest]);
+  const navigation = useMemo(
+    () => ({ navigate, request: navRequest }),
+    [navigate, navRequest],
+  );
   const mapFocusValue = useMemo(
     () => ({ target: mapFocus, requestFocus, clear: clearFocus }),
     [mapFocus, requestFocus, clearFocus],
@@ -200,6 +236,8 @@ function AppContent() {
 
   return (
     <MapFocusContext.Provider value={mapFocusValue}>
+    <NavigateContext.Provider value={navigation}>
+    <ActiveTabContext.Provider value={active}>
     <ManageTeamsContext.Provider value={openManageTeams}>
     <TeamDetailProvider>
       <Layout
@@ -264,6 +302,8 @@ function AppContent() {
       )}
     </TeamDetailProvider>
     </ManageTeamsContext.Provider>
+    </ActiveTabContext.Provider>
+    </NavigateContext.Provider>
     </MapFocusContext.Provider>
   );
 }

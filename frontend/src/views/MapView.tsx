@@ -178,7 +178,7 @@ type Selection =
 /** Reusable error/empty/loading frame with the dark kiosk chrome. */
 function MapFrame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-[calc(100vh-6rem)] min-h-[420px] items-center justify-center overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
+    <div className="flex h-[calc(100vh-var(--bs-masthead-h)-7.5rem)] min-h-[420px] items-center justify-center overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
       {children}
     </div>
   );
@@ -1628,7 +1628,7 @@ export default function MapView() {
       <div className="relative">
         <div
           ref={containerRef}
-          className="h-[calc(100dvh-8rem)] min-h-[420px] w-full overflow-hidden rounded-lg border border-zinc-800 lg:h-[calc(100dvh-5rem)]"
+          className="h-[calc(100dvh-var(--bs-masthead-h)-7.5rem)] min-h-[420px] w-full overflow-hidden rounded-lg border border-zinc-800"
         />
 
         {/* ALL map controls float INSIDE the map box (top-left): mode toggle,

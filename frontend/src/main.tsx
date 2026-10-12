@@ -3,14 +3,14 @@ import { startFreshnessKeeper } from "./lib/freshness";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
-import { applyTheme, getTheme } from "./lib/theme";
+import { applyAppearance, getAppearance } from "./lib/theme";
 import "./index.css";
 
-// Re-apply the persisted theme through the canonical applier. The inline
-// script in index.html already set `data-theme` to avoid a flash; this is
-// the authoritative pass (keeps the `dark` class in sync via theme.ts) and
-// covers the dev server where the inline script and bundle race.
-applyTheme(getTheme());
+// Re-apply the persisted appearance through the canonical applier. The inline
+// script in index.html already set the attributes to avoid a flash; this is
+// the authoritative pass and covers the dev server, where the inline script
+// and the bundle race.
+applyAppearance(getAppearance());
 
 const queryClient = new QueryClient({
   defaultOptions: {

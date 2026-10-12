@@ -385,6 +385,7 @@ Route table (all under `/api`, response models from `schemas.py`):
 Stack: React 19 + TypeScript ~5.8, Vite ^6, Tailwind **v4** via
 `@tailwindcss/vite` (CSS-first config — `@import "tailwindcss";` in
 `src/index.css`, no tailwind.config), TanStack Query ^5, FullCalendar ^6.1.
+(FullCalendar was removed on 2026-10-11: see "Box Score: the Calendar view".)
 Dark-mode-first kiosk styling: near-black background (`bg-zinc-950`),
 zinc-100 text, dense layout, team colors as accents. No router — tab
 switching via `useState` in `App.tsx`.
@@ -489,6 +490,8 @@ pulse / FINAL), followed-team sides accented with their color.
 
 ### Calendar view
 
+> Superseded on 2026-10-11 by "Box Score: the Calendar view" below; kept as history.
+
 FullCalendar `dayGridMonth` (toggle to `timeGridWeek`), dark-themed via
 `src/calendar.css` overriding `--fc-*` CSS vars. Events from
 `useSchedule` over the visible range (track via `datesSet`), colored by
@@ -552,7 +555,7 @@ entry's `source.title` when present.
   exactly as today (single table).
 - NewsView: left-aligned thumbnail (h-16 w-24 rounded object-cover) when
   `image_url` present, with `onError` hiding the img; layout unchanged
-  when absent.
+  when absent. (Superseded on 2026-10-11 by "Box Score: the News view".)
 
 ## Phase 2: NHL + NFL (per ROADMAP.md)
 
@@ -1038,6 +1041,8 @@ type hints, and the never-raise discipline.
   `team_id` arg) and set the download filename to
   `sportsdash-{team_id}.ics`; 404 unknown team. All-games behavior
   unchanged when absent.
+- (Layout superseded on 2026-10-11 by "Box Score: the Calendar view": the
+  export is now the last item of the Subscribe menu.)
 - Frontend CalendarView: alongside "Export .ics", a "Subscribe"
   control offering a `webcal://{host}/api/calendar.ics` URL (all) and a
   per-followed-team `webcal://.../api/calendar.ics?team_id={id}` — a small
@@ -1136,7 +1141,8 @@ and re-theme automatically. Only targeted files change.
   bootstrap), or a returning user is silently reset to the default.
 - `src/calendar.css`: change the hardcoded `--fc-*` hex values to reference
   the palette vars (e.g. `--fc-page-bg-color: var(--color-zinc-950)`), so
-  FullCalendar re-themes with the rest.
+  FullCalendar re-themes with the rest. (`src/calendar.css` was deleted on
+  2026-10-11 with FullCalendar: see "Box Score: the Calendar view".)
 ### Setup: the country drill-down
 
 `GET /api/setup/leagues` carries two things the wizard's first step needs:
@@ -1180,6 +1186,571 @@ league_count}`.
   the color of the team currently in focus (e.g. the selected team in
   Roster/Results/Standings, or the first followed team on Today). Keep it
   simple and safe; default accent when none.
+
+### Box Score theming (2026-10-10 — SUPERSEDES the theming rules above)
+
+The "B · Box Score" redesign replaces the palette remap as the way the app
+is coloured. Where this section and the Phase 8 text above disagree, this
+section wins; the Phase 8 text is kept as history.
+
+- **Tokens, not palettes.** `src/index.css` defines semantic tokens
+  (`--bs-ground`, `--bs-sheet`, `--bs-tint`, `--bs-rule`, `--bs-hair`,
+  `--bs-ink`, `--bs-ink-2`, `--bs-muted`, `--bs-spot`, `--bs-on-spot`,
+  `--bs-spot-text`, `--bs-block`, `--bs-on-block`, `--bs-tab`, `--bs-band`,
+  `--bs-alert`, `--bs-draw` and their companions) and exposes them as
+  Tailwind utilities (`bg-sheet`, `text-ink`, `border-rule`, …) through
+  `@theme inline`. New code uses those utilities and the `bs-*` component
+  classes; a theme is a token swap, never a second set of components.
+- **The legacy ramp is a bridge.** `--color-zinc-*`, `--color-amber-*`,
+  `--color-red-*`, `--color-emerald-*` (and the few sky/rose/orange stops in
+  use) are pointed at the tokens so un-migrated components follow every
+  theme. Amber resolves to ink: Box Score has no accent text. A family is
+  deleted from that block when nothing uses it.
+- **Two persisted choices.** `localStorage["sportsdash.theme"]` is the BASE:
+  `light | dark | contrast`, default `light`. `localStorage["sportsdash.palette"]`
+  is the COLOURS: `brand | team`, default `brand`. They land on `<html>` as
+  `data-theme` and `data-palette`. Team applies on the light and dark bases
+  only; High contrast keeps its own spot so its AAA guarantee holds.
+- **Every id ever stored still resolves** (`STORED_THEME_IDS` in
+  `src/lib/theme.ts`, mirrored by the `STORED` table in the `index.html`
+  bootstrap; `theme.test.ts` fails if the two drift): `light`, `dark`,
+  `contrast` keep their base; `custom` and `stadium` become `dark` + `team`;
+  `floodlight` and `ember` become `dark`; `newsprint` becomes `light`. An
+  explicit stored palette wins over the one an old id implies. Nothing
+  stored means `light` + `brand`.
+- **Favourite team.** `localStorage["sportsdash.favoriteTeam"]` holds a
+  followed team's id. Unset, or pointing at a team no longer followed, it
+  falls back to the first followed team with a colour (`pickFavoriteTeam`).
+- **Team palette.** The API carries ONE colour per team, so only the spot
+  is recoloured; section tabs, the current nav item and the score line stay
+  ink. `teamAccentVars` measures the colour against the base and sets
+  `--sd-accent`, `--sd-on-accent`, `--sd-accent-text`, `--sd-accent-edge`
+  and `--sd-accent-edge-block` on `<html>`. Text on the fill is ink or white
+  by measured contrast. A colour too dark to see on the dark base has its
+  lightness raised (hue and saturation kept) to 3:1 against the sheet; a
+  pale colour on the light base is left as it is and keylined. The result is
+  cached in `localStorage["sportsdash.teamAccent"]` so the bootstrap can
+  paint it on the first frame.
+- **Contrast floors, enforced by tests.** Every text token clears 4.5:1 on
+  every surface it is used on in Light and Dark, and 7:1 in High contrast;
+  the Team palette clears 4.5:1 for every colour in a 4,096-colour sweep.
+- **Radius is zero.** The Tailwind radius scale is flattened in `@theme`.
+- **Fonts.** Barlow (400/500/600/700) is `--font-sans`; Barlow Condensed
+  (500/600/700) is `--font-condensed`. Both are self-hosted woff2 in
+  `public/fonts` (latin + latin-ext), because the Tauri build has no network
+  font loader.
+- **Kiosk scale.** Kiosk mode sets `data-kiosk` on `<html>`, which grows the
+  root font size with the viewport (`clamp(100%, 100vw / 90, 175%)`), so the
+  1440px design fills a wall display. Sizes are therefore written in rem;
+  rule weights stay in px.
+- **PWA colours** follow the light default: `theme_color` `#ffffff`,
+  `background_color` `#f1f2f4`. The `theme-color` and `color-scheme` metas
+  are rewritten per base by the bootstrap and by `applyAppearance`.
+
+### Box Score: the Today view (2026-10-10 — SUPERSEDES the Today layout notes above)
+
+Today is laid out by phase instead of as one chronological list. Nothing
+about the API changed; the view only asks for more of what already exists.
+
+- **Sections.** Day header with live / upcoming / final counts. Left
+  column: `Live now` (one hero, the first live game a followed team is in,
+  else the first live game; other live games as `Also live` rows under it),
+  the games still to come (`Tonight` when every one starts at 5 PM or later,
+  else `Later today`; postponed and canceled games stay here with the status
+  in place of the time), `Final today`, yesterday's finals (`Last night` /
+  `Yesterday` by the same rule), then `Leaderboards` (golf, racing). Right
+  column: a standings box per followed league, then `On this day`. Full
+  width: `Next 7 days`.
+- **Every game row is one button** that opens `GameDetailModal`, as before.
+  Its accessible name carries the state and score, because the name replaces
+  the row's content for a screen reader.
+- **Requests, beyond `/today`, `/teams`, `/history/on-this-day` and the
+  batched `/odds`:** one `/schedule` for yesterday through day +6 (last
+  night and the week strip), one `/events` for the same week, `/standings`
+  per followed league that has a team table (at most three),
+  `/results/{team}?limit=5` per followed team shown in a box, and
+  `/games/{id}` for the hero only. Today never unmounts, so the schedule,
+  standings and results refresh every five minutes (opt-in
+  `refetchInterval` on `useSchedule` / `useStandings` / `useResults`; other
+  callers are unchanged). The hero's box score is polled while the game is
+  live AND Today is the tab on screen (`useGameDetail(id, { enabled })`,
+  `useIsActiveTab`): each poll costs the server three uncached provider
+  calls.
+- **Going to another tab from a view** uses `NavigateContext`:
+  `navigate(tab, { leagueId?, teamId? })`. The destination reads
+  `useNavigationRequest(tab)` and applies it once per `nonce`. The jump
+  scrolls to the top and moves focus to `<main id="sd-main">`.
+- **A break in play is said as one** (`lib/periodLabel.ts`): "Half time" in
+  soccer and after the second quarter, "End of Q1" elsewhere, with no clock
+  beside it. Baseball's own labels are written out ("Bottom 5th").
+- **Layout inside a column is chosen by the column's width** (container
+  queries), not the window's: the game lists switch to their columned form
+  at 56rem of their own width and restack below it.
+- **Days are the server's.** Day 0 is `/today`'s `date`; games are placed on
+  days with `dateKeyInZone(start_time, today.timezone)`.
+- **Left out because the API does not carry them** (never faked): hits and
+  errors in the line score, runners on base, outs and the count, the marker
+  for a half-inning in progress, regular-season series text, weather for a
+  live game, short city-style team names, a second team colour. "Play-by-play"
+  has no destination of its own, so the hero offers only "Box score".
+- **The live win probability** is the last point of
+  `summary.win_probability` only. The pre-game projection from `/odds` is
+  shown for games still to start and is never relabelled as a live number.
+- **A side with no colour** gets the neutral block. A followed side falls
+  back to its `/teams` colour, because games reached through a followed
+  team's schedule carry no colour on either side.
+- **Results are told by fill:** W solid, L outlined, D a mid-tone fill, from
+  the followed side's point of view; no square when both sides or neither
+  are followed. A fight's level round count is not a draw unless its method
+  says so.
+- **The standings box** shows each division (or single table) that holds a
+  followed team; a table longer than eight rows is cut to a seven-row window
+  around that team. Team sports only.
+- Pure logic lives in `views/today/model.ts` and is unit-tested there.
+
+### Box Score: the Results view (2026-10-10 — SUPERSEDES the Results layout notes elsewhere)
+
+One followed team's season, as mocked: the page head with the team and
+season controls, a strip of key figures, one results table per month, and
+a `Next up` strip. Nothing about the API changed.
+
+- **Team control.** A toggle button per followed team, each with its block;
+  past six followed teams the shared `Select` takes over. Another view can
+  ask for a team: `navigate("results", { teamId })`.
+- **Key figures.** Season record (written the sport's way: W-L, W-D-L for
+  soccer, W-L-OTL for hockey), the last 8 results with their form strip,
+  the streak, scored and allowed over the last 8 in the sport's own word
+  (runs, goals, points), and the place in the table with a second figure
+  (games back where the sport ranks by it, otherwise points or win
+  percentage). A tile whose data the sport does not have is not drawn (no
+  scored/allowed or record for MMA, no record for tennis).
+- **"Current season" is the whole season in play:** the provider's season
+  list (`/history/results/{team}?season=K`) with the stored results laid
+  over it. Stored results alone have holes whenever the app was off, and a
+  hole silently corrupts the streak and the last-8 figures. There is ONE
+  season key, read from the live standings label (`seasonKey` in the
+  model); the other year of a two-year label is never tried, because the
+  backend answers "no such season" and a provider failure alike and the
+  wrong year would file last season's games under this one. With no label
+  and no safe guess there is no key, and the stored results stand alone.
+  - The stored results wait at most 2 s for that list (so a streak the
+    list is about to correct is not flashed first); after that they go up
+    alone and the list is merged in when it lands.
+  - A 404 for the list is an answer and is not retried; any other failure
+    of the season in play is retried once, then asked for again every
+    10 minutes while the tab is visible. A past season is asked for once.
+  - The Season control names the season in play by its label ("2026-27"),
+    not "Current season".
+- **Standings are never requested by season** from this view: that request
+  stores the table for good and the browser cannot always tell which year
+  is still in play. A past season therefore shows three tiles, not five.
+- **Rows are written from the selected team's side:** vs / at, the
+  opponent's block and full name, the result square, own score first. A
+  "Box score" button appears only on games the API has stored
+  (`/games/{id}` is a 404 for the rest). A fight shows its method of
+  victory instead of round counts.
+- **Requests:** `/results/{team}`, the season list above, `/standings/{league}`
+  (live only), `/schedule/{team}` from yesterday to +45 days, and the shared
+  `/today` query. When Today reports one of the team's games final and the
+  results do not have it yet, they are refetched once. While the schedule
+  holds a live game that Today no longer carries (one running past
+  midnight), the schedule is re-read every 60 s.
+- **Left out because the API does not carry them:** per-game pitchers,
+  attendance and duration; short team names; a second team colour; a
+  neutral-site marker.
+- Pure logic lives in `views/results/model.ts` and is unit-tested there.
+
+### Box Score: the League view (2026-10-10 — SUPERSEDES the League layout notes elsewhere)
+
+One page with one league picker and one season picker for its three
+sub-views (they used to keep their own), and a tablist: Standings, Leaders,
+Bracket. Nothing about the API changed.
+
+- **Standings is the mocked page:** the conference toggle and legend, the
+  tables with team blocks, the `Leader` tag and a note beside each tab
+  ("X ahead by N games", or points for sports ranked on them), the top ten
+  of the league's stat board with a bar measured against the leader, and a
+  panel for a followed team (record, place, recent form, next up, recent
+  results) with a switcher when several followed teams are in the league.
+  A league with conferences AND divisions shows one conference at a time,
+  opening on the one that holds a followed team; flat groups are all shown.
+  A single table (every soccer league) puts the leaders block and the
+  panel beside it rather than under it.
+- **Leaders and Bracket are restyled, not re-laid-out.** Bracket shows the
+  page's league; a league with no bracket says so. On a past season those
+  two sub-views say "current season only": `/leaders`, `/scorers` and
+  `/bracket` take no season.
+- **Another view can ask for a league:** `navigate("league", { leagueId,
+  group? })` selects it once and opens Standings; `group` names the
+  conference to open on (Today's "Full standings" passes the one its box
+  shows), and without it the view picks its own.
+- **Team colours for rows that carry none** come from the setup catalog
+  (`/setup/teams/{league}`, ESPN team sports only), joined by name or code
+  with the standings and `/teams`. Standings rows carry no colour of their
+  own.
+- **Requests:** `/standings/{league}` on every sub-view (it names the page),
+  `/leaders` and `/scorers` on Standings and Leaders, `/bracket` on Bracket,
+  `/setup/teams/{league}`, and for the panel `/results/{team}?limit=5` and
+  `/schedule/{team}`, both re-read every 60 s while the panel is up.
+- The tablist keeps `role="tab"` buttons named Standings / Leaders /
+  Bracket and the league picker stays `button[aria-label="Choose league"]`
+  with `role="option"` items: the screenshot script finds them that way.
+- **Left out because the API does not carry them:** short city names in
+  the notes, a readable stat name beyond the three boards the app knows,
+  an "updated" time on Leaders and Bracket, player pages behind leader rows.
+- Pure logic lives in `views/league/model.ts` and is unit-tested there.
+
+### Box Score: the Calendar view (2026-10-11 — SUPERSEDES "Calendar view" above and every FullCalendar note elsewhere)
+
+Built by hand, as mocked: the range and its controls beside the title, the
+week as seven day columns of score cards, then `Coming up` and a `Legend`.
+FullCalendar, its hour-by-hour week, `src/calendar.css` and the four
+`@fullcalendar/*` packages are gone. Nothing about the API changed.
+
+- **Three views behind one tablist** (`role="tab"` buttons Week / Month /
+  Agenda; Week is the default and the mocked page). Month is a grid of days
+  in the same language: a pair of blocks and a time or score per game, four
+  at most, then "+N more". A day there is a button that CHOOSES the day, and
+  that day's games are listed in full beside the grid, or under it: under
+  it, at full width, where there is no room beside, and also whenever some
+  day of the month holds more than four rows (`busiestDayRows`; the
+  month's busiest day, not the chosen one, so the grid does not change
+  width as days are chosen). Agenda is the range on screen as a plain list.
+  On a narrow sheet (container queries, not the window) the week is a list
+  of days and a month's cell holds a square per game (three at most; a
+  busier day shows two and a "+", which fit on one line in a 390px
+  phone's cell). Going from Month back to
+  Week opens the week of the day chosen in the month, else the week the
+  month was opened from (`weekFromMonth`).
+- **The week starts on Monday:** `WEEK_STARTS_ON` in
+  `views/calendar/model.ts` is the one place that says so.
+- **Days.** A game sits on the VIEWER's local day it starts on, and "today"
+  is the viewer's clock, read every 30 s, so a card's day and its start time
+  are in one zone. (Today and Results take the server's day.) A tournament's
+  days are the SERVER's (`/meta` timezone), as in the `.ics` feed. Until the
+  user steps to another range the view follows today, so a kiosk left on
+  "this week" moves to the new week by itself at midnight.
+- **Every card and list row is one button** that opens `GameDetailModal`; a
+  tournament's bar or row opens `EventLeaderboardModal`. The button's name
+  replaces its content, so it carries all of it: the state, the score, the
+  result, the venue, the competition or round, and the forecast. A
+  tournament's list row adds which day of it the row is, the venue and the
+  followed athletes' places, so its rows on different days have different
+  names. Dates and start times are `<time dateTime>` elements.
+- **A card's rules beyond the mockup.** Postponed / Canceled stand in place
+  of the time, with no score and no square, and are in none of the three
+  counters (a line under them says how many). A draw is a `D` square. A game
+  between two followed teams has no square until the team filter picks a
+  side. A game no followed team is in carries its competition's name.
+  Tennis and MMA sides have no Away / Home, and a finished fight shows "Won"
+  and how it ended, never a round count. A day with more than three games
+  draws compact cards; no game is ever left out of a week.
+- **Tournaments (golf, racing)** are a band of bars under the day headers,
+  one lane per overlap, bars across a month's weeks, and rows in the lists.
+  A team filter hides them, and golfers and drivers are not offered by the
+  filter or as per-team feeds; a note says so. A list shows a tournament on
+  each day it runs, and the row is about THAT day (`eventRow`): the Live
+  chip, the round and the followed athletes' places stand only on the day
+  being played; its other days say "Day N of M". A place or a score is
+  read from a board only once the tournament is in progress or final:
+  before the first round the backend's board is the entry list (every score
+  level, numbered in the order it came), so a row shows the followed name
+  alone and the Legend says "In the field at ...", never "T37 at ...".
+  While `/events` has not arrived or has failed, the Legend's athlete rows
+  say so ("Loading tournaments…" / "Couldn't load tournaments") instead of
+  "Not on a leaderboard", and an otherwise empty Coming up takes its
+  loading or failed state (with Retry) from that request.
+- **Controls:** on the first line Previous / the range / Next / Today and
+  the three counters, as mocked; on the second the view tabs, the team
+  filter (the shared `Select`, `button[aria-label="Filter by team"]`),
+  Refresh (a 44px icon button that re-reads what is stored; its icon turns
+  only where motion is allowed) and Subscribe, a menu of `webcal://` feeds
+  (all follows, then one per team) each with Copy, plus "Download .ics
+  file", which used to be a button of its own. In the menu Enter or Space
+  act on an item and Escape closes it wherever focus is. Where the
+  controls stand must not depend on how long the range's name is: from
+  40rem up the name has a slot as wide as the longest week of a year, and
+  below that its line is the full width with the name centred between the
+  two arrows, and the counters are a line of their own. The counters stay
+  drawn while a range is on its way, with dashes for their figures, so
+  nothing under them moves. One word names the games everywhere on the
+  page ("games" / "matches" / "bouts", `wordsForRange`): what the range
+  holds, or in an empty range what the followed competitions play.
+- **Requests:** `/schedule?start&end` and `/events?start&end` for the range
+  padded by a day on each side (the two zones can differ), the same pair for
+  the seven days of Coming up, `/schedule/weather` for scheduled outdoor
+  games, and the shared `/teams`, `/meta` and `/today`. Every count on the
+  page is taken AFTER the padding is cut away. The polled `/today` payload
+  is laid over the schedule by game id, which is what turns a card live. The
+  schedule itself is re-read every 60 s only while a game on screen is live
+  and Calendar is the tab showing, once when a live game ends, at local
+  midnight, and on coming back to the tab after five minutes. A batch of
+  forecasts is read again once it is 30 minutes old, checked on the 30 s
+  clock while Calendar is the tab showing (so a kiosk does not show
+  Tuesday's forecast on Friday).
+- **For scripts:** the grid on screen carries `data-calendar-grid="week" |
+  "month" | "agenda"` (the screenshot script waits for the week), and a
+  month's days are `button[data-day="YYYY-MM-DD"]`.
+- **Left out because the API does not carry them:** a team's city on its
+  own and short team names (the notes and the Legend use full names), a
+  second team colour, the long form of a period for sports other than
+  baseball, a neutral-site flag (Away / Home is by position), and the
+  weather at game time (only the day's high and chance of precipitation
+  are shown). That day is the UTC date of the start
+  (`services/game_detail.py`), which for an evening game in the Americas is
+  mostly the day after at the venue; the view cannot tell which case it is
+  in, so the line is named "Forecast", not "Game-day forecast". The venue's
+  own date would be backend work.
+- Pure logic lives in `views/calendar/model.ts` and is unit-tested there;
+  `eventSpans.ts` and `gameSideFollows.ts` beside it keep their own suites.
+
+### Box Score: the Matchup view (2026-10-11 — SUPERSEDES the Matchup layout notes elsewhere)
+
+One game at a time, previewed or followed live, as mocked: the two sides
+with their records and the score, each side's chance to win, the upset
+radar, the two sides' meetings, the followed side's last results, and where
+both stand in the table. Kept from the old view and restyled: the betting
+lines, projected lineups and injuries. A section with no data is not drawn.
+Nothing about the API changed.
+
+- **Choosing a game.** On offer are the games in progress, then those still
+  to start over the next 14 days, soonest first. Three get a button each
+  (four when there are only four) and the rest go in the shared `Select`
+  (`button[aria-label="Choose another game"]`); the game on screen always
+  has a button. With no choice made the page shows the first on offer and
+  moves on when that game ends, which is what a kiosk shows. A game the
+  reader chose stays on screen when it ends or is called off, while it is
+  within 12 hours of its start either way: a game called off days ahead
+  does not hold the page until its day comes.
+- **Whose day.** Which games are on offer goes by the server's day
+  (`/today`'s `date` and `timezone`). The day words go by the viewer's own
+  day, the one the clock times are printed in: "Tonight", "Today" and
+  "Tomorrow" in the tab and the status block, and a bare start time in a
+  picker button, a dropdown option or a radar card (any other day shows its
+  date). The two days differ for an hour or more every night when the
+  server and the viewer are in different zones, and a game at 7:00 PM
+  tomorrow must never read "Tonight 7:00 PM".
+- **The forecast.** `Weather.temperature`, `condition` and `wind_speed` are
+  the venue's weather at the moment the server asked; only `high`, `low`
+  and `precip_chance` are a day's forecast, and that day is the UTC date
+  the game starts in (`services/game_detail.py`), which for an evening game
+  in the Americas is mostly the day after at the venue. The fact cell is
+  therefore "Forecast", the Calendar's word for the same figures, never
+  "Game-day forecast" or "Weather". It prints those three alone ("High 88°F
+  · Low 63°F · 5% chance of precipitation") and only for a game still
+  scheduled: a copy fetched before the start is not shown once the game is
+  live or over.
+- **Win probability.** "Before the start" is `GameOdds.home_win_pct /
+  away_win_pct`, the provider's pre-game projection. It was checked against
+  the live feeds on 2026-10-11 and does not move during or after a game, so
+  it keeps that label in every phase. "Right now" is only ever the last
+  point of `GameSummary.win_probability`, and only while the game is in
+  progress. When the feed sends one side's figure the other is its
+  complement in baseball and basketball only. The betting lines are a strip
+  at the foot of the sheet, and stand alone as "Betting lines" when there is
+  no probability row. They are the sportsbook's pre-game lines and do not
+  move with the score, so once the game is live or over that section's note
+  reads "What the sportsbook priced before the start". The notes say
+  "player" or "fighter" where the sides are people. The bar is in the two
+  teams' colours unless one is
+  missing, would dissolve into the sheet, or the two are alike; then the
+  favoured share is solid and the other outlined.
+- **Upset radar** (`components/UpsetRadar`) flags two things and says so
+  under the cards: the model's favourite is the betting underdog (the signal
+  it always had), and the side in front of a live game was given under 50%
+  before the start. A card is a button that puts its game on screen. The
+  underdog's percentage is the one the "Before the start" row prints, and a
+  side that rounds to 50% is not flagged. The odds batch is read again
+  every 10 minutes while Matchup is the tab on screen, so a projection
+  published after the page opened still reaches the radar. The batch is
+  keyed by the list of games; when the list changes (a game ends, the day
+  turns) the last list's odds stand in until the new ones arrive (the
+  freshness keeper's key default for `game-odds`; the hook itself must set
+  no `placeholderData`), so the cards do not give way to "Scanning the
+  slate" and come back.
+- **Meetings are not called a season series:** the API cannot scope them to
+  a season. The newest three are drawn in full and tallied, older ones
+  follow in a compact list, and the cross-season record closes the sheet.
+  A meeting with no result is listed but not counted, and the tally then
+  says so ("over two of the three meetings below").
+  "Box score" is offered only for the meetings in `head_to_head` (stored
+  games); those that came only with `head_to_head_record` would answer 404.
+- **"{Team}, last N"** is the followed side's finished games, built as
+  Results builds them (stored results laid over the season list), with the
+  other side's form at the foot. With both sides followed it opens on the
+  favourite team if it is playing, else the home side, with a switch. With
+  neither followed there is no table, only both sides' form squares.
+- **Standings context:** a panel per side that has a row. "Full standings"
+  is `navigate("league", { leagueId, group })`.
+- **Sheets that share a row** (meetings, last N, standings) are stretched
+  to one height so their edges line up, but their content is not: it keeps
+  the height it is drawn at, and the room left over in a shorter sheet is
+  tint under a hairline (`SpareRoom` in `views/matchup/parts`), as in the
+  Calendar's Legend. Nothing is spread out or centred to fill a stretched
+  sheet.
+- **Projected lineups and injuries** are two sections below the mocked
+  ones, drawn as Box Score tables with the old disclaimer and "lineup
+  unavailable" line. `components/LineupView` is unchanged and still used by
+  the game detail modal, which "Box score" opens once a game has started.
+- **Requests:** the shared `/today` and `/teams`; `/schedule` from yesterday
+  to +14 days (every 5 minutes, 60 s while it holds a live game Today has
+  dropped); `/matchup/{id}` once per game and again every 10 minutes while
+  the tab is on screen; `/games/{id}` every 30 s, only while the game is
+  live AND Matchup is the tab on screen; `/standings/{league}` every 5
+  minutes; the batched `/odds` for the radar, once per list of games and
+  again every 10 minutes while the tab is on screen;
+  `/results/{team}?limit=50`
+  and the season list for the last-N table; and `/setup/teams/{league}` for
+  team colours and codes, for at most six leagues of the games on offer.
+  The game on screen is the newest copy among those payloads. When the
+  server's day changes the schedule's range does too; the last answer
+  stands in until the new range has answered.
+- **Left out because the API does not carry them:** the venue's city,
+  weather during a live game (a forecast exists only for an outdoor game
+  still to start), short city-style team names, a second team colour, a
+  play-by-play page to open, a season to scope the series to, and a
+  pre-game figure for soccer, hockey, tennis and MMA (no row is drawn).
+- Pure logic lives in `views/matchup/model.ts` and is unit-tested there.
+
+### Box Score: the News view (2026-10-11 — SUPERSEDES the News layout notes elsewhere)
+
+As mocked: the newest story large (photo slot, who it is for, headline,
+summary, source and age, "Read at source"), the rest in a list (date, team
+block, who and where, headline), and a filter to one follow. The in-app
+reader is kept, restyled as a Box Score sheet. Nothing about the API
+changed.
+
+- **Every filter has its own feed.** The view asks `/news` once for
+  everything and once per followed team, athlete and whole competition
+  (`useNewsFeeds`), each with `limit=51`: 50 are listed, and the 51st only
+  proves there are more. A filter's count is the stories it lists when
+  chosen, written "50+" when it holds more. The unscoped feed is the newest
+  50 of everything, in which one busy team crowds the rest out, so a team's
+  share of it is never used as its count.
+- **Nothing is stated that the loaded data cannot prove.** A follow is
+  called without stories only when its own feed came back empty, a filter
+  that has not answered shows no number, and nothing is called "recent":
+  the API has no age filter. A date from another year than the current one
+  carries its year (in the date cell, the phone's date line, the top
+  story's date and the reader), since the feed is never pruned by age.
+- **The filter** is a row of segments (block, name, count) for up to six
+  follows. Below 1024px it is one strip that scrolls inside itself and
+  keeps the chosen segment, and the one with keyboard focus, in view; from
+  1024px a row that does not fit wraps onto a second. Past six follows it
+  is the shared `Select` (`button[aria-label="Show stories for"]`) with the
+  counts in the options. A whole competition is one segment with a neutral
+  block.
+- **Refresh** collects for the filter on screen (`POST /news/refresh`) and
+  says what it found, or that it failed, in a line under the head. It stays
+  focusable while busy, and its icon turns only where motion is allowed.
+  The line stays while the next refresh runs (so the page under it does not
+  move), is cleared by a change of filter, and is dropped when the day
+  changes, since it gives only a time of day. A refresh of everything whose
+  result lands on another filter's page says "across everything you
+  follow"; a failure points at "the stories below" only when there are
+  some.
+- **A row opens the reader; the arrow box on the row, and "Read at source"
+  on the top story and in the reader, open the story where it was
+  published** (new tab, `rel="noreferrer"`). `components/NewsDetailPanel`
+  is a modal dialog named by its headline: focus moves in and is held,
+  Escape and a click on the dimmed page close it, focus returns to the row,
+  the page behind does not scroll, and it is `inert` while closed. Where
+  the story is taller than the window its text is a named keyboard stop
+  ("Story text, scrolls") so the arrow keys can scroll it. As before, it
+  stays open if the tab changes under it (kiosk rotation).
+- **Headlines** drop the outlet's name from the end ("Headline - Outlet":
+  the outlet is `source`, printed beside it) and are set in capitals by
+  CSS, except a Turkish headline, which capitals without a language would
+  respell. A summary is shown only when it says more than the headline:
+  search-feed summaries repeat it, and some go on into other outlets'
+  headlines (the headline, the story's own outlet, then the rest), which is
+  not a summary either. The photo slot shows `image_url`, and
+  the team's colour block and code when there is none or it fails to load.
+- **People** (tennis, MMA, golf, racing follows) are labelled with their
+  league ("Carlos Alcaraz · ATP"): the backend keeps a tour's feed under
+  one of the followed players, so a story under a player may be the tour's.
+  A followed person without stories is told so ("No stories filed under X.
+  ATP's own coverage is kept under one of the people you follow there.")
+  only when another followed person of that league does list a story;
+  otherwise the line is the plain "No stories for X". Such a follow keeps a
+  row of its own when the other quiet follows share one.
+- **Requests:** `/teams`, and `/news?limit=51` once unscoped plus once per
+  follow, re-read every 5 minutes while News is the tab on screen. The view
+  stays mounted behind the other tabs and reads nothing there; on coming
+  back, a feed last read 5 minutes ago or more is read at once (so a kiosk
+  rotation lands on fresh stories). Refresh and a manage-teams save still
+  invalidate every news query. They are plain database reads; the server
+  collects from its sources hourly, or on Refresh.
+- **Left out because the API does not carry them:** the category chips
+  ("Injury", "Recap"), a team's short name in the filter, a second team
+  colour for the block's text (the text colour is measured instead), a
+  story's language, and a feed of one athlete's own stories.
+- Pure logic lives in `views/news/model.ts` and is unit-tested there.
+
+### Box Score: shared controls (2026-10-10)
+
+- `components/Select.tsx` is the Box Score listbox everywhere it is used: a
+  `.bs-btn` trigger (44px, `size="lg"` 52px for page-level pickers), a
+  square list with a 2px ink frame that hangs from whichever edge keeps it
+  on screen, 44px options, the chosen option an ink block. Its props,
+  keyboard, focus and aria contract are unchanged from the notes below:
+  the trigger's `aria-label` stays exactly the label it was given (tests
+  and the screenshot script find it that way) and the chosen value is
+  attached with `aria-describedby`.
+- `components/bs/Segmented` with `kind="tabs"` moves with the arrow keys
+  from the tab that has focus, not from the selected one.
+- `components/bs/` also holds `Notice` (a headline and a line in a sheet,
+  plain or `role="alert"` with an action), `Loading` (page-shaped
+  placeholders with a hidden `role="status"` sentence), `ScrollRegion` (a
+  strip that is a named group and a Tab stop only while it scrolls
+  sideways) and `MarkedName` (a follow marker that stays with the last word
+  of the name it marks).
+- Added on 2026-10-11 with Calendar, Matchup and News, all additive:
+  `Select` takes an optional `placeholder`, what the trigger says while
+  `value` is none of the options (the Matchup picker's "10 more games");
+  without it nothing changes. `components/bs` exports `RefreshIcon`, the
+  one icon of a Refresh button (`spinning` turns it only where motion is
+  allowed). `hooks.ts` has `useNewsFeeds(scopes, limit)` and
+  `useSetupTeamsFor(leagueIds)`, which read the same cache entries as
+  `useSetupTeams`. `lib/time.ts` has `monthShort`. `hasCatalog(league)` in
+  `views/league/model.ts` is the one statement of which leagues have a
+  setup catalog (ESPN team sports).
+- **The score flash** (added 2026-10-11, the step 5 gate). A score pulses
+  (`sd-score-flash`, 700 ms, size only) when its value changes in front of
+  the viewer, and at no other time. Every score in the app is drawn by
+  `components/bs/ScoreFigure` (`value`, and `of` = the game's id): the
+  score line, Today's hero and rows, the Calendar's cards and rows, and
+  Matchup's game sheet. It puts `.sd-score--flash` on for one pulse and
+  takes it off again; `.sd-score` alone is only the figure and never
+  animates. The pulse does NOT play:
+  - on a figure's first paint, or when a figure appears where there was
+    none (a game starting, a row moving to another list, Calendar switching
+    Week / Month / Agenda, the score line returning after the kiosk clock);
+  - when a view is shown again. Views stay mounted behind `hidden`
+    (`display: none`), and a CSS animation left on an element starts over
+    whenever the element is displayed again, so a class that stayed on
+    flashed every score on every tab switch and every kiosk rotation;
+  - when the score changed while its view was hidden (the figure is simply
+    the new one when the view comes back), or when the same place on the
+    page is given another game (`of` changes: Matchup's picker).
+  Reduced motion is the stylesheet's affair as everywhere else: the class
+  does nothing outside `prefers-reduced-motion: no-preference`. Do not put
+  an animation on `.sd-score` itself, and do not key a score element on its
+  value to restart one: use `ScoreFigure`. The part of the rule that needs
+  no page (`scoreMoved`, and `SCORE_FLASH_MS`, which must equal the
+  stylesheet's 700ms) is in `lib/scoreFlash.ts`; its test also reads
+  `index.css` and the six files that draw a score, and fails if the
+  animation goes back on `.sd-score`, leaves the reduced-motion gate, or a
+  view draws a score without `ScoreFigure`.
+- Also added by the step 5 gate, additive: `useNewsFeeds(scopes, limit,
+  poll = true)` stops its own five-minute reads when `poll` is false (News
+  passes whether it is the tab on screen). Since the merge of the freshness
+  keeper (2026-10-11) the keeper still re-reads a mounted `news` query past
+  its five-minute row while the browser tab is visible, whichever app tab
+  is showing; that is the keeper's rule and stands. The gate's
+  `keepPrevious` option on `useGameOdds` was removed in that merge: the
+  keeper's key default does the same for every caller, and
+  `freshness.test.ts` fails if the hook sets its own `placeholderData`.
 
 ### Kiosk fix (Layout.tsx)
 Make kiosk mode PERCEPTIBLE (current bug: pause-on-interaction + long
@@ -1397,7 +1968,9 @@ standings repeatedly; isolate failures; never raise. Daily refresh stays.
   already eases). Use CSS transitions / small keyframes (and the existing
   Tailwind) — NO heavy animation library unless a tiny one is justified;
   respect `prefers-reduced-motion`. Keep it tasteful, never distracting,
-  and theme-aware (works in all 4 themes).
+  and theme-aware (works in all 4 themes). (When the score-change flash
+  may play is fixed as of 2026-10-11: see "The score flash" under "Box
+  Score: shared controls".)
 
 ## Phase 12: national-team follow model + competition map plotting
 
@@ -1643,6 +2216,8 @@ removed.
   raw payload. Needs `MapTeamOut.group` (+ `types.ts`): the map route derives
   it from the league's stored standings (`_group_by_team`, casefolded
   team_name -> group). `next_match_time` drives the today highlight.
+- (The reader's look and wording are superseded on 2026-10-11 by "Box
+  Score: the News view"; it is still opened by a row.)
 - News: clicking a headline opens `components/NewsDetailPanel.tsx` (slide-in
   reader: image, title, source/date/team, full summary, "Read full article"
   link out) instead of navigating away. `NewsCard` is now a button calling
@@ -1704,6 +2279,8 @@ removed.
 - Code-split: `MapView` (MapLibre ~818KB) and `CalendarView` (FullCalendar
   ~229KB) are now `React.lazy` + `<Suspense>` in App.tsx — initial JS dropped
   ~384KB→97KB gzip; heavy chunks load only when their tab opens.
+  (CalendarView is still lazy, but no longer holds FullCalendar: see "Box
+  Score: the Calendar view", 2026-10-11.)
 
 ## Phase 18 — Golden Boot + World Cup nation pages
 
@@ -2189,6 +2766,11 @@ unchanged.
   `["events", start, end]`, default cache policy. `api.event(id)` was
   deliberately not added — the calendar's modal renders from the
   already-loaded event, as Today's does.
+- (Superseded in part on 2026-10-11 by "Box Score: the Calendar view":
+  `eventSpan` now returns `{eventId, sport, start, end}` only, and the
+  title, id prefix, glyphs and span colours described in this bullet and
+  the next went with FullCalendar. The exclusive `end` and the server-zone
+  days stand.)
 - `src/views/calendar/eventSpans.ts` — a pure helper with its own vitest
   suite, same pattern as `views/map/travel.ts`: `eventSpan(event) ->
   EventSpan {id, eventId, title, sport, start, end}` where `end` is the
@@ -2636,7 +3218,8 @@ provider_keys.
   "Racing"`, with `SPORT_ORDER` placing racing after golf (display
   order only — the union keeps backend enum order).
 - `views/calendar/eventSpans.ts` `SPORT_GLYPH.racing = "🏁"` — span
-  bars read "🏁 {race name}"; pinned in `eventSpans.test.ts`.
+  bars read "🏁 {race name}"; pinned in `eventSpans.test.ts`. (The glyph
+  map was removed on 2026-10-11: see "Box Score: the Calendar view".)
 - Verified sport-agnostic, no change needed: `LineupView.SURFACE`,
   `whyWatch.LATE_PERIOD/CLOSE_MARGIN`, `CalendarView.OUTDOOR_SPORTS`
   (games only — racing has none), and `StandingsView`'s per-sport
@@ -3008,7 +3591,9 @@ computed client-side from data the cards already receive (the existing
 
 - `lib/whyWatch.ts` (pure; colocated `whyWatch.test.ts`):
   - `detectSignal(game, odds): UpsetSignal | null` — moved verbatim from
-    `UpsetRadar.tsx`, which now imports it (zero behavior change).
+    `UpsetRadar.tsx`, which now imports it (zero behavior change). (The
+    radar's layout and its second, live signal are in "Box Score: the
+    Matchup view", 2026-10-11.)
     Needs all four of win pcts + moneylines; fires only when the market
     underdog's model win % > 50.
   - `watchability(game, odds): WhyWatch | null`

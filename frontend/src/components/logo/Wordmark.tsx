@@ -80,3 +80,25 @@ export function StackedLockup({ size = 88, sportsColor, className, style }: Lock
     </span>
   );
 }
+
+/**
+ * The Box Score masthead wordmark: Barlow Condensed 700, uppercase, with
+ * "Dash" set in ink on the spot fill. The spot is never text, so unlike the
+ * loaders' `Wordmark` above this one follows the theme: the fill is the
+ * favourite team's colour under the Team palette.
+ */
+export function MastheadWordmark({ className }: { className?: string }) {
+  return (
+    <span
+      className={
+        "whitespace-nowrap font-condensed font-bold uppercase leading-none tracking-[0.02em]" +
+        (className ? ` ${className}` : "")
+      }
+    >
+      Sports
+      <span className="ml-1 bg-spot px-1.5 text-on-spot shadow-[inset_0_0_0_1px_var(--bs-spot-edge)]">
+        Dash
+      </span>
+    </span>
+  );
+}

@@ -153,7 +153,7 @@ function LeagueChip({
             // instead of the whole-league follow it is here to offer.
             "sd-micro relative z-10 self-start rounded-full px-2 py-0.5 font-semibold transition-colors " +
             (followAll
-              ? "bg-emerald-500/25 text-emerald-200 hover:bg-emerald-500/35"
+              ? "bg-emerald-500/25 text-emerald-200 hover:bg-emerald-500/30"
               : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200")
           }
         >

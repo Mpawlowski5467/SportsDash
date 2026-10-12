@@ -1,84 +1,40 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import {
-  useBracket,
-  useSchedule,
-  useSetupLeagues,
-  useTeams,
-} from "../hooks";
-import { localDayOffset } from "../lib/time";
-import type { BracketSeries, BracketSide, Game } from "../types";
-import TeamLogo from "../components/TeamLogo";
-import Select, { type SelectOption } from "../components/Select";
+  Loading,
+  Notice,
+  ScrollRegion,
+  SpotChip,
+  TeamBlock,
+} from "../components/bs";
+import { useBracket, useSchedule } from "../hooks";
+import { errorText } from "../lib/errorText";
+import { formatShortDate, localDayOffset } from "../lib/time";
+import type { BracketSeries, BracketSide, Game, League } from "../types";
+import {
+  ROUNDS,
+  bracketKind,
+  halve,
+  roundOf,
+  shortSlot,
+  splitRound,
+  type RoundKey,
+  type TeamLookup,
+} from "./league/model";
+import { useTeamLookup } from "./league/parts";
 
 /**
- * Brackets across sports, drawn TWO-SIDED: the two halves of a draw flow
- * inward from the left and right edges and converge on a center final. For
- * the US leagues (NBA/MLB/NHL) the halves are the conferences (East left,
- * West right) and the center is the league championship; for soccer cups
- * (the World Cup) the halves are the top and bottom of the knockout draw.
- * A dropdown switches between every bracket you follow that's active.
+ * The selected league's bracket, drawn TWO-SIDED: the two halves of a draw
+ * flow inward from the left and right edges and converge on a center
+ * final. For the US leagues (NBA/MLB/NHL) the halves are the conferences
+ * (East left, West right) and the center is the league championship; for
+ * soccer cups (the World Cup) the halves are the top and bottom of the
+ * knockout draw.
+ *
+ * The league comes from the page's picker, shared with Standings and
+ * Leaders, so a league with no bracket says so here rather than being
+ * missing from a list of its own.
  */
-
-const US_SPORTS = new Set(["basketball", "baseball", "hockey"]);
-
-type RoundKey = "r32" | "r16" | "qf" | "sf" | "third" | "final";
-
-const ROUNDS: { key: RoundKey; label: string }[] = [
-  { key: "r32", label: "Round of 32" },
-  { key: "r16", label: "Round of 16" },
-  { key: "qf", label: "Quarterfinals" },
-  { key: "sf", label: "Semifinals" },
-  { key: "third", label: "Third Place" },
-  { key: "final", label: "Final" },
-];
-
-/** Which soccer knockout round a fixture belongs to, from its slot names. */
-function roundOf(game: Game): RoundKey | null {
-  const text = `${game.home.name} ${game.away.name}`;
-  if (/semifinal/i.test(text)) return /loser/i.test(text) ? "third" : "final";
-  if (/quarterfinal/i.test(text)) return "sf";
-  if (/round of 16/i.test(text)) return "qf";
-  if (/round of 32/i.test(text)) return "r16";
-  if (/group|place/i.test(text)) return "r32";
-  return null;
-}
-
-/** Split an ordered list into [left, right] halves for a symmetric draw. */
-function halve<T>(items: T[]): { left: T[]; right: T[] } {
-  const mid = Math.ceil(items.length / 2);
-  return { left: items.slice(0, mid), right: items.slice(mid) };
-}
-
-/**
- * Split one playoff round's series into left (East) / right (West) / center
- * (the championship). Uses the conference label when ESPN provides it; when
- * a round carries no conference labels it falls back to a lone series ==
- * center (the final) and otherwise halves the list by order — so the bracket
- * stays two-sided even when the upstream data is sparsely labeled.
- */
-function splitRound(series: BracketSeries[]): {
-  left: BracketSeries[];
-  right: BracketSeries[];
-  center: BracketSeries[];
-} {
-  const east = series.filter((s) => s.conference === "East");
-  const west = series.filter((s) => s.conference === "West");
-  const unlabeled = series.filter(
-    (s) => s.conference !== "East" && s.conference !== "West",
-  );
-  if (east.length > 0 || west.length > 0) {
-    // Conference-labeled round: East left, West right, anything unlabeled
-    // (the championship carries no conference) to the center.
-    return { left: east, right: west, center: unlabeled };
-  }
-  if (series.length <= 1) {
-    // A lone, unlabeled series is the final → center it.
-    return { left: [], right: [], center: series };
-  }
-  const { left, right } = halve(series);
-  return { left, right, center: [] };
-}
 
 interface BracketColumn {
   key: string;
@@ -86,85 +42,47 @@ interface BracketColumn {
   nodes: ReactNode[];
 }
 
-export default function BracketView() {
-  const teamsQuery = useTeams();
-  const setupLeaguesQuery = useSetupLeagues();
+export default function BracketView({
+  league,
+  seasonYear,
+  onCurrentSeason,
+}: {
+  league: League;
+  /** The archive season picked, or undefined for the season in progress. */
+  seasonYear: number | undefined;
+  onCurrentSeason: () => void;
+}) {
   const scheduleQuery = useSchedule(localDayOffset(-30), localDayOffset(75));
-  const [selected, setSelected] = useState<string | undefined>(undefined);
+  const lookup = useTeamLookup(league);
 
-  const leagueMeta = useMemo(() => {
-    const name: Record<string, string> = {};
-    const sport: Record<string, string> = {};
-    for (const league of teamsQuery.data?.leagues ?? []) {
-      name[league.id] = league.name;
-      sport[league.id] = league.sport;
-    }
-    const logo: Record<string, string | null> = {};
-    for (const cat of setupLeaguesQuery.data?.leagues ?? []) {
-      logo[cat.id] = cat.logo_url;
-    }
-    return { name, sport, logo };
-  }, [teamsQuery.data, setupLeaguesQuery.data]);
-
-  // Soccer cups with knockout fixtures in the schedule.
-  const soccerBracketIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const game of scheduleQuery.data ?? []) {
-      if (roundOf(game) !== null) ids.add(game.league_id);
-    }
-    return ids;
-  }, [scheduleQuery.data]);
-
-  // Bracket options: soccer cups first, then followed US-sport leagues (whose
-  // playoff bracket, if any, is fetched on demand).
-  const { options, kindById } = useMemo(() => {
-    const opts: SelectOption[] = [];
-    const kinds: Record<string, "soccer" | "playoff"> = {};
-    for (const id of soccerBracketIds) {
-      kinds[id] = "soccer";
-      opts.push({ id, label: leagueMeta.name[id] ?? id, logoUrl: leagueMeta.logo[id] });
-    }
-    for (const league of teamsQuery.data?.leagues ?? []) {
-      if (kinds[league.id] || !US_SPORTS.has(league.sport)) continue;
-      kinds[league.id] = "playoff";
-      opts.push({
-        id: league.id,
-        label: league.name,
-        logoUrl: leagueMeta.logo[league.id],
-      });
-    }
-    return { options: opts, kindById: kinds };
-  }, [soccerBracketIds, teamsQuery.data, leagueMeta]);
-
-  const selectedId = options.some((o) => o.id === selected)
-    ? selected
-    : options[0]?.id;
-  const kind = selectedId ? kindById[selectedId] : undefined;
-
-  // Soccer knockout fixtures grouped by round (used when kind === "soccer").
-  const byRound = useMemo(() => {
+  // A cup is known by its knockout fixtures: this league's games whose side
+  // names are still draw slots, grouped by round in start order.
+  const { byRound, hasKnockout } = useMemo(() => {
     const map: Record<RoundKey, Game[]> = {
       r32: [], r16: [], qf: [], sf: [], third: [], final: [],
     };
-    if (kind === "soccer") {
-      for (const game of scheduleQuery.data ?? []) {
-        if (game.league_id !== selectedId) continue;
-        const round = roundOf(game);
-        if (round) map[round].push(game);
-      }
-      for (const key of Object.keys(map) as RoundKey[]) {
-        map[key].sort((a, b) => a.start_time.localeCompare(b.start_time));
-      }
+    let found = false;
+    for (const game of scheduleQuery.data ?? []) {
+      if (game.league_id !== league.id) continue;
+      const round = roundOf(game);
+      if (round === null) continue;
+      map[round].push(game);
+      found = true;
     }
-    return map;
-  }, [scheduleQuery.data, selectedId, kind]);
+    for (const key of Object.keys(map) as RoundKey[]) {
+      map[key].sort((a, b) => a.start_time.localeCompare(b.start_time));
+    }
+    return { byRound: map, hasKnockout: found };
+  }, [scheduleQuery.data, league.id]);
 
-  // Playoff series (used when kind === "playoff").
-  const bracketQuery = useBracket(kind === "playoff" ? selectedId : undefined);
+  const kind = bracketKind(league.sport, hasKnockout);
+
+  // Playoff series are fetched only for a league that can have them.
+  const bracketQuery = useBracket(kind === "playoff" ? league.id : undefined);
 
   // Two-sided columns for a soccer cup: split each knockout round's draw into
   // a top (left) and bottom (right) half; the final + third-place sit center.
-  const soccer = useMemo(() => {
+  const cup = useMemo(() => {
     const left: BracketColumn[] = [];
     const right: BracketColumn[] = [];
     for (const round of ROUNDS) {
@@ -175,17 +93,17 @@ export default function BracketView() {
       left.push({
         key: round.key,
         label: round.label,
-        nodes: halves.left.map((g) => <SoccerGame key={g.id} game={g} />),
+        nodes: halves.left.map((g) => <CupGame key={g.id} game={g} />),
       });
       right.push({
         key: round.key,
         label: round.label,
-        nodes: halves.right.map((g) => <SoccerGame key={g.id} game={g} />),
+        nodes: halves.right.map((g) => <CupGame key={g.id} game={g} />),
       });
     }
     const centerNodes: ReactNode[] = [
-      ...byRound.final.map((g) => <SoccerGame key={g.id} game={g} />),
-      ...byRound.third.map((g) => <SoccerGame key={g.id} game={g} />),
+      ...byRound.final.map((g) => <CupGame key={g.id} game={g} center />),
+      ...byRound.third.map((g) => <CupGame key={g.id} game={g} center />),
     ];
     const center: BracketColumn | null = centerNodes.length
       ? {
@@ -206,76 +124,120 @@ export default function BracketView() {
     let centerLabel = "Final";
     for (const round of bracketQuery.data?.rounds ?? []) {
       const { left: l, right: r, center: c } = splitRound(round.series);
-      const card = (s: BracketSeries, i: number) => (
-        <SeriesCard key={`${round.name}-${i}`} series={s} />
+      const card = (center: boolean) => (s: BracketSeries, i: number) => (
+        <SeriesCard
+          key={`${round.name}-${center ? "c" : "s"}-${i}`}
+          series={s}
+          lookup={lookup}
+          center={center}
+        />
       );
       if (l.length > 0 || r.length > 0) {
-        left.push({ key: `${round.name}-L`, label: round.name, nodes: l.map(card) });
-        right.push({ key: `${round.name}-R`, label: round.name, nodes: r.map(card) });
+        left.push({
+          key: `${round.name}-L`,
+          label: round.name,
+          nodes: l.map(card(false)),
+        });
+        right.push({
+          key: `${round.name}-R`,
+          label: round.name,
+          nodes: r.map(card(false)),
+        });
       }
       if (c.length > 0) {
         centerLabel = round.name;
-        centerNodes.push(...c.map(card));
+        centerNodes.push(...c.map(card(true)));
       }
     }
     const center: BracketColumn | null = centerNodes.length
       ? { key: "center", label: centerLabel, nodes: centerNodes }
       : null;
     return { left, right, center };
-  }, [bracketQuery.data]);
+  }, [bracketQuery.data, lookup]);
 
-  if (options.length === 0) {
+  // No request here takes a season: a bracket is the postseason in progress.
+  if (seasonYear !== undefined) {
     return (
-      <p className="max-w-md text-sm text-zinc-500">
-        No brackets to show yet. Brackets appear for cup tournaments (like the
-        World Cup) and for the playoffs of leagues you follow once they're
-        underway.
-      </p>
+      <Notice
+        title="Bracket"
+        headline="Current season only"
+        action={{ label: "Current season", onClick: onCurrentSeason }}
+      >
+        The bracket is the postseason in progress. The {seasonYear}{" "}
+        season&rsquo;s bracket is not kept.
+      </Notice>
     );
   }
 
-  return (
-    <div className="flex flex-col gap-4">
-      {options.length > 1 && (
-        <Select
-          options={options}
-          value={selectedId}
-          onChange={setSelected}
-          ariaLabel="Choose bracket"
-        />
-      )}
+  if (kind === "cup") {
+    return (
+      <TwoSidedBracket
+        label={`${league.name} bracket`}
+        left={cup.left}
+        center={cup.center}
+        right={cup.right}
+      />
+    );
+  }
 
-      {kind === "soccer" ? (
-        soccer.left.length === 0 &&
-        soccer.right.length === 0 &&
-        soccer.center === null ? (
-          <p className="max-w-md text-sm text-zinc-500">
-            No knockout fixtures yet for{" "}
-            {leagueMeta.name[selectedId ?? ""] ?? "this competition"}. The
-            bracket fills in once the knockout stage is drawn.
-          </p>
-        ) : (
-          <TwoSidedBracket
-            left={soccer.left}
-            center={soccer.center}
-            right={soccer.right}
-          />
-        )
-      ) : bracketQuery.isPending ? (
-        <p className="text-sm text-zinc-500">Loading bracket…</p>
-      ) : (bracketQuery.data?.rounds.length ?? 0) === 0 ? (
-        <p className="max-w-md text-sm text-zinc-500">
-          No active playoffs for {leagueMeta.name[selectedId ?? ""] ?? "this league"}{" "}
-          right now. The bracket fills in once its postseason begins.
-        </p>
-      ) : (
-        <TwoSidedBracket
-          left={playoff.left}
-          center={playoff.center}
-          right={playoff.right}
-        />
-      )}
-    </div>
+  if (kind === null) {
+    // Whether this league is a cup is not known until the schedule answers.
+    if (scheduleQuery.isPending) return <Loading label="Loading bracket" rows={4} />;
+    if (scheduleQuery.isError && scheduleQuery.data === undefined) {
+      return (
+        <Notice
+          title="Bracket"
+          alert
+          action={{ label: "Retry", onClick: () => void scheduleQuery.refetch() }}
+        >
+          Couldn&rsquo;t load the fixtures a bracket is drawn from
+          {errorText(scheduleQuery.error)}
+        </Notice>
+      );
+    }
+    return league.sport === "soccer" ? (
+      <Notice title="Bracket" headline="No bracket yet">
+        No knockout fixtures yet for {league.name}. A cup&rsquo;s bracket fills
+        in once its knockout stage is drawn; a league decided by its table
+        has none.
+      </Notice>
+    ) : (
+      <Notice title="Bracket" headline="No bracket">
+        {league.name} has no bracket to show. Brackets appear for cup
+        tournaments (like the World Cup) and for the playoffs of basketball,
+        baseball and hockey leagues once they&rsquo;re underway.
+      </Notice>
+    );
+  }
+
+  if (bracketQuery.isPending) return <Loading label="Loading bracket" rows={4} />;
+  if (bracketQuery.isError && bracketQuery.data === undefined) {
+    return (
+      <Notice
+        title="Bracket"
+        alert
+        action={{ label: "Retry", onClick: () => void bracketQuery.refetch() }}
+      >
+        Couldn&rsquo;t load the bracket
+        {errorText(bracketQuery.error)}
+      </Notice>
+    );
+  }
+  if ((bracketQuery.data?.rounds.length ?? 0) === 0) {
+    return (
+      <Notice title="Bracket" headline="No active playoffs">
+        No active playoffs for {league.name} right now. The bracket fills in
+        once its postseason begins.
+      </Notice>
+    );
+  }
+  return (
+    <TwoSidedBracket
+      label={`${league.name} bracket`}
+      left={playoff.left}
+      center={playoff.center}
+      right={playoff.right}
+    />
   );
 }
 
@@ -289,10 +251,12 @@ export default function BracketView() {
  * converges on the center. Scrolls horizontally when the rounds are wide.
  */
 function TwoSidedBracket({
+  label,
   left,
   center,
   right,
 }: {
+  label: string;
   left: BracketColumn[];
   center: BracketColumn | null;
   right: BracketColumn[];
@@ -302,53 +266,61 @@ function TwoSidedBracket({
   // Mirror: the right half reads from the center outward.
   const rightOutward = [...right].reverse();
   return (
-    <div className="-mx-1 overflow-x-auto px-1 pb-2">
+    <ScrollRegion label={label} className="pb-2">
       <div className="flex min-w-max items-stretch justify-center gap-3 sm:gap-4">
         {hasLeft &&
           left.map((col) => <BracketColumnView key={`L-${col.key}`} col={col} />)}
-        {center && <BracketColumnView col={center} highlight />}
+        {center && <BracketColumnView col={center} align="center" />}
         {hasRight &&
           rightOutward.map((col) => (
             <BracketColumnView key={`R-${col.key}`} col={col} align="right" />
           ))}
       </div>
-    </div>
+    </ScrollRegion>
   );
 }
 
+/**
+ * One round: its tab hanging from the rule, then its matchups centered in
+ * the column's height. The tab sits on the side the round flows from, and
+ * in the middle over the final.
+ */
 function BracketColumnView({
   col,
-  highlight = false,
   align = "left",
 }: {
   col: BracketColumn;
-  highlight?: boolean;
-  align?: "left" | "right";
+  align?: "left" | "center" | "right";
 }) {
   return (
     <section
-      className={
-        "flex w-52 shrink-0 flex-col justify-center gap-2 sm:w-56 " +
-        (highlight ? "rounded-xl bg-amber-500/[0.04] px-1.5 py-2" : "")
-      }
+      aria-label={col.label}
+      className="flex w-52 shrink-0 flex-col gap-2 sm:w-56"
     >
-      <h2
+      <div
         className={
-          "py-1 text-xs font-semibold uppercase tracking-wider " +
-          (highlight ? "text-center text-amber-300" : "text-zinc-400") +
-          (align === "right" && !highlight ? " text-right" : "") +
-          (align === "left" && !highlight ? " text-left" : "")
+          "bs-section-head items-center " +
+          (align === "right"
+            ? "flex-row-reverse"
+            : align === "center"
+              ? "justify-center"
+              : "")
         }
       >
-        {col.label}
+        <h2 className="bs-tab">{col.label}</h2>
         {col.nodes.length > 1 && (
-          <span className="ml-1 text-zinc-500">{col.nodes.length}</span>
+          <span className="bs-note">
+            {col.nodes.length}
+            <span className="sr-only"> matchups</span>
+          </span>
         )}
-      </h2>
+      </div>
       {col.nodes.length > 0 ? (
-        <div className="flex flex-col justify-center gap-2">{col.nodes}</div>
+        <div className="flex flex-1 flex-col justify-center gap-2">
+          {col.nodes}
+        </div>
       ) : (
-        <div className="flex flex-1 items-center justify-center text-xs text-zinc-700">
+        <div className="flex flex-1 items-center justify-center text-sm text-muted">
           —
         </div>
       )}
@@ -356,92 +328,80 @@ function BracketColumnView({
   );
 }
 
+/** A matchup's sheet; the final's is framed in ink. */
+const CARD = "bs-sheet px-3 py-2";
+const CARD_CENTER = "border-2 border-ink bg-sheet px-3 py-2";
+
 // --- Playoff series card ----------------------------------------------------
 
-function SeriesCard({ series }: { series: BracketSeries }) {
+function SeriesCard({
+  series,
+  lookup,
+  center,
+}: {
+  series: BracketSeries;
+  lookup: TeamLookup;
+  center: boolean;
+}) {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
-      <SeriesSide side={series.team1} />
-      <SeriesSide side={series.team2} />
+    <div className={center ? CARD_CENTER : CARD}>
+      <SeriesSide side={series.team1} lookup={lookup} />
+      <SeriesSide side={series.team2} lookup={lookup} />
       {series.summary && (
-        <p className="mt-1 text-[11px] text-zinc-500">{series.summary}</p>
+        <p className="m-0 mt-1 text-sm text-ink-2">{series.summary}</p>
       )}
     </div>
   );
 }
 
-function SeriesSide({ side }: { side: BracketSide }) {
+function SeriesSide({ side, lookup }: { side: BracketSide; lookup: TeamLookup }) {
+  const identity = lookup(side.name, side.abbreviation);
   return (
-    <div className="flex items-center gap-2 py-0.5 text-sm">
-      <TeamLogo
-        logoUrl={side.logo_url}
+    <div className="flex items-center gap-2 py-1 font-medium">
+      <TeamBlock
         name={side.name}
-        abbreviation={side.abbreviation}
-        size="xs"
+        abbreviation={side.abbreviation ?? identity?.abbreviation}
+        color={identity?.color}
       />
-      <span className="truncate text-zinc-200">
-        {side.abbreviation ?? side.name}
-      </span>
+      <span className="min-w-0">{side.name}</span>
     </div>
   );
 }
 
 // --- Soccer knockout game card ----------------------------------------------
 
-/** Trim ESPN's verbose slot text ("Round of 32 1 Winner" → "R32 #1"). */
-function shortSlot(name: string): string {
-  const r32 = name.match(/^Round of 32 (\d+) Winner$/i);
-  if (r32) return `R32 #${r32[1]}`;
-  const r16 = name.match(/^Round of 16 (\d+) Winner$/i);
-  if (r16) return `R16 #${r16[1]}`;
-  const qf = name.match(/^Quarterfinal (\d+) Winner$/i);
-  if (qf) return `QF #${qf[1]}`;
-  const sf = name.match(/^Semifinal (\d+) (Winner|Loser)$/i);
-  if (sf) return `SF${sf[1]} ${sf[2] === "Winner" ? "W" : "L"}`;
-  return name;
-}
-
-function SoccerGame({ game }: { game: Game }) {
+function CupGame({ game, center = false }: { game: Game; center?: boolean }) {
   const decided = game.phase === "final";
   const live = game.phase === "in_progress";
-  const date = new Date(game.start_time).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
+  const scored = game.away.score !== null && game.home.score !== null;
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
-      <SoccerSide
+    <div className={center ? CARD_CENTER : CARD}>
+      <CupSide
         name={shortSlot(game.away.name)}
         score={game.away.score}
         decided={decided}
         winner={
-          decided &&
-          game.away.score !== null &&
-          game.home.score !== null &&
-          game.away.score > game.home.score
+          decided && scored && (game.away.score ?? 0) > (game.home.score ?? 0)
         }
       />
-      <SoccerSide
+      <CupSide
         name={shortSlot(game.home.name)}
         score={game.home.score}
         decided={decided}
         winner={
-          decided &&
-          game.away.score !== null &&
-          game.home.score !== null &&
-          game.home.score > game.away.score
+          decided && scored && (game.home.score ?? 0) > (game.away.score ?? 0)
         }
       />
-      <div className="mt-1 flex items-center justify-between text-[11px] text-zinc-500">
-        <span>{date}</span>
-        {live && <span className="font-semibold text-amber-400">LIVE</span>}
+      <div className="mt-1 flex items-center justify-between gap-2 text-sm text-muted">
+        <span>{formatShortDate(game.start_time)}</span>
+        {live && <SpotChip>Live</SpotChip>}
         {decided && <span>Final</span>}
       </div>
     </div>
   );
 }
 
-function SoccerSide({
+function CupSide({
   name,
   score,
   decided,
@@ -453,20 +413,22 @@ function SoccerSide({
   winner: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-2 text-sm">
+    <div className="flex items-center justify-between gap-2 py-0.5">
       <span
         className={
-          "truncate " +
+          "min-w-0 " +
           (winner
-            ? "font-semibold text-zinc-100"
+            ? "font-bold text-ink"
             : decided
-              ? "text-zinc-500"
-              : "text-zinc-300")
+              ? "text-muted"
+              : "font-medium text-ink")
         }
       >
         {name}
       </span>
-      <span className="shrink-0 tabular-nums text-zinc-400">{score ?? ""}</span>
+      <span className="flex-none font-condensed text-lg font-bold leading-none tabular-nums">
+        {score ?? ""}
+      </span>
     </div>
   );
 }

@@ -46,7 +46,8 @@ export default function PlayerAvatar({
     setFailed(false);
   }, [photoUrl]);
 
-  const box = { width: px, height: px } as const;
+  // rem, so the kiosk scale reaches the avatar like the text beside it.
+  const box = { width: `${px / 16}rem`, height: `${px / 16}rem` } as const;
   const showImage = !!photoUrl && !failed;
 
   if (showImage) {
@@ -61,7 +62,7 @@ export default function PlayerAvatar({
         onError={() => setFailed(true)}
         style={box}
         className={
-          "shrink-0 rounded-full bg-zinc-800 object-cover object-top sd-avatar" +
+          "shrink-0 rounded-full bg-hair object-cover object-top sd-avatar" +
           (className ? ` ${className}` : "")
         }
       />
@@ -72,9 +73,11 @@ export default function PlayerAvatar({
   return (
     <span
       aria-hidden="true"
-      style={{ ...box, fontSize }}
+      style={{ ...box, fontSize: `${fontSize / 16}rem` }}
       className={
-        "inline-flex shrink-0 items-center justify-center rounded-full bg-zinc-700 font-semibold tracking-wide text-zinc-200" +
+        // The hover fill, not the rule grey: High contrast lifts its rules
+        // so far that ink on them drops under 7:1.
+        "inline-flex shrink-0 items-center justify-center rounded-full border border-rule bg-hover font-semibold tracking-wide text-ink" +
         (className ? ` ${className}` : "")
       }
     >
