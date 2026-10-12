@@ -233,6 +233,65 @@ async def test_lookup_stadium_does_not_cache_transient_failure(
     assert calls["n"] == 2
 
 
+async def test_lookup_settled_tells_an_answer_from_a_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``None`` means "no such team" or "could not ask", and a caller about
+    to record a miss has to know which.
+
+    Settled is an answer on file — a hit or a definitive miss.  A lookup
+    that was rate limited settles nothing, and asking whether it did never
+    makes a request of its own.
+    """
+    answers = [
+        httpx.Response(429, text="<html>rate limited</html>"),
+        httpx.Response(
+            200,
+            json={
+                "teams": [
+                    {
+                        "strTeam": "Cinder Foxes",
+                        "strSport": "Soccer",
+                        "strStadium": "Emberfield",
+                        "strLocation": "Port Ember",
+                    }
+                ]
+            },
+        ),
+        httpx.Response(200, json={"teams": None}),
+    ]
+    requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return answers.pop(0)
+
+    install_tsdb_handler(monkeypatch, handler)
+
+    # Never asked about: nothing is known.
+    assert stadiums.lookup_settled("Cinder Foxes", sport="soccer") is False
+
+    # Refused: still nothing is known.
+    assert await stadiums.lookup_stadium("Cinder Foxes", sport="soccer") is None
+    assert stadiums.lookup_settled("Cinder Foxes", sport="soccer") is False
+
+    # A hit settles it — under the same key the lookup files it, so padding
+    # and casing in the name make no difference, and another sport is another
+    # question.
+    assert await stadiums.lookup_stadium("Cinder Foxes", sport="soccer") is not None
+    assert stadiums.lookup_settled("  cinder FOXES ", sport="Soccer") is True
+    assert stadiums.lookup_settled("Cinder Foxes", sport="hockey") is False
+
+    # So does a definitive miss.
+    assert await stadiums.lookup_stadium("Nowhere Wanderers", sport="soccer") is None
+    assert stadiums.lookup_settled("Nowhere Wanderers", sport="soccer") is True
+
+    # A blank name is never looked up, and its None will never change.
+    assert stadiums.lookup_settled("   ") is True
+    assert requests == 3  # the three lookups above; lookup_settled made none
+
+
 async def test_lookup_stadium_caches_definitive_miss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

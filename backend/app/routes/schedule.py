@@ -19,7 +19,7 @@ from app.models.orm import LeagueORM
 from app.models import convert
 from app.services.game_detail import fetch_weather
 from app.schemas import GameOut, WeatherOut
-from app.services import repository
+from app.services import repository, weather
 from app.services.serialize import games_to_out
 from app.timeutil import local_day_bounds, local_today
 
@@ -29,6 +29,11 @@ router = APIRouter()
 
 DEFAULT_PAST_DAYS = 7
 DEFAULT_FUTURE_DAYS = 45
+# Failed Open-Meteo requests, with no forecast served yet, after which the
+# weather walk is given up.  A 503 is asked again within minutes where the
+# empty 200 it replaces waited an hour, so a walk that only fails must not
+# send a failing (or rate-limiting) service one request per game each time.
+_GIVE_UP_AFTER_FAILURES = 3
 
 
 async def _schedule_games(
@@ -77,10 +82,18 @@ async def schedule_weather(
     resolvable venue coordinates, and returned a forecast — every other game
     is simply absent (the calendar shows no glyph for it).  Reuses the same
     per-game ``game_detail.fetch_weather`` the detail endpoint uses, so a calendar
-    glyph and the modal forecast always agree.  Never fails the request.
+    glyph and the modal forecast always agree.
+
+    One failure is not "absent": when no forecast could be served and at
+    least one Open-Meteo request failed, an empty map would report an outage
+    as "no forecasts", so that answers 503.  Any forecast served, cached or
+    fresh, keeps the response a 200.
     """
     out: dict[str, WeatherOut] = {}
     leagues: dict[str, LeagueORM] = {}
+    # Lookups Open-Meteo could not be asked for, or did not answer — as
+    # opposed to a cache hit or an answer, even "no forecast for that day".
+    failed = 0
     # Bound the fan-out: a month view can list many games, but only outdoor
     # scheduled ones get a forecast and the frontend pre-filters to those.
     for game_id in [gid for gid in ids.split(",") if gid][:80]:
@@ -93,9 +106,21 @@ async def schedule_weather(
             if league_row is None:
                 continue
             leagues[row.league_id] = league_row
-        forecast = await fetch_weather(session, convert.league_from_row(league_row), row)
+        try:
+            forecast = await fetch_weather(
+                session, convert.league_from_row(league_row), row, strict=True
+            )
+        except weather.WeatherUnavailable:
+            failed += 1
+            if not out and failed >= _GIVE_UP_AFTER_FAILURES:
+                break
+            continue
         if forecast is not None:
             out[game_id] = forecast
+    # Nothing to show and Open-Meteo failed: an outage, which must not pass
+    # for "no forecasts".  One forecast, cached or fresh, keeps it a 200.
+    if failed and not out:
+        raise HTTPException(status_code=503, detail="Upstream provider unavailable")
     return out
 
 

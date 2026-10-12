@@ -2,12 +2,21 @@
 
 ESPN has no league-wide scorer feed for these competitions, but every
 finished match's summary lists its goals (scorer + team).  This walks the
-league's completed games, pulls each summary in parallel, tallies goals
-per player (own goals excluded), and ranks them.  The result is cached
-(Redis, short TTL) because the walk is N summary fetches — the first
-request after a cache miss pays for it, the rest are instant — and N is
-capped to the most recent :data:`_MAX_GAMES` finals, since finished games
-are never pruned and the walk would otherwise grow season over season.
+league's completed games, pulls each summary (the first on its own, the
+rest in parallel), tallies goals per player (own goals excluded), and ranks
+them.  The result is cached (``services/cache``, short TTL) because the
+walk is N summary fetches — the first request after a cache miss pays for
+it, the rest are instant — and N is capped to the most recent
+:data:`_MAX_GAMES` finals, since finished games are never pruned and the
+walk would otherwise grow season over season.
+
+A summary that cannot be fetched counts as no goals, so a partly failed
+walk still answers.  Two walks do not: one in which EVERY fetch failed,
+whose tally would be an empty board that says nothing about the
+competition, and one the provider's circuit breaker cut short by turning
+fetches away unasked, whose tally would be however few matches got in
+before it opened.  Both answer 503 and are not cached: the table already on
+screen stays, and the next request walks again.
 
 Soccer only: goals are the one summary field parsed exclusively for
 :data:`~app.models.domain.Sport.SOCCER` (see ``providers/espn/summary``),
@@ -28,7 +37,7 @@ from app.db import get_session
 from app.models import convert, domain
 from app.providers import registry
 from app.schemas import ScorerOut, ScorersOut
-from app.services import cache, repository
+from app.services import cache, circuit_breaker, repository
 
 logger = logging.getLogger(__name__)
 
@@ -100,24 +109,52 @@ async def scorers(league_id: str, session: AsyncSession = Depends(get_session)) 
         return ScorersOut(league_id=league.id, league_name=league.name, games_counted=0)
 
     semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
+    # Fetches the provider's circuit breaker turned away without asking.
+    turned_away = 0
 
-    async def goals_for(game_id: str) -> list[domain.Goal]:
+    async def goals_for(game_id: str) -> list[domain.Goal] | None:
+        """The game's goals; ``None`` when the summary could not be fetched."""
+        nonlocal turned_away
         async with semaphore:
             try:
                 summary = await provider.get_game_summary(
                     league, game_id.split(":", 1)[1] if ":" in game_id else game_id
                 )
+            except circuit_breaker.ProviderUnavailable:
+                turned_away += 1
+                return None
             except Exception:
                 logger.warning("scorers: summary fetch failed for %s", game_id)
-                return []
+                return None
             return list(summary.goals) if summary is not None else []
 
-    per_game = await asyncio.gather(*(goals_for(g.id) for g in final_games))
+    # The first summary goes alone.  After an outage the breaker is half-open
+    # and admits exactly one call: fired together, that one would succeed and
+    # every other be turned away, leaving a "board" of a single match.  Alone,
+    # it closes the breaker and the rest of the walk goes through.
+    per_game: list[list[domain.Goal] | None] = []
+    if final_games:
+        per_game.append(await goals_for(final_games[0].id))
+        per_game.extend(await asyncio.gather(*(goals_for(g.id) for g in final_games[1:])))
+
+    # Nothing at all came back, or the breaker cut the walk short: that is an
+    # outage, not a goalless (or few-match) competition.  Raised before the
+    # cache write, so the failure is never stored.
+    if turned_away:
+        logger.warning(
+            "scorers: walk of %s cut short — the provider's circuit breaker "
+            "turned %d of %d summary fetch(es) away",
+            league_id,
+            turned_away,
+            len(per_game),
+        )
+    if per_game and (turned_away or all(goals is None for goals in per_game)):
+        raise HTTPException(status_code=503, detail="Upstream provider unavailable")
 
     # Tally goals per player (own goals don't count toward a scorer).
     tally: dict[tuple[str, str], int] = defaultdict(int)
     for goals in per_game:
-        for goal in goals:
+        for goal in goals or ():
             if goal.own_goal:
                 continue
             tally[(goal.player, goal.team)] += 1

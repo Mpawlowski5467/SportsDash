@@ -286,16 +286,24 @@ class AppMetaORM(Base):
 class StadiumORM(Base):
     """Resolved stadium location + facts, cached independently of teams.
 
-    Keyed by ``"{provider}:{provider_key}"`` so a venue can be resolved
+    Keyed by ``repository.stadium_key``
+    (``"{provider}:{scope}:{provider_key}"``, ``scope`` being the id space
+    the provider numbers the team in) so a venue can be resolved
     once and reused — both for a followed team and for the many teams of
     a whole-competition follow (e.g. all World Cup nations) that have no
     ``TeamORM`` row of their own.  Populated by the location refresh /
     map assembly via the stadium-enrichment + geocode pipeline.
+
+    Rows an older build keyed ``"{provider}:{provider_key}"`` stay in the
+    table on purpose (that build still reads them if it is run again);
+    ``repository.find_team_stadium`` is the only code that still looks a
+    team up under that key.
     """
 
     __tablename__ = "stadiums"
 
-    key: Mapped[str] = mapped_column(String(160), primary_key=True)  # "{provider}:{key}"
+    # "{provider}:{scope}:{key}" — built by repository.stadium_key.
+    key: Mapped[str] = mapped_column(String(160), primary_key=True)
     team_name: Mapped[str] = mapped_column(String(128))
     venue: Mapped[str | None] = mapped_column(String(256), nullable=True)
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)

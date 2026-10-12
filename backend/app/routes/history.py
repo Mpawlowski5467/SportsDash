@@ -2,9 +2,10 @@
 
 ``GET /history/results/{team_id}?season=YYYY`` fetches the season's
 FINAL games live from ESPN (never stored in the games table — that
-stays the near-window working set) and caches the serialized payload in
-Redis, long-lived for finished seasons.  Standings archives live on the
-standings route (``GET /standings/{league_id}?season=``).
+stays the near-window working set) and caches the serialized payload
+(``services/cache``), long-lived for finished seasons.  Standings
+archives live on the standings route
+(``GET /standings/{league_id}?season=``).
 ``GET /history/on-this-day`` scans the same season archives for every
 followed team's past games on today's local month-day.
 """

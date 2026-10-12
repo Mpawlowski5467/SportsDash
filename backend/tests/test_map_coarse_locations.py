@@ -291,17 +291,24 @@ async def test_refresh_locations_keeps_a_genuine_venue(
     assert (row.venue_lat, row.venue_lon) == pytest.approx(VENUE_COORDS)
 
 
+@pytest.mark.parametrize("cached_by_older_build", [False, True])
 async def test_competition_sweep_re_resolves_a_stadium_cached_at_a_centroid(
     db: async_sessionmaker[AsyncSession],
     patched_scope: None,
     geocoded: list[str],
     monkeypatch: pytest.MonkeyPatch,
+    cached_by_older_build: bool,
 ) -> None:
     """The whole-competition path drops a centroid pin instead of keeping it.
 
     A ``follow_all`` field reaches the map through the stadium cache, where
     a resolved coordinate is otherwise treated as permanent — so the same
     fingerprint (venue == location) has to force a re-resolve there too.
+
+    That holds for a centroid an older build cached under its league-blind
+    key as well: the sweep adopts the row as the team's own and must then
+    judge the copy exactly as it would a row it had written itself, or the
+    upgrade carries the bad pin across.
     """
     install_tsdb_handler(monkeypatch, _area_only_handler)
     monkeypatch.setattr(scheduler_stadium_cache, "_COMPETITION_RESOLVE_DELAY_SECONDS", 0.0)
@@ -318,7 +325,8 @@ async def test_competition_sweep_re_resolves_a_stadium_cached_at_a_centroid(
 
     monkeypatch.setattr(espn_catalog, "get_league_teams", fake_get_league_teams)
 
-    key = f"espn:{catalog_team.provider_key}"
+    key = repository.stadium_key(LEAGUE, catalog_team.provider_key)
+    seeded_key = f"espn:{catalog_team.provider_key}" if cached_by_older_build else key
     async with db() as session:
         session.add(
             LeagueORM(
@@ -332,7 +340,7 @@ async def test_competition_sweep_re_resolves_a_stadium_cached_at_a_centroid(
         )
         session.add(
             StadiumORM(
-                key=key,
+                key=seeded_key,
                 team_name=TEAM_NAME,
                 venue=COARSE_AREA,  # the pre-fix composition, again
                 lat=AREA_CENTROID[0],

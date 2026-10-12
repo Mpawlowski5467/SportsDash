@@ -110,10 +110,11 @@ export default function UpsetRadar({
     [games],
   );
   // The list of games changes through the day (one ends, the day turns),
-  // and each list is a query of its own. The last list's odds stand in
-  // until the new ones land, or the cards would give way to "Scanning the
-  // slate" and come back on every change.
-  const oddsQuery = useGameOdds(ids, { keepPrevious: true });
+  // and each list is a query of its own. The freshness keeper's key default
+  // lets the last list's odds stand in until the new ones land, or the
+  // cards would give way to "Scanning the slate" and come back on every
+  // change.
+  const oddsQuery = useGameOdds(ids);
   const oddsById = oddsQuery.data;
   const oddsAt = Math.max(oddsQuery.dataUpdatedAt, oddsQuery.errorUpdatedAt);
   const refetchOdds = oddsQuery.refetch;

@@ -9,6 +9,11 @@ Two sources, picked by sport:
 * Everything else (e.g. off-season soccer) — a roster-derived board built
   from your FOLLOWED teams' players (soccer's real league-wide board is the
   box-score Golden Boot in ``routes/scorers``).
+
+The roster board also stands in when the ESPN feed has nothing or cannot be
+fetched.  Only when the fetch FAILED and the stored rosters have no stats
+either does the route answer 503: an empty board there would be an outage
+reading as "no stats for this league", replacing the one on screen.
 """
 
 from __future__ import annotations
@@ -105,12 +110,20 @@ async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) 
     }
 
     # --- League-wide leaders (NBA/MLB/NHL) from the ESPN athlete stats feed ---
+    # True when that feed could not be fetched, as opposed to answering with
+    # nothing: the roster board below is then standing in for an outage.
+    feed_failed = False
     if league.provider == "espn" and espn_leaders.supports(sport):
         cache_key = f"leaders:v2:{league_id}"
         cached = await cache.cache_get_json(cache_key)
         if cached is not None:
             return _stamp_followed(StatLeadersOut(**cached), followed_ids)
-        entries = await espn_leaders.fetch_league_leaders(league.provider_key, sport)
+        try:
+            entries = await espn_leaders.fetch_league_leaders(league.provider_key, sport)
+        except espn_leaders.EspnLeadersError:
+            # Already logged by the provider.
+            entries = []
+            feed_failed = True
         if entries:
             by_athlete = await _followed_athletes(session, teams)
             rows: list[StatLeaderOut] = []
@@ -146,7 +159,7 @@ async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) 
             # follow flag is stamped per-request on the way out.
             await cache.cache_set_json(cache_key, result.model_dump(), _CACHE_TTL_SECONDS)
             return _stamp_followed(result, followed_ids)
-        # fall through to the roster board if the feed had nothing
+        # fall through to the roster board if the feed had nothing or failed
 
     # --- Roster-derived board (your followed teams) --------------------------
     scored: list[tuple[float, StatLeaderOut]] = []
@@ -181,6 +194,10 @@ async def leaders(league_id: str, session: AsyncSession = Depends(get_session)) 
     rows = [
         row.model_copy(update={"rank": index + 1}) for index, (_, row) in enumerate(scored[:30])
     ]
+    if feed_failed and not rows:
+        # No league-wide board and no stored roster stats to stand in for it.
+        # Nothing was cached, so the next request asks ESPN again.
+        raise HTTPException(status_code=503, detail="Upstream provider unavailable")
     return _stamp_followed(
         StatLeadersOut(
             league_id=league.id,

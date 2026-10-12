@@ -1361,11 +1361,13 @@ def _stub_later_stages(
     No-ops by default, so a test exercises only what it is about — and so
     the real news stage, which binds its own ``session_scope``, never
     reaches past the throwaway database.  Given ``calls``, each stage
-    records its name (minus the ``refresh_`` prefix) instead.
+    records its name (minus the ``refresh_`` prefix) instead.  A stub takes
+    whatever keywords its stage is called with: the pass hands the stadium
+    sweep its supersede check (``should_stop``).
     """
 
     def stub(name: str):
-        async def stage() -> None:
+        async def stage(**_: object) -> None:
             if calls is not None:
                 calls.append(name.removeprefix("refresh_"))
 

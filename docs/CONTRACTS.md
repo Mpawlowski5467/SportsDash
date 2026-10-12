@@ -233,12 +233,18 @@ NewsItem id = sha1 hex of url (first 16 chars), source = feed title or hostname.
 
 ### `app/services/cache.py` (owner: persistence agent)
 
-Thin optional Redis JSON cache; every function is a silent no-op (or None)
-when `redis_url` is unset or Redis is down:
+Thin optional Redis JSON cache; no function ever raises. A configured
+Redis that is down, or a call that fails, is a silent no-op (or None).
+With **no** `redis_url` the same holds for every key except an allowlist
+of upstream read caches, which are kept in a bounded in-process store
+instead (amended 2026-10-11 — see *`services/cache.py` without Redis*
+below):
 ```python
 async def cache_get_json(key: str) -> Any | None
 async def cache_set_json(key: str, value: Any, ttl_seconds: int) -> None
-async def close_cache() -> None
+async def close_cache() -> None          # also empties the in-process store
+def clear_local_cache() -> None          # the in-process store only (tests)
+def cache_counters() -> tuple[int, int]  # (hits, misses), for /api/metrics
 ```
 
 ### `app/scheduler/jobs.py` (owner: scheduler agent)
@@ -390,7 +396,10 @@ switching via `useState` in `App.tsx`.
   (react + tailwindcss plugins; dev server proxies `/api` →
   `http://localhost:8000`), `index.html` (dark `<html class="dark">`, title
   SportsDash), `src/main.tsx` (QueryClientProvider; QueryClient defaults:
-  `staleTime: 30_000`, `refetchOnWindowFocus: false`, `retry: 1`),
+  `staleTime: 30_000`, `refetchOnWindowFocus: false`, `retry: 1`; and,
+  straight after the client is built, `startFreshnessKeeper(queryClient)`
+  from `src/lib/freshness.ts` — the one line that keeps a long-running
+  display current, see *Data freshness* below),
   `src/App.tsx`, `src/components/Layout.tsx`.
 - **api/hooks agent**: `src/api.ts`, `src/hooks.ts`, `src/lib/time.ts`.
 - **today/calendar agent**: `src/views/TodayView.tsx`,
@@ -447,6 +456,16 @@ export function useRoster(teamId: string | undefined): UseQueryResult<Roster>
 export function useResults(teamId: string | undefined, limit?: number): UseQueryResult<Game[]>
 export function useNews(teamId?: string): UseQueryResult<NewsItem[]>
 ```
+
+**Every query root needs a freshness row** (added 2026-10-11). A hook's
+own `refetchInterval` — most have none — is no longer what decides how old
+its data may get on a display left running: `src/lib/freshness.ts` holds a
+max age and a cost class per `queryKey[0]`, and a keeper started from
+`main.tsx` refetches whatever has outlived its row. A hook added here
+under a new root must add its row to `FRESHNESS_POLICY` in the same
+change, and a root renamed or removed here must take its row with it —
+`freshness.test.ts` fails on either. The table and the rules are under
+*Data freshness* below.
 
 ### `src/lib/time.ts`
 
@@ -1545,9 +1564,10 @@ Nothing about the API changed.
   every 10 minutes while Matchup is the tab on screen, so a projection
   published after the page opened still reaches the radar. The batch is
   keyed by the list of games; when the list changes (a game ends, the day
-  turns) the last list's odds stand in until the new ones arrive
-  (`useGameOdds(ids, { keepPrevious: true })`), so the cards do not give
-  way to "Scanning the slate" and come back.
+  turns) the last list's odds stand in until the new ones arrive (the
+  freshness keeper's key default for `game-odds`; the hook itself must set
+  no `placeholderData`), so the cards do not give way to "Scanning the
+  slate" and come back.
 - **Meetings are not called a season series:** the API cannot scope them to
   a season. The newest three are drawn in full and tallied, older ones
   follow in a compact list, and the cross-season record closes the sheet.
@@ -1722,12 +1742,15 @@ changed.
   `index.css` and the six files that draw a score, and fails if the
   animation goes back on `.sd-score`, leaves the reduced-motion gate, or a
   view draws a score without `ScoreFigure`.
-- Also added by the step 5 gate, both additive: `useGameOdds(ids, {
-  keepPrevious })` lets the last list's odds stand in while a new list's
-  are on their way (the map is keyed by game id; only the upset radar asks
-  for it; Today and the Map panel are unchanged), and `useNewsFeeds(scopes,
-  limit, poll = true)` stops its five-minute reads when `poll` is false
-  (News passes whether it is the tab on screen).
+- Also added by the step 5 gate, additive: `useNewsFeeds(scopes, limit,
+  poll = true)` stops its own five-minute reads when `poll` is false (News
+  passes whether it is the tab on screen). Since the merge of the freshness
+  keeper (2026-10-11) the keeper still re-reads a mounted `news` query past
+  its five-minute row while the browser tab is visible, whichever app tab
+  is showing; that is the keeper's rule and stands. The gate's
+  `keepPrevious` option on `useGameOdds` was removed in that merge: the
+  keeper's key default does the same for every caller, and
+  `freshness.test.ts` fails if the hook sets its own `placeholderData`.
 
 ### Kiosk fix (Layout.tsx)
 Make kiosk mode PERCEPTIBLE (current bug: pause-on-interaction + long
@@ -1951,10 +1974,19 @@ standings repeatedly; isolate failures; never raise. Daily refresh stays.
 
 ## Phase 12: national-team follow model + competition map plotting
 
-Foundation landed: `StadiumORM` (key `"{provider}:{provider_key}"`,
+Foundation landed: `StadiumORM` (key `"{provider}:{scope}:{provider_key}"`
+from `repository.stadium_key`,
 venue+coords+facts+resolved flag — caches stadium resolution decoupled
 from TeamORM so competition teams without a team row can be plotted);
 `MapTeamOut.league_name` + `source` ("followed"|"competition") + TS.
+
+**Key amended 2026-10-11.** The key was `"{provider}:{provider_key}"`, which
+is not an identity: ESPN numbers each US league's teams from 1, so the NFL
+and NHL sides numbered 1 shared one row. `scope` is the id space the
+provider numbers the team in. The rule, the two repository functions that
+own it and what happens to rows cached under the old key are in *Stadium
+cache keys carry the id space* below; the two mentions of the key in 12b
+are corrected in place.
 
 ### 12a — National-team individual follow (catalog + follow owner)
 - Expand `espn_catalog.NATIONAL_TEAM_COMPETITIONS` so following a nation
@@ -1975,7 +2007,11 @@ from TeamORM so competition teams without a team row can be plotted);
   "{nation}" → e.g. Wembley) — verify England→Wembley.
 
 ### 12b — Whole-competition map plotting (map backend owner)
-- `repository`: stadium-cache helpers — `get_stadium(session, key)`,
+- `repository`: stadium-cache helpers — `stadium_key(league,
+  team_provider_key)` (the only place a key is built),
+  `find_team_stadium(session, league, team_provider_key, team_name, *,
+  adopt=False)` (a team's row, wherever an older build left it),
+  `get_stadium(session, key)` (exact key),
   `upsert_stadium(session, key, team_name, location_fields...)`.
 - A competition is ACTIVE if it has at least one game in the DB within a
   near window (e.g. now-2d .. now+21d) — reuse `games_between` on the
@@ -1985,13 +2021,15 @@ from TeamORM so competition teams without a team row can be plotted);
   1. followed teams with resolved coords (as today) → `source="followed"`.
   2. for each ACTIVE `follow_all` league: its catalog teams
      (`espn_catalog.get_league_teams`), each resolved via the stadium
-     cache (StadiumORM by `"{provider}:{provider_key}"`; on miss, resolve
+     cache (StadiumORM by `repository.stadium_key`, read through
+     `repository.find_team_stadium`; on miss, resolve
      via the Phase 11 stadium-enrichment/geocode pipeline and cache it —
      bounded so the request doesn't hang; unresolved teams are simply
      omitted and fill in on later calls) → `source="competition"`,
      carrying league_name + the team's logo/color from the catalog.
   Dedupe: a team that is both followed and in an active followed
-  competition appears once as "followed".
+  competition appears once as "followed". "The same team" is the same
+  `repository.stadium_key`, not the same provider id (2026-10-11).
 - A background job (fold into `refresh_locations` / a new
   `refresh_competition_stadiums`) pre-resolves active-competition teams'
   stadiums into StadiumORM so the map is populated without on-request
@@ -2257,18 +2295,23 @@ removed.
   guaranteed-empty tally. For a soccer league it collects the stored FINAL
   games, keeps only the **most recent `_MAX_GAMES` (120)** of
   them (repository rows arrive oldest-first, so the tail is the current run of
-  the competition rather than its opening weeks), pulls those summaries in
-  parallel (semaphore 8), tallies goals/player (own goals excluded), ranks,
+  the competition rather than its opening weeks), pulls those summaries —
+  the first on its own, the rest in parallel (semaphore 8; amended
+  2026-10-11) — tallies goals/player (own goals excluded), ranks,
   and returns the top 30. The cap bounds the upstream fan-out: it is one
   summary call per game and finished games are never pruned, so an uncapped
   walk would grow every matchweek and again every season until the burst
   rate-limited ESPN and opened the circuit breaker for the whole app.
   `games_counted` therefore reports the games **actually tallied** (≤ 120),
-  not the league's total stored finals. Cached in Redis
+  not the league's total stored finals. Cached through `services/cache`
   (`scorers:{league_id}:{n}`, 30min TTL) where `n` is the FULL final count,
   *not* the capped one, so a newly finished match still busts the cache once
   the cap has bitten. A league whose provider isn't registered returns an
-  empty `ScorersOut` with `games_counted=0` rather than an error. LeadersView
+  empty `ScorersOut` with `games_counted=0` rather than an error. **503
+  when every summary fetch of the walk failed, or the circuit breaker
+  turned any of them away** (2026-10-11 — see *An
+  upstream outage is not an empty answer* below); any other partly failed
+  walk still answers 200. LeadersView
   shows this Golden Boot when present, else the roster-derived board.
 - `GET /api/nation/{league_id}/{name}` (`NationOut`): by-name mini-dashboard
   for a whole-competition team (group standing from stored standings +
@@ -2309,7 +2352,10 @@ removed.
   headline stat: NBA PTS, MLB HR, NHL PTS; positional totals parsed via the
   top-level category `labels`). Players on a followed team are flagged
   `highlighted` — matched by BARE ESPN athlete id (roster ids are stored
-  `"espn:<id>"`; strip the prefix). Cached in Redis (`leaders:{id}`, 15min).
+  `"espn:<id>"`; strip the prefix). Cached through `services/cache`
+  (`leaders:v2:{id}`, 15min). A feed that cannot be fetched falls through to
+  the roster board, and answers **503 only when that board is empty too**
+  (2026-10-11 — see *An upstream outage is not an empty answer* below).
   Soccer keeps the box-score Golden Boot; other sports keep the roster board.
   `StatLeaderOut.highlighted` + `ScorerOut.highlighted` (scorer's team
   followed) added (+ types.ts).
@@ -2333,7 +2379,10 @@ removed.
   "real playoff series" signal — drops regular-season/makeup games the date
   range catches), grouped into rounds (specific round note preferred over a
   generic "Playoff Series"). `GET /api/bracket/{league_id}` (`BracketOut`,
-  Redis 30min). `BracketView` gained a bracket `Select` (soccer cups + US
+  cached 30min through `services/cache` when it has rounds; **503 when the
+  ESPN fetch failed and nothing is cached** — 2026-10-11, see *An upstream
+  outage is not an empty answer* below). `BracketView` gained a bracket
+  `Select` (soccer cups + US
   leagues); soccer renders knockout games, US renders series cards (teams +
   status). NOTE: 2026 ESPN data is simulated/inconsistent, so round labels are
   partial ("1st Round" + "Playoff Series") — the matchups/status are correct.
@@ -2433,16 +2482,23 @@ to nothing when unpriced.
     the core-API per-game `predictor` `gameProjection` win% (`_parse_predictor`)
     CONCURRENTLY (`asyncio.gather(return_exceptions=True)`); a 404 on either
     half degrades that half only; a sustained `TransientProviderError`
-    propagates (breaker). New `_CORE_BASE` host (same shared client).
+    propagates (breaker), and so does a `ProviderAccessError` (401/403) on
+    the `/summary` half (amended 2026-10-11 — a denied line was returned as
+    "no line", which `/odds` cached for 10 minutes while the breaker
+    recorded a success). New `_CORE_BASE` host (same shared client).
   - Mock: deterministic md5-seeded line + win% (`_mock_game_odds`), fictional
     book name, only for scheduled/in_progress non-individual games.
   - TheSportsDB: None.
 - `GET /api/games/{id}` now also returns `odds` (best-effort `_fetch_odds`,
   never 500s). NEW `GET /api/odds?ids=csv` → `dict[game_id, GameOddsOut]`
   (`routes/odds.py`): batch for cards (Today/Calendar/Results), Semaphore(8)
-  fan-out, per-game Redis cache `odds:{game_id}` (10 min, negatives cached so
+  fan-out behind one fetch per provider that goes first on its own (amended
+  2026-10-11), per-game cache `odds:{game_id}` through `services/cache` (10 min,
+  negatives cached so
   odds-less games aren't re-fetched every poll), gated to scheduled/in_progress
-  non-individual games. Mirrors `/schedule/weather`.
+  non-individual games. Mirrors `/schedule/weather`. **503 when every game
+  it had to price failed upstream** (2026-10-11 — see *An upstream outage is
+  not an empty answer* below); one cached or answered game keeps it a 200.
 - Frontend: `api.odds(ids)`, `useGameOdds(ids)` (clone of `useScheduleWeather`).
   `GameDetailModal` `OddsSection` = win-probability split bar (away amber /
   home sky, mirrors `TeamStats`) + moneyline/spread/total rows + book
@@ -2460,10 +2516,15 @@ to nothing when unpriced.
 - ``app/providers/espn_history.py`` (standalone, espn_leaders-style — the
   ``SportsProvider`` protocol is unchanged): ``fetch_season_standings`` /
   ``fetch_season_results`` via ESPN's ``?season=`` params. Team sports
-  only; never raises.
+  only. ``fetch_season_standings`` never raises. ``fetch_season_results``
+  raises only ``EspnHistoryError`` (amended 2026-10-11), when one of the
+  season's schedule calls failed; the error carries the finals the other
+  calls returned (``.games``), which a caller may show but must not cache
+  as the season. A call that answered with nothing is not a failure.
 - ``GET /standings/{league_id}?season=YYYY`` → archive-first with a
   one-time ESPN backfill; ``GET /history/results/{team_id}?season=YYYY``
-  → the season's FINAL games, redis-cached, never stored in ``games``.
+  → the season's FINAL games, cached through ``services/cache``, never
+  stored in ``games``.
 - ``LeagueOut`` carries ``provider`` so the frontend gates the season
   pickers (espn team sports only).
 
@@ -2987,7 +3048,7 @@ the status code. Series:
 | `sportsdash_provider_consecutive_failures{provider}` | gauge | `CircuitBreaker.failures` — a gauge, **not** a counter: it resets to 0 on any success |
 | `sportsdash_provider_last_error_timestamp_seconds{provider}` | gauge | `CircuitBreaker.last_error_at` as unix seconds; the series is omitted for providers that never errored |
 | `sportsdash_background_tasks` | gauge | `len(background._tasks)` — the strong-reference set is the in-flight set |
-| `sportsdash_cache_hits_total` / `sportsdash_cache_misses_total` | counter | new module-level ints in `services/cache.py`'s `cache_get_json` (accessor `cache_counters()`). A hit returned a decoded value; everything else — no client configured, GET failure, absent key, invalid JSON — is a miss, matching the cache's best-effort semantics |
+| `sportsdash_cache_hits_total` / `sportsdash_cache_misses_total` | counter | new module-level ints in `services/cache.py`'s `cache_get_json` (accessor `cache_counters()`). A hit returned a decoded value — from Redis, or (2026-10-11) from the in-process store that stands in for it when no `redis_url` is set; everything else — no client configured and nothing stored in-process, GET failure, absent or expired key, invalid JSON — is a miss, matching the cache's best-effort semantics. The `# HELP` text still says "Redis cache reads" |
 | `sportsdash_scheduler_job_runs_total{job,result="success"\|"error"}` | counter | `services/metrics_state.py` job registry (below) |
 | `sportsdash_scheduler_job_last_run_timestamp_seconds{job}` | gauge | same registry; omitted before a job's first run |
 
@@ -3192,15 +3253,25 @@ code, no new storage; everything rides the existing
 - `app/services/on_this_day.py`: for one followed team, walks season
   keys `range(now_year, now_year - SEASONS_BACK, -1)` (`SEASONS_BACK =
   5`, the same window as the head-to-head builder) **sequentially**
-  through `season_results.season_results_out` — already redis-cached
-  (7 d past / 6 h current) and never-raising — then keeps the FINAL
+  through `season_results.season_results_out` — already cached
+  (`services/cache`: 6 h for this year's key and last year's, 7 d for
+  older ones) and never-raising — then
+  keeps the FINAL
   games whose **local** (`settings.timezone`) calendar month-day equals
   today's, excluding actual today (that slate belongs to `/today`).
   Newest first. The assembled per-team list gets its own best-effort
   cache under `onthisday:{team_id}:{MM-DD}`, TTL 24 h; correctness
-  never depends on Redis (worst redis-less cost per team per request:
+  never depends on the cache (worst cost per team of a scan that finds
+  nothing cached:
   5 seasons × ≤2 schedule param-set calls, all through the
-  `get_with_retry` degrade paths). Season keys are ENDING years, so a
+  `get_with_retry` degrade paths). **The `onthisday:` cache is
+  Redis-only**: the list is stored whatever the scan found, an empty one
+  included, and a scan made while ESPN was failing finds nothing — so it is
+  deliberately not kept in-process (2026-10-11). A redis-less install
+  rebuilds the list on each request from the `history:results:` seasons,
+  which are kept in-process, so only a season that came back empty or
+  incomplete is asked for again. Season keys
+  are ENDING years, so a
   cross-year season's Aug–Dec games surface under key year+1 — the
   month-day filter makes that transparent, and Feb 29 needs no special
   casing (empty most years).
@@ -4554,6 +4625,11 @@ def kick_daily_refresh() -> None      # note_follow_change(), then spawn daily_r
   `refresh_standings` and of the team loop in `refresh_rosters`; and
   **between a schedule or event fetch and its write**, so games or a tagged
   leaderboard asked for on behalf of the old set are discarded, not stored.
+  The stadium sweep has three of its own (2026-10-11): the stage calls
+  `refresh_competition_stadiums(should_stop=_superseded)`, which asks
+  before each league, before each team and after a rate-limit pause — see
+  *The sweep and the map route* under *Stadium cache keys carry the id
+  space*.
 - **Nothing is cancelled.** The provider call in flight completes and is
   thrown away. A cron-started run has no task handle, and a cancel landing
   inside a session keeps the lock held while the close unwinds, so the
@@ -4672,8 +4748,12 @@ def kick_daily_refresh() -> None      # note_follow_change(), then spawn daily_r
   them with the rest of its news; the next news stage stores the feed's
   current 20 items under the next athlete of that league, and older
   articles are not fetched again.
-- **The news, team-info, location and stadium stages have no checkpoint
-  inside**; whichever is running finishes before a stale pass stops. The
+- **The news, team-info and location stages have no checkpoint inside**;
+  whichever is running finishes before a stale pass stops. (The stadium
+  stage was on this list until 2026-10-11. It is the one stage long enough
+  to matter — minutes for a large field, tens of minutes once TheSportsDB
+  throttles it — and now leaves between leagues, between teams and after a
+  rate-limit pause.) The
   interval `refresh_news` runs outside any pass and can write league-level
   news once for a league that has just left `follow_all` —
   `prune_unbacked` removes it at the next pass to start after that write.
@@ -4781,8 +4861,11 @@ above wherever the two disagree.
   logs and is skipped — and the provider method raises only when nothing at
   all came back, so an ESPN that refuses months too still reaches the
   scheduler and the circuit breaker rather than looking like an empty
-  refresh. The bracket is all-or-nothing: any failed bucket yields `[]`,
-  since a bracket missing a month of series is worse than none.
+  refresh. The bracket is all-or-nothing: any failed bucket fails the
+  whole fetch, since a bracket missing a month of series is worse than
+  none. (Amended 2026-10-11: the failure is raised as
+  `espn_playoffs.EspnPlayoffsError`, which `/bracket` answers with 503; it
+  used to come back as `[]`, indistinguishable from "no playoffs".)
 - Each fallback logs one WARNING (`ESPN refused ranged dates for …`), i.e.
   one wasted request per follow_all league per refresh while ESPN keeps
   refusing ranges.
@@ -4792,3 +4875,1005 @@ ranges and 200 to months): `test_espn.py` — `_month_buckets`, the
 competition/tennis/golf fallbacks, the long-window and late-ET-game cases,
 partial and total bucket failure, and that 404/403/outage do not fall back;
 `test_espn_playoffs.py` — the bracket fallback, window trim and ordering.
+
+## Stadium cache keys carry the id space (2026-10-11)
+
+The stadium cache (`stadiums`, `StadiumORM`) was keyed
+`"{provider}:{provider_key}"`, and a bare provider id is not an identity.
+ESPN numbers the teams of each US league from 1, so with the NFL and the
+NHL both followed in whole the two sides numbered 1 shared one row:
+whichever the sweep reached first owned it, and the other was never looked
+up and was plotted at its ground. The map's "followed wins" dedupe matched
+on the same pair, so following an NFL team also took the NHL team with its
+number off the map. And a cached miss was shared too: one league's team
+that could not be located held the other league's back for the whole retry
+cool-down without its ever being asked about.
+
+One contract replaces that: **a stadium row belongs to one team in one id
+space, and its key says which.** It is binding on the repository (the key,
+and the read of rows an older build left), the sweep (the cache's only
+writer) and the map route (a reader, and the dedupe).
+
+Nothing else moves. `stadiums.key` is still `String(160)` and nothing
+references it; there is no migration, no `init_db` step and no delete.
+`MapTeamOut.team_id` is still `"{league_id}:{provider_key}"` for a
+competition pin, so `schemas.py`, `types.ts` and
+`tests/openapi_snapshot.json` are unchanged.
+
+The passages this amends are corrected in place: the *Phase 12* foundation
+line and both mentions of the key under *12b*.
+
+### `repository.stadium_key` — the only place a key is built
+
+```python
+def stadium_key(league: domain.League | LeagueORM, team_provider_key: str) -> str
+    # "{provider}:{scope}:{team_provider_key}"
+```
+
+`scope` names the id space the provider numbers that team in:
+
+| League | `scope` | Why |
+|---|---|---|
+| `provider == "thesportsdb"` | `"all"` | the provider looks a team up by `idTeam` alone, no league involved, so the whole provider is one space |
+| `provider == "espn"` and `sport == "soccer"` | `"soccer"` | a club or nation keeps its ESPN id in every competition; a side in two followed competitions must be one row, and one identity for the dedupe |
+| anything else | `league.id` | the NFL, NHL, NBA, WNBA and MLB each number their teams from 1 — the NBA and WNBA too, which a key scoped by sport would still merge; the athlete ids of an individual-sport league followed in whole are kept apart the same way |
+
+Examples: `espn:nfl:1`, `espn:nhl:1`, `espn:soccer:364` (the same key from
+`epl` and from `ucl`), `thesportsdb:all:134567`.
+
+- **Both callers must land on the same key.** The sweep holds domain
+  leagues (`sport` is the enum), the map route ORM rows (`sport` is a plain
+  string); `Sport` is a `str` enum, so the soccer test reads the same on
+  either, and a test pins it.
+- **No catalog league may have the id `"soccer"`.** Any other ESPN league
+  is scoped by its own id, so one literally called `soccer` would be filed
+  into the soccer id space and trade stadiums with whichever club holds the
+  same number. `test_no_catalog_league_id_is_soccer` guards
+  `espn_catalog.CATALOG` and `NATIONAL_SIBLING_LEAGUES`.
+- Nothing else builds a key by hand (`scheduler/stadium_cache._stadium_key`
+  is gone). `get_stadium(session, key)` remains an exact-key read, and
+  `upsert_stadium` has one caller, the sweep.
+
+### `repository.find_team_stadium` — the only code that knows the old key
+
+```python
+async def find_team_stadium(
+    session: AsyncSession,
+    league: domain.League | LeagueORM,
+    team_provider_key: str,
+    team_name: str,
+    *,
+    adopt: bool = False,
+) -> StadiumORM | None
+```
+
+1. The row under `stadium_key(...)`, if there is one. It always wins,
+   whatever a legacy row or the catalog name goes on to say.
+2. Otherwise the legacy row `"{provider}:{team_provider_key}"`. None →
+   `None`.
+3. **The name proof.** The legacy row is believed only when its `team_name`
+   is this team's catalog name: both sides trimmed and casefolded, the
+   catalog name first clipped to the column's 128 characters (it is
+   compared as `upsert_stadium` stored it), and never when the result is
+   empty. A prefix is not a match. One upsert wrote the name and the facts
+   together, from the name the lookup used, so a matching name proves the
+   facts are this team's. A row that fails belongs to another league's
+   team, or to this one before a rename; it is ignored and the team
+   resolves fresh.
+4. `adopt=False` (the map route): the proven legacy row itself, read-only.
+5. `adopt=True` (the sweep): **a copy**, inserted under the scoped key with
+   every fact of the legacy row — `team_name`, venue, coordinates, capacity,
+   opened, image, location, surface, `resolved` and `fetched_at` — flushed
+   and returned. The legacy row is not touched.
+
+- **Adoption copies; it never re-keys. Legacy rows are kept on purpose.**
+  Rewriting a primary key is one-way: an older build run against the same
+  database (a rollback, an older desktop app) would find no rows, drop
+  every pin and send the whole field back through the rate-limited
+  lookups. With a copy it still finds every row it wrote. Nothing in this
+  change deletes a legacy row, and none is served unless it passes the
+  proof.
+- **Idempotent.** Step 1 returns the scoped row before the legacy key is
+  consulted, so adopting twice copies nothing.
+- **A copied miss keeps its age.** `fetched_at` comes across, so the
+  sweep's retry cool-down (`_STADIUM_MISS_RETRY`, 15 min) runs from when
+  the lookup really missed: an old miss is retried on the pass that adopts
+  it and a fresh one still waits — what would have happened had the key
+  never changed.
+- **Logging is how the repair is read back.** A legacy row that fails the
+  proof logs its key, the name it holds and the name it was asked to match
+  (`find_team_stadium: legacy row … holds …, not … — ignored for …`),
+  which is what a cross-league collision or a renamed team looks like. At
+  INFO from the sweep, which writes the team's own row straight afterwards
+  and so reports each row once; at DEBUG from the map route, which would
+  otherwise repeat the line on every poll. An adoption logs at INFO.
+
+### The sweep and the map route
+
+- **`scheduler/stadium_cache.refresh_competition_stadiums`** —
+  single-flight; run at every startup, in the 05:00 daily refresh and on a
+  map kick — builds `repository.stadium_key(league, team.provider_key)`
+  and reads through `find_team_stadium(..., adopt=True)`. The area-only,
+  already-located and miss-cool-down checks then judge the adopted copy
+  exactly as they would a row the sweep wrote itself, and a fresh resolve
+  upserts under the scoped key. An upgrade therefore spends lookups only on
+  the teams whose old row was really another team's; an adopted located row
+  costs neither a lookup nor the pacing sleep.
+- **Each league's summary line counts both**:
+  `refresh_competition_stadiums: <league> — N/M team stadium(s) located (A
+  adopted from legacy rows, F resolved fresh)`. To tell an adoption from a
+  row already under the team's key, the sweep reads `get_stadium(key)`
+  before the adopting read. An upgrade is reported once: the next pass
+  reads `0 adopted from legacy rows` and logs no refused row, because a
+  refused legacy row is never consulted again once the team has a row of
+  its own. Its `resolved fresh` count is then only the misses being
+  retried.
+- **A lookup TheSportsDB refused is not a miss** (2026-10-11).
+  `stadiums.lookup_stadium` returns `None` both when TheSportsDB has no
+  such team and when it could not be asked (HTTP 429, a timeout); only the
+  first is kept in its process cache, and
+  `stadiums.lookup_settled(team_name, sport=...)` reports which it was
+  (a blank name is settled; it never makes a request). The sweep asks
+  first (`_tsdb_answered`), and for an unanswered team it writes nothing
+  yet: it logs `refresh_competition_stadiums: TheSportsDB is rate limiting
+  (no answer for <team>) — pausing …`, sleeps
+  `_TSDB_RATE_LIMIT_PAUSE_SECONDS` (30) with no database session open, and
+  resolves the team once more. Whatever that second attempt gets is
+  recorded as before — the stored-fixture venue geocoded, or a miss row
+  with its 15-minute cool-down — so a team is never waited on twice and
+  the map still gets the row that stops it kicking a sweep on every poll.
+  A definitive miss is recorded at once, with no pause. From the first
+  refusal on, the pass resolves every `_COMPETITION_THROTTLED_DELAY_SECONDS`
+  (5) instead of every `_COMPETITION_RESOLVE_DELAY_SECONDS` (1), in every
+  league still to come. A pause whose retry still got no answer is
+  "fruitless"; after `_TSDB_MAX_FRUITLESS_PAUSES` (3) of them the pass
+  stops waiting and behaves exactly as it did before this change, still at
+  the slow pace — TheSportsDB has refused every lookup for a whole session
+  before, no pause will outlast that, and each one holds up the stages of
+  the pass that come after the sweep (and the status's `refreshing` flag
+  with them) for another half minute. A pause that got its team an answer
+  does not count.
+  Measured on a copy of a real database before this: 29 teams refused in
+  a row, each recorded as a miss and off the map until a later sweep —
+  the map kicks a sweep only for a team with **no** row.
+- **The sweep steps aside for a save** (2026-10-11).
+  `refresh_competition_stadiums(should_stop: Callable[[], bool] | None =
+  None)`: `daily_refresh` runs it as `_competition_stadiums_stage`, which
+  passes `should_stop=_superseded`; the map kick and a direct call pass
+  nothing and always run to the end. The slow pace and the pauses above
+  made the stage five times longer or more from the first unanswered
+  lookup — any one: a 429, a timeout and a reset are not told apart — and
+  the pass a setup save asks for cannot start until the stage returns: on a
+  field of 100 with one refusal at the third team, a save a minute in
+  waited 460 s for the newly followed team's schedule, standings and
+  roster. `should_stop` is asked **before each league** (ahead of the
+  catalog request for its teams), **before each team** (ahead of the
+  session read) and **straight after a rate-limit pause** (ahead of the
+  second resolve). So a save waits for at most the team in hand: one
+  30-second pause or one 5-second pace, plus the request in flight. On
+  leaving the sweep logs `refresh_competition_stadiums: the followed set
+  changed — leaving the rest of the sweep to the next pass`, once, and
+  that league's summary line is not written. Rows already written stay; a
+  team the sweep was pausing on gets no row, so the next sweep asks about
+  it afresh rather than finding a miss to cool down. The pass that
+  restarts runs the sweep again: it skips what is cached, as any sweep
+  does, and resolves at the normal pace until it is refused again.
+- **`GET /api/map` reads the stadium cache and never writes it.** Each
+  competition team is read through `find_team_stadium(...)` without
+  `adopt`: a request session is never committed, so a copy made there would
+  only hold a write transaction open against the sweep and then be rolled
+  back. A legacy row that is not provably the team's reads as "not cached"
+  — the team is omitted and the `pending` flag kicks the sweep — so it
+  waits for its own lookup instead of borrowing the ground of whoever
+  shares its number. A proven legacy row is served as it stands, so pins
+  survive the gap between an upgrade and the first sweep. (12b's "on miss,
+  resolve … and cache it" is not what the route does: it omits the team
+  and kicks the sweep.)
+- **The dedupe is the same key.** `followed_identities` is a `set[str]` of
+  `stadium_key(league, team.provider_key)` over the followed teams, and a
+  competition team is skipped when its own key is in the set. A followed
+  club is still recognised in every soccer competition it plays, and a
+  followed NFL team no longer hides the NHL team that shares its number.
+
+### Known limits
+
+- **Legacy rows stay in the table indefinitely.** After the first sweep
+  each followed competition team has a scoped row, and the legacy rows
+  serve only an older build; no pin is drawn from one again. They are
+  still read into the venue-name index (`repository.list_located_stadiums`
+  → `venue_coords.build_index`), where a row is only the coordinates of the
+  venue it names — true whichever team it was filed under, with one
+  exception. A legacy row an older build cached at an area centroid
+  (`venue == location`, see *Narrowed 2026-07-27* under Phase 11) is
+  copied and the **copy** repaired; the original keeps the centroid under
+  the area's own text, so a game whose `venue` were exactly that text would
+  be placed there. Removing legacy rows is a separate decision, to be
+  taken once no older build can run against the database.
+- **A team renamed since it was cached fails the proof.** That costs one
+  fresh lookup; believing the row instead could cost a pin in the wrong
+  city, and the two cases look the same from the row.
+- **The proof is the name and nothing else.** A wrong adoption needs the
+  same provider id and the same display name in two id spaces under one
+  legacy key. No such pair is known, and nothing else would catch one.
+- **Not yet watched on a real upgraded database.** The tests seed legacy
+  rows; the log lines above are how the first real sweep is to be read (see
+  the root ROADMAP.md).
+- **The rate-limit pause is tuned against a script, not the real limit.**
+  How long TheSportsDB keeps answering 429 has not been measured, so the
+  30-second pause, the 5-second pace and the cap of three fruitless pauses
+  are untested live. A block that outlasts the three pauses still ends in
+  miss rows for the teams after it, retried by a later sweep once their
+  cool-down has passed.
+- **One unanswered lookup still slows the rest of the sweep fivefold.**
+  Whatever leaves a lookup unsettled — a 429, a single timeout, a
+  connection reset; `lookup_settled` cannot tell them apart — sets the slow
+  pace for the rest of the pass and logs "TheSportsDB is rate limiting".
+  Only a setup save's wait was fixed, by the sweep stepping aside. Left
+  alone, a sweep of 100 teams refused once at the third sleeps 522 s where
+  it used to sleep 100, and until it ends `refreshing` stays true and the
+  venue geocoding and stale-game prune behind it wait. Slowing down only
+  for a real 429 needs the status carried out of `services/stadiums.py`.
+- **Two refusals are still read as answers.** A 429 on `lookupvenue.php`
+  after a team search that succeeded settles a partial record — no photo,
+  year opened or coordinates — which then goes on to the geocoder. And
+  `refresh_locations`, the followed teams' path, still reads a refused
+  lookup as "TheSportsDB has nothing" and falls through to its other
+  sources. Neither is changed by this fix.
+- **The racing memos in `providers/espn/provider.py` and `EventORM.id`**
+  still treat an ESPN event id as unique across leagues. Unchanged: the
+  memos are process-lifetime dicts with nothing persisted to repair, and no
+  shared event id has been observed.
+
+### Tests
+
+`tests/test_repository.py` (SQLite and Postgres): the id spaces — NFL ≠
+NHL, NBA ≠ WNBA, `epl` == `ucl`, two TheSportsDB leagues equal, an ORM row
+and a domain league equal; no catalog league id is `soccer`; a legacy row
+is read only as the team it names, serving it writes nothing, adopting
+copies every column (the seeded row has none null, so a column the copy
+forgot cannot hide behind two NULLs) and leaves the original, a second
+adopt adds nothing, and once the scoped row exists it wins over a changed
+catalog name; a miss is adopted at its original `fetched_at`; and the name
+proof case by case — casing and padding drift, a prefix, blanks on either
+side, a name longer than the column.
+`tests/test_stadium_cache.py` (the catalog and the lookup stubbed, the
+lookups recorded): two leagues' team 1 get two lookups and two rows; a
+legacy row is adopted with its facts intact and only the unproven team is
+looked up; a second sweep looks nobody up and changes no row; a legacy row
+under another name is left alone and the team resolved fresh; one row and
+one lookup for a club listed by two soccer competitions; one league's miss
+does not stop the other league's lookup; an adopted miss is retried or
+held by its own age; and the summary and refused-row log lines, on the
+upgrade pass and on the one after. The same file then runs the REAL
+resolve against a scripted TheSportsDB (HTTP transport, geocoder and
+`asyncio.sleep` replaced, the sweep's own delay constants asserted): a
+team refused once is looked up twice, paused on once, and located from the
+provider's record with no row written in between; refused twice it is
+resolved from its stored fixture venue in a single write; refused for good
+it is looked up twice, never three times, and its miss then cools down; a
+definitive miss is looked up once with no pause; the slow pace starts at
+the first refusal and carries into the next league; the pass stops
+pausing after three fruitless pauses; and pauses that each got an answer
+do not count against that. Then `should_stop`: told to stop, the sweep
+finishes the team in hand, asks about no other, lets go of its lock and
+logs that it left once, and the next sweep resolves the rest; it does not
+list the next league's teams; told during a pause it does not ask again
+and writes nothing for that team; and, through the real `daily_refresh`
+over a field of 100 (refused once at the third team, and once at every
+team), a `note_follow_change()` a minute into the stage starts the next
+pass within one pause plus one pace with at most one more team asked
+about, and that pass's sweep locates the whole field.
+`tests/test_stadiums.py`: `lookup_settled`
+after a refusal, a hit, a definitive miss and for a blank name, without
+making a request.
+`tests/test_api.py`: the map does not pin a team at another league's legacy
+stadium — the proven side keeps its pin, the other is omitted, the sweep
+is kicked, and the request issues no INSERT, UPDATE or DELETE; teams
+sharing an id are pinned at their own grounds from their own rows; a
+followed team no longer hides the same id in another league; a followed
+soccer club is still deduped out of a second competition, with a second
+located club proving that pins are drawn at all. Each of these disables
+weather, which the route would otherwise fetch for football and soccer
+pins. `test_map_plots_offseason_follow_all_league` now seeds
+`espn:soccer:111` / `espn:soccer:222`.
+`tests/test_map_coarse_locations.py`: the centroid repair is parametrized
+over a row under the scoped key and one cached by an older build — the
+sweep must judge an adopted copy as it would its own row, or the upgrade
+carries the bad pin across.
+
+## Data freshness — a display left running stays current (2026-10-11)
+
+SportsDash is left open for days — a wall display, a pinned browser tab,
+the desktop app — and its views stay mounted once visited. Most hooks
+fetched once per key and never again; the ones that polled were Today,
+News, a live box score, a map with a competition pin or an upcoming game,
+and "On this day" every six hours. So a display went on showing the
+standings, calendar, results, leaders, bracket and previews it had loaded
+on the day it was opened, until somebody reloaded the page.
+
+The fix has three parts, and the second and third exist because of the
+first:
+
+1. **A freshness keeper** in the frontend refetches every mounted query
+   that has outlived a per-root max age.
+2. **`services/cache.py` keeps an allowlist of upstream read caches
+   in-process when there is no Redis** — the default on the desktop app and
+   in dev. Without it every refresh of an upstream-backed endpoint would
+   repeat its whole fan-out, and refreshing on a timer would multiply ESPN
+   and Open-Meteo traffic.
+3. **Five routes answer 503 when everything upstream failed**, instead of
+   an empty 200. A refresh that lands in an ESPN or Open-Meteo outage would
+   otherwise replace good data on screen with "nothing to show" and hold it
+   for the row's max age.
+
+What bounds the load is the mechanism, not a number: the max ages below,
+one provider-backed refetch per tick, and the server-side cache in front of
+every fan-out.
+
+The passages this amends are corrected in place: the `services/cache.py`
+contract, the `src/main.tsx` line under *File ownership*, `src/hooks.ts`,
+the cache notes under *Phase 18*, *21*, *22* and *30*, *Historical
+archives*, the cache-counter row of `/api/metrics`, *"On this day"* and the
+bracket's failure semantics under *October 2026*.
+
+### The keeper (`src/lib/freshness.ts`)
+
+```ts
+export const TICK_MS = 30_000;               // how often the keeper looks at the cache
+export const DEFAULT_MAX_AGE_MS = 900_000;   // a root with no policy row
+export const ERROR_RETRY_MS = 300_000;       // after any error that came with an answer
+export const UNREACHABLE_RETRY_MS = 60_000;  // after no answer at all, or the proxy's 502
+export const UPSTREAM_PER_TICK = 1;          // provider-backed refetches per tick
+
+export type MaxAge = number | null;          // ms since the last attempt; null = never refreshed once loaded
+export type FreshnessRule = MaxAge | ((key: QueryKey, data: unknown, nowMs: number) => MaxAge);
+export type CostClass = "db" | "upstream";
+export interface FreshnessRow { maxAge: FreshnessRule; cost: CostClass }
+export const FRESHNESS_POLICY: Record<string, FreshnessRow>;  // keyed by queryKey[0]
+
+export function isHot(game: Game | undefined, nowMs: number): boolean;
+export function maxAgeFor(key: QueryKey, data: unknown, nowMs: number): MaxAge;
+export function costFor(key: QueryKey): CostClass;
+export function isDue(key: QueryKey, state: QueryState, nowMs: number): boolean;
+export interface AgedQuery { queryKey: QueryKey; state: QueryState }
+export function selectDue<T extends AgedQuery>(queries: readonly T[], nowMs: number, upstreamBudget: number): T[];
+export function startFreshnessKeeper(client: QueryClient, tickMs?: number): () => void;  // returns stop()
+```
+
+No React and no DOM: the policy functions are pure with an injected clock,
+and the keeper itself is one `setInterval` plus two TanStack manager
+subscriptions.
+
+- **Started from `main.tsx`, once, on the app's `QueryClient`.**
+  `startFreshnessKeeper(queryClient)` sits on the line after the client is
+  constructed, before the first query mounts. No hook, no view and not
+  `App.tsx` knows it exists. `freshness.test.ts` reads `main.tsx` as text
+  and fails when the import or the call is missing — a commented-out call
+  does not count. Every other test builds its own client, so without that
+  guard a merge that dropped the one wiring line would switch the whole fix
+  off with the suite still green.
+- **Why it lives outside the hooks.** Interval defaults on the
+  `QueryClient` cannot do the job: a hook that passes `refetchInterval`,
+  even as `undefined`, overrides them. The keeper reads each query's
+  **age** — time since its last attempt, whoever made it — so a hook that
+  polls faster simply never comes due, and one that does not poll at all
+  is still kept current. **The two never add up**: on a 5-minute row a
+  caller polling every 60 s makes 60 requests an hour, and one polling
+  every 10 minutes, or passing `undefined`, makes 12.
+- **A tick** runs every `TICK_MS`, and at once when the browser tab
+  becomes visible or the network returns. If the tab is hidden or the
+  browser is offline it does nothing. Otherwise it takes the **active**
+  queries (watched by at least one enabled observer), drops the static
+  ones, hands the rest to `selectDue(…, Date.now(), UPSTREAM_PER_TICK)` and
+  refetches exactly that set with `cancelRefetch: false`, which joins a
+  fetch already in flight rather than aborting and restarting it.
+- **`stop()` ends the refetching only**; the key defaults set at start
+  (below) stay on the client.
+
+### When a query is due (`isDue`)
+
+With `last = max(dataUpdatedAt, errorUpdatedAt)`, a query is due when
+`now − last ≥ limit`. It is never due:
+
+- while `fetchStatus` is not `"idle"` — fetching, or paused offline, is an
+  attempt already under way;
+- before its first attempt (`last === 0`) — the first load belongs to the
+  hook that mounts it;
+- when its row's max age is `null` — with one exception, *a row that never
+  loaded*, below.
+
+After a successful attempt `limit` is the row's max age. **After a failed
+one it depends on the error** (`ApiError.status`, and for a 502 the body
+`ApiError` keeps as its message):
+
+| The last attempt failed with | Asked again after | Why |
+|---|---|---|
+| no HTTP status (the request got no answer), or a 502 whose body is not a JSON object (the proxy's) — "unreachable" | `min(max age, UNREACHABLE_RETRY_MS)` — 60 s | nothing is listening, so the retry is free, and a quick one shortens the outage on screen |
+| anything else — 503, 504 and the backend's own 502 included | `min(max age, ERROR_RETRY_MS)` — 5 min | the backend is there but did not help |
+
+A failed row is never asked more slowly than a healthy one, and a failed
+*first* load — no `dataUpdatedAt` to measure from — is timed from the
+failure. This retry is also what recovers from a backend restart with the
+tab on screen, which no browser event announces.
+
+- **A 504 gets no longer wait of its own.** It is the Bun proxy giving up
+  on a fan-out that outran its 20 seconds, and "do not start a second
+  fan-out" would suggest waiting out the row's full max age. That rule was
+  written first and withdrawn before release, for three reasons. The app's
+  `retry: 1` sends the second request one second later whatever the keeper
+  decides. The backend does not stop when the proxy hangs up — it finishes
+  the fan-out and caches it — and every upstream cache lives at least 10
+  minutes, so a request 5 minutes later is answered from that cache; the
+  row's full max age is as long as its cache lives or longer (`scorers`: 60
+  minutes against 30), so that request met a cold fan-out, and a timeout,
+  again. And `MatchupView` replaces a loaded preview with its error panel
+  when a refetch fails, so a single timed-out refresh left the Matchup tab
+  on that panel for 30 minutes.
+- **What counts as unreachable depends on what answers for the backend.**
+  The Bun proxy (the Docker stack) answers a refused connection with 502,
+  and in the desktop app `fetch` itself rejects with no status; both are
+  the first row. Under `bun run dev` the Vite proxy reports a refused
+  connection as a bare HTTP 500, which is the second row: a stopped API is
+  re-asked there every 5 minutes, not every minute. The keeper does not
+  read 500 as unreachable, because the backend's own 500 on an upstream row
+  would then be re-asked every minute.
+  **In the desktop app the backend's own 500 arrives without a status.**
+  That reasoning holds wherever the 500 arrives with its status: behind
+  the Bun proxy and under `bun run dev`. In the desktop app it arrives
+  without one. The backend's 500 is always an unhandled exception (no
+  route raises one), which Starlette answers outside `CORSMiddleware`, so
+  it carries no `Access-Control-Allow-Origin`. The webview calls the API
+  cross-origin, rejects that response with no status, and the keeper files
+  it under the first row: a crashing upstream row is asked again after a
+  minute there, not five, and a never-loaded `null` row that crashes is
+  retried rather than final. An `HTTPException` — a 404, the 502 below,
+  the 503s — is answered inside the middleware and keeps its status on
+  every install.
+  Only the server's half is pinned by a test (the header is missing from a
+  crash's 500 and present on a 404); that a webview then rejects the
+  `fetch` is the Fetch standard's rule and has not been watched.
+  **The backend's own 502 is not the proxy's.** `GET /setup/teams/{id}`
+  answers 502 when the team catalog cannot be fetched (*Setup routes*) —
+  the only query the backend answers that way; the save can too, but a
+  mutation is not the keeper's — and that is an answer: the second row,
+  and on its `null` row final. The two are told apart by the body — FastAPI's
+  starts with `{` (`{"detail": …}`); the Bun proxy's is the text `Bad
+  Gateway`, another proxy's an HTML page or nothing, and all of those are
+  the first row. Read as unreachable, the wizard's Teams step re-asked a
+  failing provider every minute and a half for as long as it stayed open,
+  each time a fresh upstream call with a traceback in the backend log. A
+  reverse proxy that reports a refused connection as a JSON object would
+  be read as an answer, like Vite's 500.
+- **A row that never loaded.** A `null` max age means *never refreshed*,
+  not *never loaded*. A query on such a row that has **no data**, and whose
+  last attempt failed as unreachable (the first row of the table), is asked
+  again every `UNREACHABLE_RETRY_MS` until it loads; from then on it is
+  never due. Without this a display that booted before the API — a kiosk
+  browser after a power cut, served its app shell by the service worker —
+  stayed on `App.tsx`'s "Couldn't reach the SportsDash API" splash until
+  somebody pressed Retry: `setup-status` was the only mounted query and its
+  row is `null`. An error that came with an answer stays final (an
+  archive's 404 is not asked for every minute, nor is a team catalog the
+  backend said it could not fetch — its own 502, above), and a `null` row
+  that has
+  data is never due whatever a later refetch of it did. Each retry puts the
+  dataless query back to `pending` for the attempt — TanStack's rule — so
+  the splash shows its plain loading state for a second or two, about every
+  minute and a half, while the API is down.
+- **A timestamp ahead of the clock is ignored.** `dataUpdatedAt` or
+  `errorUpdatedAt` later than `now` was written before the system clock was
+  set back (an NTP correction, a manual change) and says nothing about the
+  query's age; read literally it would hold the row back for the size of
+  the step plus its max age. Each stamp is dropped on its own, so a refetch
+  that fails after the step is still paced by its error. When no stamp is
+  left the age is unknown and the query is due at once (ranked last among
+  the upstream rows, as zero overdue); the attempt stamps it afresh. A
+  `null` row with data stays never due.
+
+### The policy table (`FRESHNESS_POLICY`)
+
+Keyed by `queryKey[0]`. The age is counted from the query's last attempt.
+`cost` says what one request can reach: `"db"` endpoints read only the
+database, `"upstream"` ones can call ESPN or Open-Meteo and are rationed
+(next section). Where a hook polls on its own, its row is no shorter than
+that hook's slowest interval, so the keeper only steps in once the hook has
+stopped asking.
+
+| Root | Max age | Cost | Why |
+|---|---|---|---|
+| `schedule`, `events`, `results` | 5 min | db | straight from the database, which the backend's own jobs keep moving (the live tick, the events tick, a standings refresh on every FINAL) |
+| `today`, `news` | 5 min | db | both poll themselves at least this often; the row matters after a hidden or offline spell, when the keeper catches them up at once instead of on the hook's next beat |
+| `standings` | never when `key[2]` is a number; otherwise 5 min | db | a numeric season is an archive. Everything else refreshes — the `"current"` sentinel and any key shape the rule has not seen: guessing wrong must cost a request, not freeze the table |
+| `teams` | 10 min | db | follows can be edited from another device |
+| `roster`, `nation`, `player-follows` | 15 min | db | the pre-game roster re-sync is a 15-minute job |
+| `matchup` | never once the payload's game is final; 5 min while it is hot; otherwise 30 min | upstream | a preview is a dozen or so provider calls; its lines and lineups move in the run-up and during play, and a final never changes |
+| `game-detail` | never once final; otherwise 5 min | upstream | the box score polls itself while live; this covers the hours before kickoff, and the kickoff itself, which that poll cannot see coming |
+| `game-odds` | 30 min | upstream | two provider calls per game id, up to 60 ids |
+| `leaders`, `bracket` | 30 min | upstream | one ESPN call for a board, a few for a bracket |
+| `scorers`, `schedule-weather` | 60 min | upstream | the widest fan-outs: a summary per final game, a forecast per outdoor game on the calendar |
+| `map` | 15 min | upstream | the map polls itself only while it has a competition pin or an upcoming game; with neither it would never ask again |
+| `on-this-day` | never | upstream | keyed by local day, on its own 6-hour timer |
+| `history-results` | never | upstream | a past season is immutable |
+| `meta`, `setup-status`, `setup-selection`, `notification-prefs` | never | db | static for the session, or open only inside the setup wizard |
+| `setup-leagues`, `setup-teams` | never | upstream | the same |
+| any other root | `DEFAULT_MAX_AGE_MS` — 15 min | upstream | a hook added without a row still cannot go stale forever; nothing can tell what its endpoint costs, so it is rationed |
+
+- **`isHot(game, now)`**: `in_progress`, or `scheduled` with kickoff
+  between an hour ahead and six hours overdue. A game still "scheduled"
+  past its start time is one the backend has not caught up with yet, so it
+  counts; after six hours it is a postponement nobody recorded.
+- **`setup-status` must stay unpolled.** `App.tsx` refetches *everything*
+  when the status's `refreshing` flag clears (*Editing the followed set*);
+  a keeper polling the status would let the nightly refresh trigger that
+  every morning. The retry of a row that never loaded (above) is not a
+  poll: it ends with the first successful load, and a test holds the
+  status at that one request for the following 24 hours.
+- **A new query root needs a policy row** — the binding rule for whoever
+  adds a hook. `freshness.test.ts` reads `hooks.ts` as text and fails when
+  a `queryKey: ["…"` root has no row, and when a row names a root
+  `hooks.ts` no longer has (a row left behind by a rename does nothing
+  while the renamed query silently falls back to the default). It also
+  pins the standings key shape the rule reads: `season ?? "current"` in
+  slot 2, with `season` a `number`.
+- A root is matched with `Object.hasOwn`, so one named `constructor` is not
+  a policy row.
+
+### One upstream row per tick (`selectDue`)
+
+Every due `"db"` query is refetched in the tick it comes due. Of the due
+`"upstream"` queries at most `UPSTREAM_PER_TICK` — one — is started per
+tick: the **most overdue**, measured past its own limit, so a row that has
+waited through several ticks is never passed over by one that came due
+later, and a failed row ranks by its retry time rather than by its age.
+
+The same budget applies in steady state and when catching up. After a
+night with the tab hidden, every db row and the single most overdue
+upstream row go at once; the rest drain one per 30 s tick instead of
+landing on ESPN as a burst. Three upstream rows that come due in the same
+instant start at 0, 30 and 60 seconds.
+
+Parked and static queries are excluded *before* selection, not after:
+`refetchQueries` refuses both, so one selected here but skipped there would
+hold the upstream slot on every tick and starve the rows behind it.
+
+### Hidden, offline, parked, unobserved
+
+- **Hidden browser tab: no request at all.** "Hidden" is TanStack's
+  `focusManager`, i.e. `document.visibilityState === "hidden"` — a
+  background tab or a minimised window; a visible window that merely lacks
+  keyboard focus still refreshes. On return the keeper ticks immediately
+  and catches up under the budget above.
+- **Offline: no request**; the same catch-up on the browser's `online`
+  event.
+- **Parked (`enabled: false`): never fetched.** A query whose only
+  observers are disabled is not "active". A key that also has a live
+  observer is refreshed as usual.
+- **Unobserved: left alone.** A query still in the cache after its view
+  unmounted has no reader; its hook decides again when the view next
+  mounts.
+- **A view behind another app tab is none of these.** See *Known limits*.
+
+### Key defaults for the id-list queries
+
+`useGameOdds` and `useScheduleWeather` key on the sorted list of game ids
+derived from another payload (`["game-odds", "<ids>"]`,
+`["schedule-weather", "<ids>"]`). Once the schedule refreshes every few
+minutes that list — and so the key — changes whenever a game kicks off or
+goes final, and a new key is a new, empty query: the upset radar would
+drop to its loading line and every calendar forecast glyph would vanish
+until the batch returned.
+
+`startFreshnessKeeper` therefore sets, for exactly those two roots,
+
+```ts
+client.setQueryDefaults([root], { placeholderData: keepPreviousData });
+```
+
+so the previous list's data stays painted (`isPlaceholderData: true`,
+`isLoading: false`) until the new list's first request settles.
+
+- **If that first request fails, the placeholder is dropped.** TanStack
+  shows placeholder data only while a query is pending, and a new id list
+  is a new query with no data of its own. So when the list changes during
+  an ESPN outage — `/odds` answers 503 for the new one — the odds chips
+  and the upset radar are gone until a request succeeds; the keeper asks
+  again after 5 minutes. This is the one case the 503 does not cover: a
+  failed **refetch** of a list already loaded keeps its data, a failed
+  first request for a new list has none to keep. The list does change
+  during an outage: Today's rolls over at local midnight whatever ESPN is
+  doing, and the scoreboard can go on moving games through their phases
+  while the summary and predictor endpoints the lines come from fail. The
+  same holds for the calendar forecasts in an Open-Meteo outage:
+  `/schedule/weather` answers 503 like `/odds`, so a new list keeps only
+  the forecasts still in the backend's cache (a `weather:` entry lives 45
+  minutes) and, once none is, has no glyph at all until a request
+  succeeds. Fixing it
+  needs a stable key filtered on the client, i.e. an edit to `hooks.ts`; a
+  key default cannot do it. Pinned as it stands.
+- **The hooks must pass no `placeholderData` of their own.** An explicit
+  option on the hook, even `undefined`, beats a key default. A guard test
+  reads both `useQuery` blocks in `hooks.ts`; a hook that starts setting
+  its own must drop the keeper's default for that root.
+- **Those two roots only.** Anywhere else the previous key is a different
+  subject — one league's leaders must never sit under another league's
+  heading — and a test pins that `leaders` still blanks on a key change.
+
+### `services/cache.py` without Redis
+
+With a `redis_url` configured the cache behaves exactly as before,
+including the silent no-op when Redis is down — **a Redis failure is a
+miss, never a fall-back to the in-process store.** That is decided on
+every call (`_is_local_key`), because a configured `redis_url` whose
+client could not be built also leaves the client `None`.
+
+With **no** `redis_url`, `cache_get_json` / `cache_set_json` use an
+in-process TTL store for keys whose prefix is on `_LOCAL_PREFIXES`, and
+remain no-ops for every other key:
+
+| Prefix | Written by | Holds | TTL |
+|---|---|---|---|
+| `weather:` | `services/weather.py` | one venue's forecast for one day | `weather_cache_minutes` (45) |
+| `odds:` | `routes/odds.py` | one game's line — or its "no line" answer | 10 min |
+| `leaders:v2:` | `routes/leaders.py` | a league's ESPN-wide board, when the feed returned rows | 15 min |
+| `scorers:` | `routes/scorers.py` | a league's Golden Boot | 30 min |
+| `bracket:` | `routes/bracket.py` | a league's playoff bracket, when it has rounds | 30 min |
+| `history:results:` | `services/season_results.py` | a team-season of results, when non-empty and every schedule call answered | 6 h for this year's key and last year's / 7 d older |
+
+These are the TTL'd caches of upstream-derived **read** data behind the
+endpoints the frontend polls. The list is explicit on purpose. None of
+them stores a fetch that failed outright; what each does with an empty or
+partial answer is in the *Holds* column and under *An upstream outage is
+not an empty answer* below.
+
+- **A forecast past Open-Meteo's window is not asked for** — with or
+  without Redis. A `None` from `weather.fetch` is never cached, and
+  Open-Meteo answers a `start_date` more than 15 days after today's UTC
+  date with HTTP 400 every time, so a calendar repeated that request for
+  each far-off outdoor fixture on every refresh. `fetch` now returns
+  `None` for such a `target_date` without a request
+  (`_FORECAST_DAYS_AHEAD` = 15; the last day inside the window is still
+  asked for). Any other out-of-range date still gets its 400 and degrades
+  to `None` as before.
+
+**Deliberately not kept in-process** — their behaviour without Redis is
+unchanged, every read a miss and every write a no-op:
+
+- `onthisday:` (`services/on_this_day.py`, 24 h) stores whatever its
+  season scan assembled, an empty list included — and a scan made while
+  ESPN was failing assembles an empty list, which would then be a team's
+  anniversaries for the rest of the day. Its upstream cost is absorbed one
+  level down: the scan reads `history:results:`, which is kept and only
+  ever holds a season that was fetched whole (*"On this day"* above).
+- `venuecoords:` (`services/venue_coords.py`) stores miss markers as well
+  as hits, and code elsewhere counts on its being absent without Redis: the
+  map route never flags a game venue pending, and
+  `refresh_game_venue_coords` returns before geocoding anything.
+- `tsdbphoto:v2:` (`services/player_photos.py`) stores miss markers.
+- `wiki:` (`services/wiki.py`) feeds a background enrichment job, not a
+  polled endpoint.
+- `standings:lastgood:` (`routes/standings.py`) is a fallback snapshot,
+  not a TTL cache.
+
+The store:
+
+- **Bounded at `_LOCAL_MAX_ENTRIES` = 2048, least recently used evicted
+  first.** A read and a rewrite both count as use; a rewrite is not a new
+  entry. Expiry is checked only on read, so a key nobody asks for again
+  (yesterday's forecast, a finished game's odds, a scorers key superseded
+  by a new final count) sits there until it is the least recently used —
+  the cap is what bounds those. A display following some twenty whole
+  leagues holds under 1,000 live entries, so at 2048 it is the dead ones
+  that go. Most values are well under 1 KB; the largest, a team-season of
+  results, is 25–110 KB.
+- **Expiry on read**, against wall time — `time.time` (`cache._now`, a
+  module attribute so tests move time instead of sleeping) — which is what
+  Redis expires on. Not `time.monotonic`: on macOS and Linux it stands
+  still while the machine sleeps, so a laptop opened in the morning was
+  served last night's forecast, odds and bracket as live. An entry is live
+  while `0 <= age < TTL`; an expired one is dropped by the read that finds
+  it, and so is one whose age is negative — the clock was set back after
+  the write, its real age cannot be known, and it would otherwise outlive
+  its TTL by the size of the step.
+- **A TTL of zero or less stores nothing**, as with Redis, which refuses a
+  non-positive expiry.
+- **Values are held as JSON text and decoded afresh on every read.**
+  Callers get exactly the shapes the Redis path returns (a tuple comes back
+  a list, a `datetime` a string) and cannot mutate what is stored.
+- **The hit/miss counters count it**: a read served from the store is a
+  hit, an absent or expired key a miss.
+- **`close_cache()` empties it**, and `clear_local_cache()` does only
+  that. `tests/conftest.py` clears it before and after every test — with no
+  Redis in the suite the store really caches, and a board one test stored
+  would otherwise answer the next test's request.
+- It is module state in one process: it starts empty after a restart and
+  is not shared between workers. The app runs one worker.
+
+### An upstream outage is not an empty answer (503)
+
+`HTTPException(503, "Upstream provider unavailable")`, never cached. On
+the client a failed refetch leaves the query's previous data in place, so
+the board already on screen stays, and the keeper asks again five minutes
+later (the "anything else" row above).
+
+| Route | 503 when | Still 200 |
+|---|---|---|
+| `GET /scorers/{league_id}` | at least one final game was walked and **every** summary fetch raised, **or** the provider's circuit breaker turned any fetch away unasked | one summary came back and none was turned away — a fetch that failed on its own counts as no goals, and `games_counted` still reports the games walked; a provider that answers "no summary" (`None`); no finals yet; a non-soccer league; an unregistered provider |
+| `GET /odds?ids=` | there was at least one game to price and **every** one of them was an upstream fetch that raised | any game served from the cache — a line or a remembered "no line"; any provider answer, "no line" included; no priceable id in the request |
+| `GET /bracket/{league_id}` | nothing is cached and the playoff fetch failed (`espn_playoffs.EspnPlayoffsError`) | ESPN answered and listed no series — empty `rounds`, the off-season state; a non-ESPN league or a sport without series |
+| `GET /leaders/{league_id}` | the ESPN athlete-stats feed failed (`espn_leaders.EspnLeadersError`) **and** the followed rosters hold no stats to build the roster board from | the feed answered with nothing; the feed failed but the roster board has rows |
+| `GET /schedule/weather?ids=` | **no** forecast was served and at least one Open-Meteo request failed (`weather.WeatherUnavailable`: a transport error, a timeout, a 429, a 5xx, a redirect or a body that is not JSON) — a walk given up after 3 such failures with nothing served included | any forecast served, cached or fresh — the games whose request failed are then simply absent; Open-Meteo answering 400 (a day outside its window; any 4xx but 429) or a 200 with nothing usable, which are "no forecast"; nothing to ask — no id, weather disabled, no outdoor scheduled game with coordinates inside the 15-day window |
+
+- **A cached value is always served first**, outage or not: each route
+  reads its cache before it asks upstream. One exception:
+  `/schedule/weather` walks its games in the order asked and gives the
+  walk up after 3 failed requests with nothing served (below), so a cached
+  forecast further down the list is not reached and the answer is 503. On
+  a refetch that is the better outcome: the client keeps every glyph it
+  holds, where a 200 carrying that one forecast would drop the rest.
+- **`/schedule/weather` is the one of the five in front of Open-Meteo.** A
+  `weather:` entry lives 45 minutes and the keeper's row is 60, so every
+  hourly refresh of a calendar is a cold walk. One that landed in an
+  Open-Meteo outage answered `200 {}` and took every forecast glyph off
+  the calendar until the next refresh, an hour later; before the keeper a
+  loaded forecast was only asked for again on a remount, a reconnect, an
+  invalidate or a manual Refresh. `weather.fetch_or_raise` raises
+  `WeatherUnavailable` for a request that could not be made or was not
+  answered, and `game_detail.fetch_weather(…, strict=True)` passes that
+  on; only this route asks for it. `weather.fetch` wraps the same lookup and still never
+  raises, so the map, `/games/{id}` and `/matchup` are unchanged.
+- **The weather walk is bounded, because a 503 is asked for again
+  sooner.** The empty 200 was re-asked after an hour; a 503 is re-asked
+  after 5 minutes, twice (the app's `retry: 1`). The walk is sequential,
+  up to 80 games, and nothing like the ESPN circuit breaker stands in
+  front of Open-Meteo, so a walk that only fails stops after
+  `_GIVE_UP_AFTER_FAILURES` = 3 requests. Once one forecast has been
+  served it runs to the end, as it always did.
+- **One failed forecast is not a 503**, only "nothing served". A venue
+  whose request kept failing would otherwise leave every new list it is on
+  without forecasts.
+- **`espn_playoffs.fetch_playoff_bracket` and
+  `espn_leaders.fetch_league_leaders` now raise a typed error** on a
+  network, status or decode failure. `[]` is kept for "ESPN answered and
+  there is nothing" (or an unsupported sport), so the empty list is no
+  longer overloaded. For the bracket that includes a failed month bucket
+  of the ranged-dates fallback (*October 2026*).
+- **An empty bracket is still not cached**, so the first series of a
+  postseason shows on the next request rather than a TTL later. A partly
+  failed scorers walk *is* cached like any other board, for its 30
+  minutes, exactly as it was with Redis — unless the breaker cut it short,
+  which is a 503.
+- **The first fetch of the `/scorers` and `/odds` fan-outs goes alone**
+  (for `/odds`: the first real fetch per provider; cache hits pass
+  straight through), and the rest follow in parallel. After an outage the
+  provider's breaker is half-open and admits exactly one call. Fired
+  together, that one succeeded and every other was turned away
+  (`ProviderUnavailable`) before it could close the breaker: `/scorers`
+  answered 200 with a single match's goals under the full match count and
+  cached it for 30 minutes, and `/odds` priced one game of the batch.
+  Alone, the first fetch closes the breaker and the rest go through. The
+  keeper's 5-minute retry after a 503 is, on a quiet day, exactly that
+  first request after the breaker's 60 s cooldown.
+- **A walk the breaker cut short is a 503, not a board.** Five failures in
+  a row open it mid-walk and every later fetch is turned away unasked;
+  whatever got in before that is not the competition. `/odds` keeps its
+  rule — a turned-away fetch is a failed fetch, and failures are never
+  cached.
+- **A denied line is a failure, not "no line".** ESPN's `get_game_odds`
+  re-raises a `ProviderAccessError` (401/403) on its `/summary` half, as
+  it already did a `TransientProviderError`; the predictor half's 404
+  stays the ordinary "no projection". (`get_game_summary` returning `None`
+  for another 4xx is still its "no summary" answer and still counts as no
+  goals.)
+- **`/leaders` was changed too.** A whole-followed league has no followed
+  rosters, so a failed feed fell through to an empty roster board — "no
+  player stats yet" over the leaders on screen.
+- **`/matchup` and `/games/{id}` are deliberately unchanged** and still
+  degrade to 200 with sections missing: their views replace loaded content
+  with an error panel when a refetch fails, so a 503 there would blank
+  more than it saved.
+- The 503 is raised, not declared on the route, so the schema in
+  `tests/openapi_snapshot.json` is unchanged. One line of the snapshot
+  moved: the description of `/schedule/weather`, which is that route's
+  docstring and said "Never fails the request".
+
+### Known limits
+
+- **The Calendar still shows the month it was mounted in.** Its date range
+  is view state, set when the tab is first opened; the keeper refreshes the
+  games *inside* that range every 5 minutes but nothing moves the range. A
+  display left on across a month boundary shows last month, fully up to
+  date, until someone navigates or reloads.
+- **A view behind another app tab keeps refreshing.** Views mount on first
+  visit and are then only hidden, with their observers alive, so their
+  rows stay at policy age — which is why a kiosk rotation shows each tab
+  current as it comes round. The cost is bounded by the max ages, the
+  one-upstream-row-per-tick budget and the server-side cache, not by
+  visibility. A tab that was never visited has no observers and costs
+  nothing.
+- **Matchup and the game-detail modal blank on a failed refresh.** Both
+  replace loaded content with an error panel on `isError`, which is why
+  their endpoints keep the 200-with-gaps behaviour. The panel stays until
+  the next successful load: the keeper asks again after a minute when the
+  backend was unreachable and after 5 minutes on any other error, a proxy
+  timeout (504) included.
+- **Matchup and an open box score lose their ESPN sections in an ESPN
+  outage.** That is the other side of the 200-with-gaps choice, and new
+  with the keeper for the preview (a mounted one was never refetched
+  before) and for a box score opened before kickoff (a live one already
+  polled itself). With the backend up and ESPN failing, the next refresh
+  (5 minutes for a hot game or an unfinished box score, 30 otherwise)
+  answers 200 with `odds` null and the box score's `summary` null, and
+  that replaces the loaded payload: those sections hide themselves until a
+  refresh after ESPN returns. The lineup comes from stored rosters and
+  stays.
+  **The cross-season record does not hide; it shrinks.**
+  `head_to_head.build_record` tallies whichever of its five
+  `history:results:` seasons are still cached and counts a season that
+  could not be fetched as no meetings. Once this year's key and last
+  year's have expired (6 h after they were filled; the three older keys
+  live 7 d) the refresh returns a smaller W-D-L and a shorter meetings
+  list, still headed "last 5 seasons" (`seasons` is always
+  `SEASONS_BACK`). It is `null` only when no cached season holds a
+  meeting. The full record returns on the first refresh after ESPN does.
+  The under-count is older than the keeper: on a Redis install a preview
+  opened during an outage always got it. What the keeper and the
+  in-process store add is reach — a Redis-less install now holds the mixed
+  cache too, and a mounted preview swaps a loaded record for the smaller
+  one unprompted.
+- **Odds chips and the upset radar drop when the list of games changes
+  during an ESPN outage** (*Key defaults for the id-list queries*): the
+  new list's first request answers 503 and there is no data of its own to
+  keep. They return on the first request that succeeds. The calendar's
+  forecast glyphs do the same in an Open-Meteo outage, once the new list's
+  forecasts are no longer in the backend's cache.
+- **A calendar forecast can go missing for an hour when Open-Meteo fails
+  for only some games.** A refresh that serves at least one forecast
+  answers 200, and the games whose request failed (a 429 partway through
+  the walk, say) are absent from it: their glyphs are gone until the next
+  hourly refresh. Only a refresh that served nothing is a 503.
+- **A stopped API under `bun run dev` recovers in 5 minutes, not one**,
+  and a `null` row that never loaded is not retried there at all (the
+  splash's Retry button still works): the Vite proxy answers a refused
+  connection with HTTP 500, which is not "unreachable" (*When a query is
+  due*). The Docker stack and the desktop app get the one-minute retry.
+- **In the desktop app a backend crash is paced as unreachable.** An
+  unhandled exception's 500 has no CORS header, reaches the keeper as a
+  rejection with no status, and is asked again after 1 minute, not 5 —
+  still at most one upstream row per tick (*When a query is due*). A
+  catch-all inside `CORSMiddleware` would give it a status; not done here.
+- **A season asked for by number is an archive to the keeper**, even while
+  that season is still in play; only the `"current"` standings and the
+  near-window results refresh.
+- **A degraded answer that was cached is held for its TTL** — now on
+  redis-less installs too, as it always was with Redis: a partly failed
+  scorers walk for 30 minutes. Restarting the app empties the in-process
+  store. With Redis only, an "on this day" list assembled while ESPN was
+  failing also stays (possibly empty) for 24 hours; that key is not kept
+  in-process, for that reason. A team-season is no longer among these: one
+  whose schedule calls did not all answer is returned but not cached.
+- **No test renders a component.** The keeper is driven against a real
+  `QueryClient` and `QueryObserver` under fake timers — the objects
+  `useQuery` drives, minus the DOM — and has not yet been watched keeping a
+  real browser current for days (see the root ROADMAP.md).
+- `App.tsx`'s unfiltered `invalidateQueries()` after a refresh still
+  refetches active archives; the keeper neither causes nor prevents it.
+
+### Tests
+
+`frontend/src/lib/freshness.test.ts`, in three layers.
+*Pure policy*: archives, static data and a final box score never refresh;
+current standings at 5 minutes, and any standings key the rule does not
+recognise refreshes rather than freezes; an unlisted root gets the default
+age and the `upstream` class; a matchup is paced by its game and a box
+score refreshes until final; `isHot`'s window edges; `isDue` for young,
+aged, in-flight, paused and never-attempted queries, for each error class
+(unreachable at a minute — no status, or a 502 in plain text, as HTML or
+with no body, and an HTML page with a brace further in; 503, 500, 504 and
+the backend's own JSON 502, with or without whitespace ahead of it, alike
+at five),
+for a failed
+5-minute row and for a failed first load; a never-refreshed row that never
+loaded is retried when the backend was unreachable and only then — not
+after an answered error (the backend's 502 on `setup-teams` among them),
+not once it has data, not without a recorded
+failure; a timestamp ahead of the clock is ignored, the data stamp and the
+error stamp each on its own, and the two rules together — a never-loaded
+`null` row whose only stamp is ahead of the clock is retried at once,
+while a `null` row with data stays never due under a future data stamp;
+`selectDue`
+returning every due db row but only the most overdue upstream one, draining
+a backlog in order, ranking a failed row by its retry time, ranking a row
+of unknown age behind one measurably overdue and honouring a
+budget of zero.
+*Source guards* (`?raw` imports): `main.tsx` imports and starts the keeper;
+every `hooks.ts` root has a row and every row a root; the standings key
+shape; the id-list hooks pass no `placeholderData`.
+*The keeper*, on a real client with `main.tsx`'s defaults: without it,
+standings on screen for four days load once (the bug, kept as a control);
+with it they refresh every 5 minutes while archives stay at one fetch;
+nothing while the browser tab is hidden or the network is down, then one
+fetch on return; a caller's interval never stacks with the keeper's; a
+parked query is never fetched until a live observer watches its key, and
+neither it nor a static query holds the upstream slot; an unobserved query
+is left alone; a refresh in flight is not restarted; a failed hourly row is
+re-asked at the pace its error calls for and recovers within minutes of the
+backend's return; a preview whose half-hour refresh the proxy timed out is
+off its error panel 5 minutes later, in four requests; a row that timed
+out against a modelled server (a 25 s walk behind a 20 s proxy, cached for
+30 minutes) is answered from that cache on the keeper's next ask, with no
+third cold walk; `setup-status` failing as unreachable is re-asked until
+the API is up and then left at that for 24 hours; a `setup-teams` query
+the backend answered 502 for is asked twice (the load and the app's
+retry) and never again; after the clock is set
+back two hours a 5-minute row is asked on the next tick and every 5
+minutes from then, and a row that fails from then on is paced by its
+error, not asked every tick; upstream rows due together start one tick
+apart, and a backlog drains one per tick when the tab returns; a custom
+tick interval; `stop()`; and, for both id-list roots, that a changed list
+blanks the data without the keeper and keeps the previous list's with it
+while the new one loads — for those two roots only — and that a changed
+list whose first request fails keeps nothing (the known limit, pinned).
+Fixture names are fictional: `test-league`, `test-cup`, `test:t2`.
+
+`tests/test_cache_contract.py`: a value served until its TTL runs out and
+dropped by the read that finds it expired; the clock is `time.time`, and
+an entry written before the clock was set back is dropped; a zero TTL
+stores nothing; only
+the allowlisted prefixes are stored (one key per cache, spelled as its
+caller builds it, against the five Redis-only ones, `onthisday:` among
+them); eviction of the least
+recently used entry at the cap; JSON copies nobody can mutate; the
+counters; `close_cache()` emptying the store; and a configured Redis —
+down, or with a client that cannot be built — never touching it.
+`tests/test_weather.py`: a repeat request is served in-process without
+Redis, a different day at the same venue is a different forecast, and a
+day past Open-Meteo's 15-day window is not asked for at all (the window's
+last day still is). `tests/test_on_this_day.py`: without Redis an outage's
+empty list is not remembered — the next request after ESPN returns shows
+the anniversary — while the season that came back with games is reused by
+the next scan and by `/history/results`.
+`tests/test_history.py`: a season with a failed schedule call raises
+`EspnHistoryError` carrying the other call's finals, is returned but not
+cached, and is fetched whole and cached once ESPN answers; last year's
+season key gets the 6 h TTL.
+`tests/test_head_to_head.py`: the known limit above, pinned on the real
+season cache with its clock moved by hand — a record of 2-1-2 over five
+seasons is 0-1-2 from the three older seasons once ESPN is failing and
+the two 6 h keys have run out, still reporting `seasons` as 5, and is
+`None` only after the 7 d keys have gone too.
+`tests/test_routes_misc.py`: `/scorers` is 503 only when every summary
+failed, partial success is 200, and the failed walk left nothing cached;
+no finals yet and a provider answering "no summary" are both 200; behind
+the real circuit-breaker guard, the first `/scorers` walk and the first
+`/odds` batch after a cooldown come back whole, and a walk the breaker
+cut short is 503 and not cached;
+`/bracket` is 503 on a failed fetch, 200 and uncached when ESPN lists no
+series; `/leaders` is 503 only with no stored stats to show; and each of
+the three serves its cached board through an outage without asking
+upstream. `tests/test_api.py`: the same pair for `/odds` — 503 only when
+every fetch failed, never cached, and cached lines and cached "no line"
+answers both carrying a batch through an outage; an unregistered provider
+and a request with nothing priceable are 200; one fetch goes ahead alone
+and the rest overlap. For `/schedule/weather`, against the real weather
+service with only Open-Meteo's transport scripted: forecasts loaded, still
+served 44 minutes later with Open-Meteo failing, and a 503 at 60 — for a
+refused connection, a timeout, a 500, a 503, a 429, a redirect and a 200
+that is not JSON — with nothing cached from the failure; a walk that only fails stops
+after three requests; two answers followed by failures, and a cached
+forecast at the head of the walk, are 200 with every other game still
+asked; a cached forecast behind three failures is 503 (the exception
+above, pinned); Open-Meteo's 400 for every game is `200 {}`, and so is a
+request with nothing to ask, which sends none; and `/games/{id}` stays
+200 with `weather` null through the same outage.
+`test_an_unhandled_error_is_answered_without_cors_headers`, on the real
+application object: a route that crashes is answered 500 without
+`Access-Control-Allow-Origin`, an unknown route 404 with it.
+`tests/test_espn.py`: `get_game_odds` re-raises an
+access denial on the summary half.
+`tests/test_espn_playoffs.py`, `tests/test_espn_leaders.py`: a failed
+fetch raises the typed error and an empty answer is still `[]`
+(`test_fetch_bracket_is_empty_when_a_month_bucket_fails` became
+`…_raises_when_a_month_bucket_fails`, and
+`test_fetch_bracket_only_a_400_triggers_the_fallback` now expects the
+error instead of `[]`). `test_no_redis_url_means_noop` became
+`…_off_the_allowlist`.

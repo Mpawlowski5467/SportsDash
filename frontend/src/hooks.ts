@@ -5,7 +5,6 @@
  */
 
 import {
-  keepPreviousData,
   useMutation,
   useQueries,
   useQuery,
@@ -208,22 +207,21 @@ export function useScheduleWeather(
  * keeps cards quiet without going stale.
  *
  * The query is keyed by the list of games, so a list that changes (a game
- * ends, the day turns) is a new query with nothing loaded. `keepPrevious`
- * lets the last list's answer stand in until the new one lands: the map is
- * keyed by game id, so a game in both lists keeps its own line and a game
- * that left is simply not looked up. Off by default: existing callers get
- * what they always got.
+ * ends, the day turns) is a new query with nothing loaded. The freshness
+ * keeper (lib/freshness.ts) sets a key default that lets the last list's
+ * answer stand in until the new one lands: the map is keyed by game id, so
+ * a game in both lists keeps its own line and a game that left is simply
+ * not looked up. Pass no `placeholderData` here: an option on the hook,
+ * even `undefined`, would beat that default (freshness.test.ts guards it).
  */
 export function useGameOdds(
   ids: string[],
-  options?: { keepPrevious?: boolean },
 ): UseQueryResult<Record<string, GameOdds>> {
   return useQuery({
     queryKey: ["game-odds", [...ids].sort().join(",")],
     queryFn: () => api.odds(ids),
     enabled: ids.length > 0,
     staleTime: 5 * 60_000,
-    placeholderData: options?.keepPrevious ? keepPreviousData : undefined,
   });
 }
 

@@ -27,10 +27,12 @@ from app.models.orm import (
     NotificationPrefORM,
     PlayerFollowORM,
     PlayerORM,
+    StadiumORM,
     StandingsORM,
     TeamCompetitionORM,
     TeamORM,
 )
+from app.providers import espn_catalog
 from app.services import repository
 from app.timeutil import ensure_utc, utcnow
 
@@ -2916,3 +2918,217 @@ async def test_most_common_home_venue_by_name_stays_inside_its_league(
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# Stadium cache keys (id spaces + legacy rows)
+# ---------------------------------------------------------------------------
+
+
+def _league(league_id: str, sport: domain.Sport, provider: str = "espn") -> domain.League:
+    return domain.League(
+        id=league_id,
+        sport=sport,
+        name=league_id.upper(),
+        provider=provider,
+        provider_key=f"{sport.value}/{league_id}",
+    )
+
+
+NFL = _league("nfl", domain.Sport.FOOTBALL)
+NHL = _league("nhl", domain.Sport.HOCKEY)
+# The two sides ESPN numbers "1" in those leagues (fictional names).
+NFL_ONE = "Ashport Falcons"
+NHL_ONE = "Rivermont Bruins"
+LEGACY_ONE = "espn:1"  # the league-blind key an older build cached both under
+
+
+def _stadium_facts(row: StadiumORM) -> dict[str, Any]:
+    """Everything a stadium row stores except its key."""
+    facts = {
+        column.key: getattr(row, column.key)
+        for column in StadiumORM.__table__.columns
+        if not column.primary_key
+    }
+    facts["fetched_at"] = ensure_utc(facts["fetched_at"])  # sqlite hands it back naive
+    return facts
+
+
+async def _stored_stadiums(session: AsyncSession) -> dict[str, dict[str, Any]]:
+    """Every stadium row as the database holds it, by key."""
+    await session.commit()
+    session.expire_all()  # read back what was written, not what is in memory
+    rows = (await session.execute(select(StadiumORM))).scalars().all()
+    return {row.key: _stadium_facts(row) for row in rows}
+
+
+def _legacy_stadium(key: str = LEGACY_ONE, team_name: str = NFL_ONE) -> StadiumORM:
+    """A located row as an older build cached it, every fact filled in."""
+    return StadiumORM(
+        key=key,
+        team_name=team_name,
+        venue="Falcon Field",
+        lat=33.7554,
+        lon=-84.4008,
+        capacity=71000,
+        opened=2017,
+        image_url="https://images.example.com/falcon-field.jpg",
+        location="Ashport, Georgia",
+        surface="Turf",
+        resolved=True,
+        fetched_at=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+    )
+
+
+def test_stadium_key_id_spaces() -> None:
+    """A provider id names one team only inside the space it was issued in."""
+    # Every US league numbers its teams from 1 — and so do the NBA and WNBA,
+    # which a key scoped by sport alone would still merge.
+    assert repository.stadium_key(NFL, "1") == "espn:nfl:1"
+    assert repository.stadium_key(NHL, "1") == "espn:nhl:1"
+    nba = _league("nba", domain.Sport.BASKETBALL)
+    wnba = _league("wnba", domain.Sport.BASKETBALL)
+    assert repository.stadium_key(nba, "5") != repository.stadium_key(wnba, "5")
+
+    # A soccer side keeps its id in every competition: one key, or a club in
+    # two followed competitions is resolved twice and never deduped.
+    epl = _league("epl", domain.Sport.SOCCER)
+    ucl = _league("ucl", domain.Sport.SOCCER)
+    assert repository.stadium_key(epl, "364") == "espn:soccer:364"
+    assert repository.stadium_key(ucl, "364") == "espn:soccer:364"
+
+    # TheSportsDB fetches a team by id alone, whatever the league or sport.
+    men = _league("evl-men", domain.Sport.VOLLEYBALL, provider="thesportsdb")
+    women = _league("evl-women", domain.Sport.VOLLEYBALL, provider="thesportsdb")
+    assert repository.stadium_key(men, "134567") == "thesportsdb:all:134567"
+    assert repository.stadium_key(women, "134567") == "thesportsdb:all:134567"
+
+    # The sweep holds domain leagues (enum sport), the map route ORM rows
+    # (plain string): both must land on the same key or the two disagree
+    # about which row is a team's.
+    for league in (epl, NFL):
+        row = LeagueORM(
+            id=league.id,
+            sport=league.sport.value,
+            name=league.name,
+            provider=league.provider,
+            provider_key=league.provider_key,
+        )
+        assert repository.stadium_key(row, "9") == repository.stadium_key(league, "9")
+
+
+def test_no_catalog_league_id_is_soccer() -> None:
+    """``"soccer"`` is the scope every ESPN soccer league shares.
+
+    Any other ESPN league is scoped by its own id, so one whose id was
+    literally ``"soccer"`` would be filed into the soccer id space and trade
+    stadiums with whichever club holds the same number.
+    """
+    leagues = (*espn_catalog.CATALOG, *espn_catalog.NATIONAL_SIBLING_LEAGUES)
+    assert "soccer" not in {league.id for league in leagues}
+
+
+async def test_find_team_stadium_needs_name_match(session: AsyncSession) -> None:
+    """A league-blind legacy row is only ever read as the team it names.
+
+    The NFL and NHL sides numbered 1 used to share ``espn:1``; whichever
+    resolved first owned the row and the other was plotted at its ground.
+    """
+    legacy = _legacy_stadium()
+    session.add(legacy)
+    # Every fact is set, so a column the copy forgot cannot hide behind two
+    # matching NULLs — a new StadiumORM column has to be seeded here first.
+    assert None not in _stadium_facts(legacy).values()
+    seeded_rows = await _stored_stadiums(session)
+
+    # The other league's team: the row is not its stadium, with or without
+    # leave to adopt.
+    assert await repository.find_team_stadium(session, NHL, "1", NHL_ONE) is None
+    assert await repository.find_team_stadium(session, NHL, "1", NHL_ONE, adopt=True) is None
+
+    # The team it names: served as it is, and reading wrote nothing.
+    found = await repository.find_team_stadium(session, NFL, "1", NFL_ONE)
+    assert found is not None and found.key == LEGACY_ONE
+    assert await _stored_stadiums(session) == seeded_rows
+
+    # Adopting copies it to the team's own key and leaves the original for
+    # an older build to find; a second adopt has nothing left to do.
+    for _ in range(2):
+        adopted = await repository.find_team_stadium(session, NFL, "1", NFL_ONE, adopt=True)
+        assert adopted is not None and adopted.key == "espn:nfl:1"
+        assert await _stored_stadiums(session) == {
+            LEGACY_ONE: seeded_rows[LEGACY_ONE],
+            "espn:nfl:1": seeded_rows[LEGACY_ONE],
+        }
+
+    # Once the scoped row exists it is the answer, whatever the legacy row
+    # or the catalog name goes on to say.
+    found = await repository.find_team_stadium(session, NFL, "1", "Renamed Since")
+    assert found is not None and found.key == "espn:nfl:1"
+
+
+async def test_find_team_stadium_reads_the_legacy_row_of_the_leagues_own_provider(
+    session: AsyncSession,
+) -> None:
+    """The legacy key was ``"{provider}:{id}"`` for every provider, not only
+    ESPN: a TheSportsDB league's old rows sit under ``thesportsdb:<id>`` and
+    are adopted from there."""
+    league = _league("evl-men", domain.Sport.VOLLEYBALL, provider="thesportsdb")
+    session.add(_legacy_stadium(key="thesportsdb:134567", team_name="Harbor Spikers"))
+    seeded_rows = await _stored_stadiums(session)
+
+    found = await repository.find_team_stadium(session, league, "134567", "Harbor Spikers")
+    assert found is not None and found.key == "thesportsdb:134567"
+
+    adopted = await repository.find_team_stadium(
+        session, league, "134567", "Harbor Spikers", adopt=True
+    )
+    assert adopted is not None and adopted.key == "thesportsdb:all:134567"
+    assert await _stored_stadiums(session) == {
+        "thesportsdb:134567": seeded_rows["thesportsdb:134567"],
+        "thesportsdb:all:134567": seeded_rows["thesportsdb:134567"],
+    }
+
+
+async def test_find_team_stadium_adopts_a_miss_at_its_original_age(
+    session: AsyncSession,
+) -> None:
+    """A cached miss is copied as the old lookup it is, not as a fresh one.
+
+    The sweep retries a miss once it is older than its cool-down; a copy
+    stamped "now" would hold every adopted miss off for another round.
+    """
+    missed_at = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+    session.add(StadiumORM(key=LEGACY_ONE, team_name=NFL_ONE, resolved=True, fetched_at=missed_at))
+    await session.flush()
+
+    adopted = await repository.find_team_stadium(session, NFL, "1", NFL_ONE, adopt=True)
+
+    assert adopted is not None and adopted.lat is None
+    stored = await _stored_stadiums(session)
+    assert stored["espn:nfl:1"]["resolved"] is True
+    assert stored["espn:nfl:1"]["fetched_at"] == missed_at
+
+
+@pytest.mark.parametrize(
+    ("stored_name", "catalog_name", "proven"),
+    [
+        ("Ashport Falcons", "  ASHPORT falcons ", True),  # casing and padding drift
+        ("Ashport Falcons", "Ashport Falcon", False),  # a prefix is another team
+        ("", "", False),  # a row cached without a name proves nothing...
+        ("", "   ", False),
+        (" ", "", False),  # ...however the blank is spelled on either side
+        # upsert_stadium clipped the stored name to the column width; the
+        # catalog still sends all of it.
+        ("F" * 128, "F" * 140, True),
+    ],
+)
+async def test_find_team_stadium_name_proof(
+    session: AsyncSession, stored_name: str, catalog_name: str, proven: bool
+) -> None:
+    session.add(_legacy_stadium(team_name=stored_name))
+    await session.flush()
+
+    found = await repository.find_team_stadium(session, NFL, "1", catalog_name)
+
+    assert (found is not None) is proven

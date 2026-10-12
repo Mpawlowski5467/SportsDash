@@ -18,7 +18,14 @@ async def _close_shared_clients(monkeypatch: pytest.MonkeyPatch) -> AsyncIterato
     client cleanup so a keep-alive socket cannot leak into a later test.
     Depending on monkeypatch keeps installed test clients in place until
     after this cleanup.
+
+    The in-process cache store is module state too: with no Redis in the
+    suite it really caches, so a board or odds line one test stored would
+    answer the next test's request.  ``close_cache`` empties it afterwards;
+    it is also emptied up front so a teardown that raised before reaching
+    that line cannot leak a value forward.
     """
+    cache.clear_local_cache()
     yield
     await registry.close_all()
     await cache.close_cache()

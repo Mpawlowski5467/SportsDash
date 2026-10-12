@@ -27,6 +27,10 @@ non-JSON body, timeout, missing/garbage field) is logged and degrades to
 relies on the never-raise contract.  Successful lookups are cached
 in-process (keyed by the normalized name + sport) so the same team is
 never re-fetched within a process lifetime.
+
+``None`` from :func:`lookup_stadium` therefore has two meanings — the
+provider has no such team, or the provider could not be asked — and
+:func:`lookup_settled` is how a caller tells them apart.
 """
 
 from __future__ import annotations
@@ -67,6 +71,11 @@ class TeamInfo:
     venue_description: str | None = None
 
 
+def _cache_key(name: str, sport: str | None) -> str:
+    """The key both lookup caches file a (trimmed) team name + sport under."""
+    return f"{name.casefold()}|{(sport or '').casefold()}"
+
+
 async def lookup_stadium(team_name: str, *, sport: str | None = None) -> TeamLocation | None:
     """Resolve a team's home stadium (+ facts) by name; ``None`` on miss.
 
@@ -81,7 +90,7 @@ async def lookup_stadium(team_name: str, *, sport: str | None = None) -> TeamLoc
     if not name:
         return None
 
-    cache_key = f"{name.casefold()}|{(sport or '').casefold()}"
+    cache_key = _cache_key(name, sport)
     if cache_key in _cache:
         return _cache[cache_key]
 
@@ -98,6 +107,25 @@ async def lookup_stadium(team_name: str, *, sport: str | None = None) -> TeamLoc
     location = await _build_location(team)
     _cache[cache_key] = location
     return location
+
+
+def lookup_settled(team_name: str, *, sport: str | None = None) -> bool:
+    """Whether :func:`lookup_stadium` has a final answer for this team.
+
+    ``None`` from a lookup means either "TheSportsDB has no such team" or
+    "TheSportsDB could not be asked" (a rate-limited 429, a timeout).  Only
+    the first is an answer, and only answers — a hit or a definitive miss —
+    are kept in the lookup cache, so membership there is the difference.  A
+    caller that got ``None`` and finds the lookup unsettled knows nothing
+    about the team yet and should ask again later rather than record a miss.
+
+    A blank name is settled: there is nothing to ask, and the ``None`` it
+    gets will never change.  Reads the cache only; never makes a request.
+    """
+    name = (team_name or "").strip()
+    if not name:
+        return True
+    return _cache_key(name, sport) in _cache
 
 
 async def lookup_team_info(team_name: str, *, sport: str | None = None) -> TeamInfo | None:
@@ -117,7 +145,7 @@ async def lookup_team_info(team_name: str, *, sport: str | None = None) -> TeamI
     if not name:
         return None
 
-    cache_key = f"{name.casefold()}|{(sport or '').casefold()}"
+    cache_key = _cache_key(name, sport)
     if cache_key in _info_cache:
         return _info_cache[cache_key]
 

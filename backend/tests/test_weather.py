@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import httpx
 import pytest
@@ -117,6 +117,34 @@ async def test_fetch_parses_live_payload(monkeypatch: pytest.MonkeyPatch) -> Non
     # No target_date -> today's one-day forecast, no date window.
     assert requested["forecast_days"] == "1"
     assert "start_date" not in requested
+
+
+async def test_fetch_repeat_is_served_in_process_without_redis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no Redis the forecast used to be re-fetched on every call — one
+    Open-Meteo request per pin per map poll.  It is now held in-process for
+    the cache window, under the same key Redis would use."""
+    requests = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return httpx.Response(200, json=_SAMPLE)
+
+    monkeypatch.setitem(
+        http_client._clients, "weather", httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    first = await weather.fetch(40.7128, -74.0060)
+    again = await weather.fetch(40.7128, -74.0060)
+
+    assert first is not None
+    assert again == first
+    assert requests == 1
+    # A different day at the same venue is a different forecast.
+    await weather.fetch(40.7128, -74.0060, target_date=date(2026, 6, 16))
+    assert requests == 2
 
 
 async def test_fetch_never_raises_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -236,10 +264,16 @@ async def test_fetch_sends_start_end_date_for_target_date(
 async def test_fetch_returns_none_on_out_of_range_400(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The real out-of-range path: Open-Meteo answers a date beyond its window
+    # The real out-of-range path: Open-Meteo answers a date outside its window
     # with HTTP 400, which raise_for_status turns into the degrade-to-None
-    # path — no weather rather than today's, mislabeled.
+    # path — no weather rather than today's, mislabeled.  A day long gone is
+    # used because only the window's far edge is known ahead of the request
+    # (see the next test); the near one still has to be asked about.
+    requests = 0
+
     def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
         return httpx.Response(
             400, json={"error": True, "reason": "start_date is out of allowed range"}
         )
@@ -250,7 +284,50 @@ async def test_fetch_returns_none_on_out_of_range_400(
     monkeypatch.setattr(weather.cache, "cache_get_json", no_cache)
     _route_through(monkeypatch, handler)
 
-    assert await weather.fetch(1.0, 2.0, target_date=date(2030, 1, 1)) is None
+    assert await weather.fetch(1.0, 2.0, target_date=date(2020, 1, 1)) is None
+    assert requests == 1
+
+
+async def test_fetch_does_not_ask_for_a_day_past_the_forecast_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Open-Meteo forecasts today and the 15 days after it.  A calendar asks
+    for every scheduled game in its six-week grid, and a ``None`` is never
+    cached, so each refresh used to repeat one guaranteed-400 request per
+    far-off fixture."""
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        day = request.url.params["start_date"]
+        asked.append(day)
+        return httpx.Response(
+            200,
+            json={
+                "current": {"temperature_2m": 11.0, "weather_code": 3, "wind_speed_10m": 9.0},
+                "daily": {
+                    "time": [day],
+                    "temperature_2m_max": [14.0],
+                    "temperature_2m_min": [7.0],
+                    "precipitation_probability_max": [20],
+                    "weather_code": [3],
+                },
+            },
+        )
+
+    _route_through(monkeypatch, handler)
+    # The window is counted from the UTC day, the one the request asks in.
+    monkeypatch.setattr(
+        weather, "utcnow", lambda: datetime(2026, 6, 1, 23, 30, tzinfo=timezone.utc)
+    )
+
+    assert await weather.fetch(51.55, -0.11, target_date=date(2026, 6, 17)) is None
+    assert asked == []
+
+    # The window's last day is still asked for, and answered.
+    forecast = await weather.fetch(51.55, -0.11, target_date=date(2026, 6, 16))
+    assert forecast is not None
+    assert forecast.high == 14.0
+    assert asked == ["2026-06-16"]
 
 
 async def test_fetch_target_date_cache_key_isolated_from_today(

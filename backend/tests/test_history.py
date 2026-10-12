@@ -5,8 +5,8 @@ helpers, and the two HTTP endpoints (standings ?season= and
 
 from __future__ import annotations
 
-from datetime import timedelta
-from typing import AsyncIterator
+from datetime import datetime, timedelta, timezone
+from typing import Any, AsyncIterator
 
 import httpx
 import pytest
@@ -14,12 +14,13 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.config import get_settings
 from app.db import get_session
 from app.models import domain
 from app.models.orm import LeagueORM, StandingsArchiveORM, TeamORM
 from app.providers import espn_history
 from app.routes import router as api_router
-from app.services import http_client, repository
+from app.services import cache, http_client, repository, season_results
 from app.timeutil import utcnow
 from tests.db_engine import create_test_schema, make_test_engine
 
@@ -208,6 +209,171 @@ async def test_fetch_season_results_returns_finals_only(
     assert [game.id for game in games] == ["espn:hist-1"]
     assert games[0].state is not None
     assert games[0].state.phase is domain.GamePhase.FINAL
+
+
+# ---------------------------------------------------------------------------
+# A season ESPN serves in two calls (hockey, football): regular + playoffs
+# ---------------------------------------------------------------------------
+
+HOCKEY_LEAGUE_ROW = LeagueORM(
+    id="frost-league",
+    sport="hockey",
+    name="Frost League",
+    provider="espn",
+    provider_key="hockey/frost",
+)
+HOCKEY_TEAM_ROW = TeamORM(
+    id=TEAM_ID,
+    league_id="frost-league",
+    name="Glimmer Foxes",
+    abbreviation="GLF",
+    provider_key="401",
+    rss_feeds=[],
+)
+HOCKEY_LEAGUE = domain.League(
+    id="frost-league",
+    sport=domain.Sport.HOCKEY,
+    name="Frost League",
+    provider="espn",
+    provider_key="hockey/frost",
+)
+SEASON_KEY = f"history:results:{TEAM_ID}:2024"
+
+
+def _final_event(event_id: str, start_iso: str, opponent: str) -> dict[str, Any]:
+    def side(home_away: str, name: str, abbreviation: str, team_id: str, score: int) -> dict:
+        return {
+            "homeAway": home_away,
+            "score": {"value": score},
+            "team": {"displayName": name, "abbreviation": abbreviation, "id": team_id},
+        }
+
+    return {
+        "id": event_id,
+        "date": start_iso,
+        "competitions": [
+            {
+                "id": event_id,
+                "date": start_iso,
+                "status": {"type": {"state": "post", "completed": True, "name": "STATUS_FINAL"}},
+                "competitors": [
+                    side("home", "Glimmer Foxes", "GLF", "401", 3),
+                    side("away", opponent, "OPP", "402", 1),
+                ],
+            }
+        ],
+    }
+
+
+_REGULAR_SEASON = {
+    "events": [
+        _final_event(f"reg-{index}", f"2024-01-{index + 1:02d}T00:00Z", "Quarry Hawks")
+        for index in range(20)
+    ]
+}
+_PLAYOFFS = {
+    "events": [
+        _final_event(f"po-{index}", f"2024-05-{index + 1:02d}T00:00Z", "Rivermark Owls")
+        for index in range(4)
+    ]
+}
+
+
+def _route_split_season(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Serve the two halves by ``seasontype``; the regular season can be down.
+
+    Returns the knobs: ``state["regular_down"]`` and the ``state["calls"]``
+    log of the seasontype each request asked for.
+    """
+    monkeypatch.setattr(get_settings(), "provider_max_retries", 0)  # no backoff sleeps
+    state: dict[str, Any] = {"regular_down": True, "calls": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seasontype = request.url.params.get("seasontype")
+        state["calls"].append(seasontype)
+        if seasontype == "2":
+            if state["regular_down"]:
+                return httpx.Response(503, text="schedule down")
+            return httpx.Response(200, json=_REGULAR_SEASON)
+        return httpx.Response(200, json=_PLAYOFFS)
+
+    _route_history(monkeypatch, handler)
+    return state
+
+
+async def test_fetch_season_results_raises_with_what_it_got_when_a_call_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Half a season is not the season, and the caller has to be told.
+
+    The playoff call answered, so its finals are handed over on the error —
+    still worth showing — but they must not come back as the plain list a
+    whole season does.  A call that ANSWERS with nothing is no failure.
+    """
+    state = _route_split_season(monkeypatch)
+
+    with pytest.raises(espn_history.EspnHistoryError) as caught:
+        await espn_history.fetch_season_results(HOCKEY_LEAGUE, FOXES, 2024)
+    assert [game.id for game in caught.value.games] == [
+        f"espn:po-{index}" for index in (3, 2, 1, 0)
+    ]
+
+    state["regular_down"] = False
+    whole = await espn_history.fetch_season_results(HOCKEY_LEAGUE, FOXES, 2024)
+    assert len(whole) == 24
+
+    # An off-season answer — both calls fine, no events — is just empty.
+    _route_history(monkeypatch, lambda request: httpx.Response(200, json={"events": []}))
+    assert await espn_history.fetch_season_results(HOCKEY_LEAGUE, FOXES, 2024) == []
+
+
+async def test_half_fetched_season_is_returned_but_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cache holds a finished season for 7 days, so it may only be given
+    a whole one.  With the regular-season call failing, the playoff games
+    were cached as the season: the Results archive, the head-to-head record
+    and on-this-day then missed twenty games for a week after ESPN recovered."""
+    state = _route_split_season(monkeypatch)
+
+    partial = await season_results.season_results_out(HOCKEY_LEAGUE_ROW, HOCKEY_TEAM_ROW, 2024)
+    assert len(partial) == 4  # the half that answered is still shown
+    assert SEASON_KEY not in cache._local
+
+    state["regular_down"] = False
+    state["calls"].clear()
+    whole = await season_results.season_results_out(HOCKEY_LEAGUE_ROW, HOCKEY_TEAM_ROW, 2024)
+    assert state["calls"] == ["2", "3"]  # asked again: nothing had been kept
+    assert len(whole) == 24
+    assert SEASON_KEY in cache._local
+
+    state["calls"].clear()
+    assert await season_results.season_results_out(HOCKEY_LEAGUE_ROW, HOCKEY_TEAM_ROW, 2024)
+    assert state["calls"] == []  # the whole season is served from the cache
+
+
+async def test_last_years_season_key_keeps_the_short_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ESPN keys some seasons by the year they START in, so in January the
+    season being played is LAST year's key.  Given the finished-season TTL
+    it showed a results list up to a week behind, as if complete."""
+    state = _route_split_season(monkeypatch)
+    state["regular_down"] = False
+    monkeypatch.setattr(
+        season_results, "utcnow", lambda: datetime(2027, 1, 15, tzinfo=timezone.utc)
+    )
+    ttls: dict[str, int] = {}
+
+    async def record(key: str, value: object, ttl_seconds: int) -> None:
+        ttls[key.rsplit(":", 1)[1]] = ttl_seconds
+
+    monkeypatch.setattr(season_results.cache, "cache_set_json", record)
+
+    for season in (2027, 2026, 2025):
+        await season_results.season_results_out(HOCKEY_LEAGUE_ROW, HOCKEY_TEAM_ROW, season)
+
+    assert ttls == {"2027": 6 * 3600, "2026": 6 * 3600, "2025": 7 * 24 * 3600}
 
 
 # ---------------------------------------------------------------------------

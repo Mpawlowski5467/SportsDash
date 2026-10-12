@@ -7,11 +7,24 @@ time would be too chatty.  ``GET /api/odds?ids=a,b,c`` returns a
 ``{game_id: GameOddsOut}`` map (the same per-game data the modal shows), so
 a card and the modal always agree.
 
-Each game's odds are cached in Redis individually (``odds:{game_id}``) so
-overlapping views (Today and Calendar list many of the same games) reuse
-the work, and an odds-less game (most soccer) is cached as a negative so it
-isn't re-fetched on every poll.  The fan-out is bounded by a semaphore and
-the request can never fail — a missing/odds-less game is simply absent.
+Each game's odds are cached individually (``services/cache``,
+``odds:{game_id}``) so overlapping views (Today and Calendar list many of
+the same games) reuse the work, and an odds-less game (most soccer) is
+cached as a negative so it isn't re-fetched on every poll.  The fan-out is
+bounded by a semaphore — after one fetch per provider has gone ahead on its
+own — and a missing/odds-less game is simply absent.
+
+One failure is not "absent": when every game the request had to price
+failed upstream — nothing from the cache, no provider answer at all — an
+empty map would report an outage as "no lines", so that answers 503.  Any
+cached or answered game keeps the response a 200.
+
+What the 503 saves is a REFETCH: the client asking again for the id list it
+already holds keeps that list's chips, because a failed refetch leaves a
+query's data in place.  A request for a NEW id list — the list changes
+whenever a game kicks off or goes final — has nothing of its own to keep:
+the client shows the previous list's chips only while that first request is
+in flight, and once it fails they are gone until a request succeeds.
 """
 
 from __future__ import annotations
@@ -19,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
@@ -79,6 +92,13 @@ async def odds(
             continue
         targets.append((game_id, league))
 
+    # Games whose upstream fetch raised — as opposed to a cache hit or a
+    # provider that answered, even with "no line".
+    failed: list[str] = []
+    # Providers one upstream fetch of this request has already come back
+    # from, whatever its outcome.
+    settled: set[str] = set()
+
     async def odds_for(game_id: str, league: domain.League) -> GameOddsOut | None:
         cache_key = f"odds:{game_id}"
         cached = await cache.cache_get_json(cache_key)
@@ -88,12 +108,21 @@ async def odds(
         async with semaphore:
             try:
                 provider = registry.get_provider(league.provider)
+            except KeyError:
+                # No such provider registered: nothing can price this game,
+                # and nothing upstream failed either.
+                logger.warning("odds: no provider %r for %s", league.provider, game_id)
+                return None
+            try:
                 result = await provider.get_game_odds(league, provider_game_key(game_id))
             except Exception:
                 # Transient/circuit errors: skip without caching so the next
                 # poll retries (a genuine "no line" returns None, not raises).
                 logger.warning("odds: fetch failed for %s", game_id)
+                failed.append(game_id)
                 return None
+            finally:
+                settled.add(league.provider)
         out = None if result is None else odds_to_out(result)
         await cache.cache_set_json(
             cache_key,
@@ -102,7 +131,26 @@ async def odds(
         )
         return out
 
-    priced = await asyncio.gather(*(odds_for(game_id, league) for game_id, league in targets))
+    # One fetch per provider goes first, alone.  After an outage the breaker
+    # is half-open and admits exactly one call: fired together, that one would
+    # be priced and every other turned away.  Alone, it closes the breaker and
+    # the rest of the batch goes through.  A cache hit is not a fetch, so the
+    # walk passes over it and keeps looking for the provider's first one.
+    priced_by_id: dict[str, GameOddsOut | None] = {}
+    rest: list[tuple[str, domain.League]] = []
+    for game_id, league in targets:
+        if league.provider in settled:
+            rest.append((game_id, league))
+        else:
+            priced_by_id[game_id] = await odds_for(game_id, league)
+    rest_priced = await asyncio.gather(*(odds_for(game_id, league) for game_id, league in rest))
+    for (game_id, _league), value in zip(rest, rest_priced, strict=True):
+        priced_by_id[game_id] = value
+    priced = [priced_by_id[game_id] for game_id, _league in targets]
+    # Every target was a fetch and every fetch raised: an outage, which must
+    # not pass for "no lines".  One cache hit or one answer keeps it a 200.
+    if failed and len(failed) == len(targets):
+        raise HTTPException(status_code=503, detail="Upstream provider unavailable")
     return {
         game_id: value
         for (game_id, _league), value in zip(targets, priced, strict=False)
