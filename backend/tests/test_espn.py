@@ -63,6 +63,7 @@ from app.providers.espn import (
     _parse_tennis_rankings,
     _stat_line_from_overview,
 )
+from app.providers.espn.standings import _parse_season
 from app.providers.espn_catalog import get_catalog_league
 from app.providers.http_util import ProviderAccessError, TransientProviderError
 
@@ -2284,6 +2285,70 @@ def test_parse_standings_division_nested_children_of_children() -> None:
     # The empty conference-level ``standings.entries`` produce no rows; only
     # the division (finest) tables are flattened.
     assert all(row.subgroup is not None for row in standings.rows)
+
+
+def test_parse_standings_season_is_the_tables_not_the_leagues() -> None:
+    """The label is the season of the rows, not the league's current season.
+
+    Once a regular season ends the payload's top-level ``season`` moves on
+    to the next one (2027 here) while the table is still the finished
+    season's: its division blocks say 2026 and hold the final records.
+    """
+    with (FIXTURES / "espn_baseball_standings_postseason.json").open(encoding="utf-8") as handle:
+        data = json.load(handle)
+    assert data["season"]["displayName"] == "2027"
+    standings = _parse_standings(data, BASEBALL_LEAGUE)
+    assert standings.season == "2026"
+    assert [
+        (row.group, row.subgroup, row.rank, row.team_name, row.wins, row.losses)
+        for row in standings.rows
+    ] == [
+        ("Lantern League", "Lantern League East", 1, "Dunmore Lamplighters", 97, 65),
+        ("Lantern League", "Lantern League East", 2, "Saltmarsh Herons", 91, 71),
+        ("Pennant League", "Pennant League Central", 1, "Harrowgate Millers", 103, 59),
+        ("Pennant League", "Pennant League Central", 2, "Quillfield Barnstormers", 89, 73),
+    ]
+
+
+_NEXT_SEASON = {"year": 2028, "displayName": "2027-28"}
+_SEASON_LIST = [_NEXT_SEASON, {"year": 2027, "displayName": "2026-27"}]
+
+
+@pytest.mark.parametrize(
+    ("payload", "tables", "expected"),
+    [
+        # The block's own name wins, and is kept whole: a soccer label is
+        # a sentence the frontend reads the leading year range from.
+        (
+            {"season": _NEXT_SEASON},
+            [{"season": 2026, "seasonDisplayName": "2026-27 Harborline Soccer Circuit"}],
+            "2026-27 Harborline Soccer Circuit",
+        ),
+        # Only the year key on the block: named by the payload's season
+        # object for that year, wherever it sits.
+        ({"season": _NEXT_SEASON, "seasons": _SEASON_LIST}, [{"season": 2027}], "2026-27"),
+        ({"season": _NEXT_SEASON}, [{"season": 2028}], "2027-28"),
+        # ...and the bare year when nothing names it.
+        ({"season": _NEXT_SEASON, "seasons": "nope"}, [{"season": 2026}], "2026"),
+        # A block with rows speaks before an empty one.
+        (
+            {},
+            [
+                {"seasonDisplayName": "2027", "entries": []},
+                {"seasonDisplayName": "2026", "entries": [{}]},
+            ],
+            "2026",
+        ),
+        # No block says: the top-level season, then the first of the list.
+        ({"season": _NEXT_SEASON, "seasons": _SEASON_LIST}, [{"entries": [{}]}], "2027-28"),
+        ({"season": 2026}, [], "2026"),
+        ({"season": {}, "seasons": _SEASON_LIST}, [], "2027-28"),
+    ],
+)
+def test_parse_season_prefers_the_standings_blocks(
+    payload: dict[str, Any], tables: list[dict[str, Any]], expected: str
+) -> None:
+    assert _parse_season(payload, tables) == expected
 
 
 async def test_get_standings_requests_division_depth() -> None:

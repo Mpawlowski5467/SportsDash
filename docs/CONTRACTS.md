@@ -2513,6 +2513,15 @@ to nothing when unpriced.
   "2026"), ``season_label`` the provider's display form. ``StandingsORM``
   remains the rolling current snapshot; the scheduler upserts every
   standings refresh into the archive too.
+- An ESPN table is labelled with its OWN season (amended 2026-10-11):
+  ``_parse_season`` reads ``seasonDisplayName`` / ``season`` off the
+  standings blocks that were parsed, and the payload's top-level
+  ``season`` only when no block carries one. That top-level object is
+  the league's current season and moves on before the table does (MLB
+  from the end of the regular season: top-level 2027, table 2026), which
+  labelled the live table "2027", filed it in the archive under 2027 and
+  sent Results to a season list with no finished game. A refresh does
+  not remove an archive row already written under the wrong key.
 - ``app/providers/espn_history.py`` (standalone, espn_leaders-style — the
   ``SportsProvider`` protocol is unchanged): ``fetch_season_standings`` /
   ``fetch_season_results`` via ESPN's ``?season=`` params. Team sports

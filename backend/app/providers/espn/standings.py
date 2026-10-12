@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 from app import timeutil
@@ -30,22 +30,68 @@ from app.providers.espn.common import (
 logger = logging.getLogger(__name__)
 
 
-def _parse_season(data: Any) -> str:
+def _season_label(season: Any) -> str | None:
+    """Display form of a season value: an object's name, or a bare year/label."""
+    if isinstance(season, dict):
+        for key in ("displayName", "name", "year"):
+            value = season.get(key)
+            if value:
+                return str(value)
+    elif isinstance(season, (int, str)) and season:
+        return str(season)
+    return None
+
+
+def _season_name(data: Any, year: str) -> str | None:
+    """The name the payload's own season objects give the season keyed ``year``."""
+    if not isinstance(data, dict):
+        return None
+    seasons = data.get("seasons")
+    for season in (data.get("season"), *(seasons if isinstance(seasons, list) else ())):
+        if isinstance(season, dict) and str(season.get("year")) == year:
+            return _season_label(season)
+    return None
+
+
+def _table_season(data: Any, tables: Sequence[Mapping[str, Any]]) -> str | None:
+    """The season the standings blocks say their own entries belong to.
+
+    A block names it (``seasonDisplayName``) and keys it (``season``, the
+    year).  With only the key, the payload's season objects are searched
+    for that year's name, so a cross-year season still reads "2026-27".
+    """
+    # A block with rows speaks for the table; an empty one only if none has any.
+    for table in sorted(tables, key=lambda table: not table.get("entries")):
+        label = _season_label(table.get("seasonDisplayName"))
+        if label:
+            return label
+        year = _season_label(table.get("season"))
+        if year:
+            return _season_name(data, year) or year
+    return None
+
+
+def _parse_season(data: Any, tables: Sequence[Mapping[str, Any]] = ()) -> str:
+    """Season label for a standings payload; ``tables`` are its entry blocks.
+
+    The blocks' own season comes first.  The payload's top-level ``season``
+    is the league's CURRENT season object, and it moves on to next season
+    while the table still holds the finished one (MLB from the end of the
+    regular season: top-level 2027, table 2026), so it is only the
+    fallback for a payload whose blocks carry none.
+    """
+    label = _table_season(data, tables)
+    if label:
+        return label
     if isinstance(data, dict):
-        season = data.get("season")
-        if isinstance(season, dict):
-            for key in ("displayName", "name", "year"):
-                value = season.get(key)
-                if value:
-                    return str(value)
-        elif isinstance(season, (int, str)) and season:
-            return str(season)
+        label = _season_label(data.get("season"))
+        if label:
+            return label
         seasons = data.get("seasons")
         if isinstance(seasons, list) and seasons and isinstance(seasons[0], dict):
-            for key in ("displayName", "name", "year"):
-                value = seasons[0].get(key)
-                if value:
-                    return str(value)
+            label = _season_label(seasons[0])
+            if label:
+                return label
     return str(timeutil.utcnow().year)
 
 
@@ -186,19 +232,20 @@ def _standing_group_label(node: dict[str, Any]) -> str | None:
 def _parse_standings(
     data: Any, league: League, team_ids: Mapping[str, str] | None = None
 ) -> Standings:
-    # (group, subgroup, entries) blocks in payload order, ranked within the
-    # FINEST grouping that carries entries.  Three shapes coexist:
+    # (group, subgroup, block) in payload order, each block a ``standings``
+    # object with an ``entries`` list, ranked within the FINEST grouping
+    # that carries entries.  Three shapes coexist:
     #   * an un-nested top-level ``standings`` block (group/subgroup None);
     #   * a ``children[]`` node whose own ``standings.entries`` is the table
     #     (conference/single-table -> group = its name, subgroup None);
     #   * a ``children[]`` node with nested ``children`` carrying the
     #     entries (division depth via ``?level=3``) -> group = the outer
     #     node (conference/league), subgroup = the inner node (division).
-    blocks: list[tuple[str | None, str | None, list[Any]]] = []
+    blocks: list[tuple[str | None, str | None, dict[str, Any]]] = []
     if isinstance(data, dict):
         block = data.get("standings")
         if isinstance(block, dict) and isinstance(block.get("entries"), list):
-            blocks.append((None, None, block["entries"]))
+            blocks.append((None, None, block))
         children = data.get("children")
         if isinstance(children, list):
             for child in children:
@@ -207,7 +254,7 @@ def _parse_standings(
                 group = _standing_group_label(child)
                 block = child.get("standings")
                 if isinstance(block, dict) and isinstance(block.get("entries"), list):
-                    blocks.append((group, None, block["entries"]))
+                    blocks.append((group, None, block))
                 grandchildren = child.get("children")
                 if isinstance(grandchildren, list):
                     for grandchild in grandchildren:
@@ -218,12 +265,12 @@ def _parse_standings(
                             sub_block.get("entries"), list
                         ):
                             subgroup = _standing_group_label(grandchild)
-                            blocks.append((group, subgroup, sub_block["entries"]))
+                            blocks.append((group, subgroup, sub_block))
 
     rows: list[StandingRow] = []
-    for group, subgroup, entries in blocks:
+    for group, subgroup, block in blocks:
         parsed: list[tuple[int, StandingRow]] = []
-        for entry in entries:
+        for entry in block["entries"]:
             result = _parse_standing_entry(entry, league, team_ids)
             if result is not None:
                 parsed.append(result)
@@ -236,7 +283,7 @@ def _parse_standings(
         )
     return Standings(
         league_id=league.id,
-        season=_parse_season(data),
+        season=_parse_season(data, [block for _, _, block in blocks]),
         rows=tuple(rows),
         fetched_at=timeutil.utcnow(),
     )
