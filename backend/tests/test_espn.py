@@ -988,14 +988,23 @@ async def test_soccer_schedule_raises_when_both_calls_fail() -> None:
         await provider.get_schedule(SOCCER_LEAGUE, SOCCER_TEAM, date(2026, 5, 1), date(2026, 7, 1))
 
 
-async def test_non_soccer_schedule_makes_single_bare_call() -> None:
+async def test_schedule_of_a_sport_with_no_param_sets_makes_single_bare_call() -> None:
+    """Every team sport the ESPN catalog offers has an entry in
+    ``_SCHEDULE_PARAM_SETS``; a sport without one still gets one bare call."""
     provider = EspnProvider()
+    league = League(
+        id="larkhaven-volleyball",
+        sport=Sport.VOLLEYBALL,
+        name="Larkhaven Volleyball League",
+        provider="espn",
+        provider_key="volleyball/larkhaven",
+    )
     team = Team(
-        id="gravenford-owls",
-        league_id=BASKETBALL_LEAGUE.id,
-        name="Gravenford Owls",
-        abbreviation="GRV",
-        provider_key="41",
+        id="marlow-kestrels",
+        league_id=league.id,
+        name="Marlow Kestrels",
+        abbreviation="MRK",
+        provider_key="61",
     )
     calls: list[dict[str, str] | None] = []
 
@@ -1004,7 +1013,7 @@ async def test_non_soccer_schedule_makes_single_bare_call() -> None:
         return {"events": []}
 
     provider._get_json = fake_get_json  # type: ignore[method-assign]
-    await provider.get_schedule(BASKETBALL_LEAGUE, team, date(2026, 5, 1), date(2026, 7, 1))
+    await provider.get_schedule(league, team, date(2026, 5, 1), date(2026, 7, 1))
     assert calls == [None]
 
 
@@ -1235,6 +1244,122 @@ async def test_baseball_schedule_of_a_team_that_missed_the_postseason() -> None:
     )
     assert calls == [{"seasontype": "2"}, {"seasontype": "3"}]
     assert [game.id for game in games] == ["espn:9300501", "espn:9300502"]
+
+
+# ---------------------------------------------------------------------------
+# Basketball schedule: seasontype 2 + 5 (the play-in) + 3
+# ---------------------------------------------------------------------------
+
+BASKETBALL_TEAM = Team(
+    id="gravenford-owls",
+    league_id=BASKETBALL_LEAGUE.id,
+    name="Gravenford Owls",
+    abbreviation="GRV",
+    provider_key="41",
+)
+_BASKETBALL_SEASONTYPES = [{"seasontype": "2"}, {"seasontype": "5"}, {"seasontype": "3"}]
+
+
+def _basketball_event(event_id: str, date: str, *, final: bool = True) -> dict[str, Any]:
+    return _event(
+        event_id=event_id,
+        date=date,
+        home=("41", "Gravenford Owls", "GRV"),
+        away=("42", "Telmark Foxes", "TLM"),
+        home_score={"value": 104.0, "displayValue": "104"} if final else None,
+        away_score={"value": 98.0, "displayValue": "98"} if final else None,
+        status=(
+            _status(state="post", name="STATUS_FINAL", period=4)
+            if final
+            else _status(state="pre", name="STATUS_SCHEDULED")
+        ),
+    )
+
+
+def _basketball_schedule(
+    calls: list[dict[str, str] | None], by_seasontype: dict[str, list[dict[str, Any]]]
+) -> Any:
+    """A ``_get_json`` stub answering a basketball schedule by season type,
+    as ESPN's did for every NBA and WNBA team (verified live 2026-10-11).
+
+    A bare call is the CURRENT phase only, here the preseason
+    (``seasontype=1``).  A season type with nothing in it — or one the
+    league does not have at all — answers with no events, not an error.
+    """
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        calls.append(params)
+        seasontype = params.get("seasontype", "1") if params else "1"
+        return {"events": by_seasontype.get(seasontype, [])}
+
+    return fake_get_json
+
+
+async def test_basketball_schedule_in_the_preseason_is_the_regular_season_ahead() -> None:
+    """One bare call listed the preseason alone until opening night, so
+    none of the regular season was fetched; and the exhibition games it
+    did list are no longer asked for."""
+    provider = EspnProvider()
+    calls: list[dict[str, str] | None] = []
+    provider._get_json = _basketball_schedule(  # type: ignore[method-assign]
+        calls,
+        {
+            "1": [
+                _basketball_event("9400501", "2026-10-08T23:00Z"),
+                _basketball_event("9400502", "2026-10-16T23:00Z", final=False),
+            ],
+            "2": [
+                _basketball_event("9400601", "2026-10-20T23:30Z", final=False),
+                _basketball_event("9400602", "2026-10-23T23:00Z", final=False),
+            ],
+        },
+    )
+    games = await provider.get_schedule(
+        BASKETBALL_LEAGUE, BASKETBALL_TEAM, date(2026, 10, 4), date(2026, 11, 25)
+    )
+    assert calls == _BASKETBALL_SEASONTYPES
+    assert [game.id for game in games] == ["espn:9400601", "espn:9400602"]
+    assert all(game.state is not None and game.state.phase is GamePhase.SCHEDULED for game in games)
+
+
+@pytest.mark.parametrize(
+    ("play_in", "playoffs", "expected"),
+    [
+        # Through the play-in and into the first round.
+        (True, True, ["9400701", "9400801", "9400802", "9400901", "9400902"]),
+        # Out in the play-in: the postseason call answers with no events.
+        (True, False, ["9400701", "9400801", "9400802"]),
+        # A league with no play-in at all, or a team seeded past it.
+        (False, True, ["9400701", "9400901", "9400902"]),
+    ],
+)
+async def test_basketball_schedule_includes_the_play_in(
+    play_in: bool, playoffs: bool, expected: list[str]
+) -> None:
+    """Play-in games are a season type of their own (5): ESPN lists them
+    under neither the regular season nor the postseason, so two calls
+    would have left a team's play-in out of its schedule altogether."""
+    provider = EspnProvider()
+    calls: list[dict[str, str] | None] = []
+    by_seasontype = {"2": [_basketball_event("9400701", "2026-04-12T19:30Z")]}
+    if play_in:
+        by_seasontype["5"] = [
+            _basketball_event("9400801", "2026-04-15T23:30Z"),
+            _basketball_event("9400802", "2026-04-17T23:30Z"),
+        ]
+    if playoffs:
+        by_seasontype["3"] = [
+            _basketball_event("9400901", "2026-04-19T17:00Z"),
+            _basketball_event("9400902", "2026-04-22T23:00Z", final=False),
+        ]
+    provider._get_json = _basketball_schedule(  # type: ignore[method-assign]
+        calls, by_seasontype
+    )
+    games = await provider.get_schedule(
+        BASKETBALL_LEAGUE, BASKETBALL_TEAM, date(2026, 4, 5), date(2026, 5, 20)
+    )
+    assert calls == _BASKETBALL_SEASONTYPES
+    assert [game.id for game in games] == [f"espn:{event_id}" for event_id in expected]
 
 
 # ---------------------------------------------------------------------------

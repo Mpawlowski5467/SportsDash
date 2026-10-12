@@ -53,8 +53,9 @@ class EspnHistoryError(Exception):
 
     ``games`` holds the finals from the calls that did answer.  They are
     worth showing, but they are not the season — hockey, football and
-    baseball split it into a regular-season call and a playoff call — so a
-    caller must not cache them as one.
+    baseball split it into a regular-season call and a playoff call, and
+    basketball into those two and a play-in call — so a caller must not
+    cache them as one.
     """
 
     def __init__(self, games: list[Game]) -> None:
@@ -119,12 +120,13 @@ async def fetch_season_results(league: League, team: Team, season: int) -> list[
 
     Mirrors the live schedule fetch (including the per-sport param sets
     of ``_SCHEDULE_PARAM_SETS`` — e.g. hockey, football and baseball merge
-    regular season + postseason; a sport with no entry there makes one
-    bare call) with ESPN's ``season`` parameter appended to every call.
+    regular season + postseason, and basketball those two with the NBA's
+    play-in between them; a sport with no entry there makes one bare
+    call) with ESPN's ``season`` parameter appended to every call.
 
     Raises :class:`EspnHistoryError` when any of those calls failed, with
-    the finals the others returned on it: half a season must not pass for
-    the whole one.  A call that ANSWERED with nothing is not a failure.
+    the finals the others returned on it: part of a season must not pass
+    for the whole one.  A call that ANSWERED with nothing is not a failure.
     """
     if not supports_history(league.sport):
         return []

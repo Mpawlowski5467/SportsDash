@@ -213,6 +213,7 @@ async def test_fetch_season_results_returns_finals_only(
 
 # ---------------------------------------------------------------------------
 # A season ESPN serves in two calls (hockey, football, baseball): regular + playoffs
+# — or three (basketball): the play-in between them
 # ---------------------------------------------------------------------------
 
 HOCKEY_LEAGUE_ROW = LeagueORM(
@@ -411,6 +412,54 @@ async def test_baseball_season_is_the_regular_season_and_the_postseason(
     assert len(games) == finals
     assert games[-1].id == "espn:reg-0"  # the regular season, back to its first game
     assert games[0].id == ("espn:po-3" if made_postseason else "espn:reg-19")
+
+
+_PLAY_IN = {
+    "events": [
+        _final_event(f"pi-{index}", f"2024-04-{index + 16:02d}T00:00Z", "Cinder Vale Lynx")
+        for index in range(2)
+    ]
+}
+
+
+@pytest.mark.parametrize(
+    ("play_in", "playoffs", "newest", "finals"),
+    [
+        (True, True, "po-3", 26),
+        (True, False, "pi-1", 22),  # out in the play-in
+        (False, True, "po-3", 24),  # seeded past it, or a league with none
+        (False, False, "reg-19", 20),
+    ],
+)
+async def test_basketball_season_is_the_regular_season_the_play_in_and_the_postseason(
+    monkeypatch: pytest.MonkeyPatch, play_in: bool, playoffs: bool, newest: str, finals: int
+) -> None:
+    """ESPN's bare basketball schedule is one phase of a season (verified
+    live 2026-10-11): for a past year it is the regular season without its
+    postseason.  And play-in games are a season type of their own (5),
+    under neither the regular season (2) nor the postseason (3).  A league
+    with no play-in answers that call with no events, like any empty phase."""
+    seen: list[tuple[str | None, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seasontype = request.url.params.get("seasontype")
+        seen.append((seasontype, request.url.params.get("season")))
+        if seasontype == "2":
+            return httpx.Response(200, json=_REGULAR_SEASON)
+        if seasontype == "5" and play_in:
+            return httpx.Response(200, json=_PLAY_IN)
+        if seasontype == "3" and playoffs:
+            return httpx.Response(200, json=_PLAYOFFS)
+        return httpx.Response(200, json={"events": []})
+
+    _route_history(monkeypatch, handler)
+    games = await espn_history.fetch_season_results(BASKETBALL_LEAGUE, FOXES, 2024)
+
+    assert seen == [("2", "2024"), ("5", "2024"), ("3", "2024")]
+    assert len(games) == finals
+    assert games[0].id == f"espn:{newest}"
+    assert games[-1].id == "espn:reg-0"  # the regular season, back to its first game
+    assert ("espn:pi-0" in {game.id for game in games}) is play_in
 
 
 # ---------------------------------------------------------------------------
