@@ -2092,3 +2092,158 @@ async def test_refresh_team_info_backfills_venue_prose_for_legacy_row(
     row = await _about_row(db)
     assert row.venue_description == "Cinder Arena has hosted the Foxes since 1921."
     assert row.description_source == "thesportsdb"
+
+
+# Descriptions stored before the Wikipedia fallback checked the article's
+# title may be another club's.  The job drops every one that may have come
+# from Wikipedia, once, and re-resolves it in the same pass.
+
+WRONG_ABOUT = "The Cinder Wolves were a football club in Emberfall from 1925 to 1942."
+
+
+async def _wiki_match_version(db: async_sessionmaker[AsyncSession]) -> str | None:
+    async with db() as session:
+        return await repository.get_meta(session, scheduler_refresh._WIKI_MATCH_META_KEY)
+
+
+async def test_refresh_team_info_replaces_a_stored_wikipedia_description(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another club's history, stored under the old match, is re-resolved.
+
+    The row has both prose columns set, so nothing else would ever put it
+    back in the pending set.
+    """
+    await _seed_about_team(
+        db,
+        description=WRONG_ABOUT,
+        venue_description="Cinder Arena has hosted the Foxes since 1921.",
+        description_source="wikipedia",
+    )
+    calls = _stub_about_sources(
+        monkeypatch,
+        tsdb_info=None,
+        wiki_summary=wiki.WikiSummary(
+            title="Cinder Foxes",
+            extract="The Cinder Foxes are an Emberfall football club.",
+        ),
+    )
+
+    await scheduler_refresh.refresh_team_info()
+
+    row = await _about_row(db)
+    assert row.description == "The Cinder Foxes are an Emberfall football club."
+    assert row.description_source == "wikipedia"
+    assert row.venue_description == "Cinder Arena has hosted the Foxes since 1921."
+    assert calls == {"tsdb": ["Cinder Foxes"], "wiki": ["Cinder Foxes"]}
+    assert await _wiki_match_version(db) == str(wiki.MATCH_VERSION)
+
+
+@pytest.mark.parametrize("stored_source", ["wikipedia", None])
+async def test_refresh_team_info_leaves_an_unmatched_team_without_a_description(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+    stored_source: str | None,
+) -> None:
+    """No article is the team's own → the stored text goes and nothing replaces it.
+
+    A description with no recorded source predates source tracking, when
+    Wikipedia was already the fallback, so it is dropped as well.  The facts
+    only TheSportsDB supplies are kept.
+    """
+    await _seed_about_team(
+        db,
+        description=WRONG_ABOUT,
+        venue_description="Cinder Arena has hosted the Foxes since 1921.",
+        description_source=stored_source,
+    )
+    async with db() as session:
+        await repository.set_team_info(session, ABOUT_TEAM, founded_year=1921)
+        await session.commit()
+    _stub_about_sources(monkeypatch, tsdb_info=None, wiki_summary=None)
+
+    await scheduler_refresh.refresh_team_info()
+
+    row = await _about_row(db)
+    assert row.description is None
+    assert row.description_source is None
+    assert row.founded_year == 1921
+    assert row.venue_description == "Cinder Arena has hosted the Foxes since 1921."
+
+
+async def test_refresh_team_info_keeps_a_thesportsdb_description(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TheSportsDB's text was never chosen by the Wikipedia search: it stays."""
+    await _seed_about_team(
+        db,
+        description="Cinder Foxes are a fictional club from Emberfall.",
+        venue_description="Cinder Arena has hosted the Foxes since 1921.",
+        description_source="thesportsdb",
+    )
+    calls = _stub_about_sources(monkeypatch, tsdb_info=None, wiki_summary=None)
+
+    await scheduler_refresh.refresh_team_info()
+
+    row = await _about_row(db)
+    assert row.description == "Cinder Foxes are a fictional club from Emberfall."
+    assert row.description_source == "thesportsdb"
+    assert calls == {"tsdb": [], "wiki": []}
+    assert await _wiki_match_version(db) == str(wiki.MATCH_VERSION)
+
+
+async def test_refresh_team_info_drops_stored_descriptions_only_once(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A description resolved under the current match is not dropped again."""
+    await _seed_about_team(
+        db,
+        description=WRONG_ABOUT,
+        venue_description="Cinder Arena has hosted the Foxes since 1921.",
+        description_source="wikipedia",
+    )
+    resolved = wiki.WikiSummary(
+        title="Cinder Foxes", extract="The Cinder Foxes are an Emberfall football club."
+    )
+    _stub_about_sources(monkeypatch, tsdb_info=None, wiki_summary=resolved)
+    await scheduler_refresh.refresh_team_info()
+
+    # Next pass: Wikipedia is unreachable, and the team is fully enriched.
+    calls = _stub_about_sources(monkeypatch, tsdb_info=None, wiki_summary=None)
+    await scheduler_refresh.refresh_team_info()
+
+    row = await _about_row(db)
+    assert row.description == "The Cinder Foxes are an Emberfall football club."
+    assert row.description_source == "wikipedia"
+    assert calls == {"tsdb": [], "wiki": []}
+
+
+async def test_refresh_team_info_survives_a_failed_description_repair(
+    db: async_sessionmaker[AsyncSession],
+    patched_scope: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The repair never costs the pass its refresh — and is retried next time."""
+    await _seed_about_team(db)
+
+    async def broken(_session: AsyncSession) -> int:
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(scheduler_refresh.repository, "clear_unverified_descriptions", broken)
+    _stub_about_sources(
+        monkeypatch,
+        tsdb_info=stadiums.TeamInfo(description="Cinder Foxes are a fictional club."),
+    )
+
+    await scheduler_refresh.refresh_team_info()
+
+    row = await _about_row(db)
+    assert row.description == "Cinder Foxes are a fictional club."
+    assert await _wiki_match_version(db) is None
