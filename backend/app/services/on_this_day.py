@@ -1,6 +1,6 @@
 """A followed team's past games that fell on today's calendar date.
 
-Walks the team's recent seasons through the redis-cached season-results
+Walks the team's recent seasons through the cached season-results
 service — the same sequential scan as the head-to-head builder, so the
 upstream cost is shared and paid at most once per TTL — and keeps the
 games whose LOCAL calendar month-day matches today's, excluding actual
@@ -8,6 +8,12 @@ today (that slate belongs to the Today view).  The assembled per-team
 list gets its own day-long cache on top so repeated dashboard polls cost
 nothing; like everything cache-adjacent it is best-effort and
 correctness never depends on Redis.
+
+That day-long cache is Redis-only.  The list is stored whatever the scan
+found — an empty one included, which is also what a scan made while ESPN
+was failing produces — so it is deliberately not one of the keys
+``services/cache`` keeps in-process when there is no Redis.  There the list
+is rebuilt on each request from the season-results cache, which is kept.
 """
 
 from __future__ import annotations
@@ -61,7 +67,7 @@ async def team_games_on_day(
         # timezones behind UTC — which would shift the whole window and
         # silently drop the oldest anniversary.
         now_year = today.year
-        # Sequential like head_to_head — season_results is redis-cached and
+        # Sequential like head_to_head — season_results is cached and
         # never raises, and ESPN is never hit concurrently.  Season keys are
         # ENDING years, so a cross-year season's Aug–Dec games surface under
         # key year+1; scanning keys and filtering by month-day handles that

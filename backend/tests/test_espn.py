@@ -1912,6 +1912,30 @@ async def test_provider_get_game_odds_propagates_transient() -> None:
         await provider.get_game_odds(BASKETBALL_LEAGUE, "9100200")
 
 
+async def test_provider_get_game_odds_propagates_access_denial() -> None:
+    """A refused summary is not "no line".
+
+    With the summary host answering 403 the betting line cannot be read, and
+    a ``None`` here is cached by the odds route as that game's "no line" for
+    ten minutes while the breaker records a success.  The predictor's 404 is
+    its ordinary "no projection" and must not hide the denial.
+    """
+    provider = EspnProvider()
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        if "predictor" in url:
+            raise httpx.HTTPStatusError(
+                "404",
+                request=httpx.Request("GET", "http://x"),
+                response=httpx.Response(404),
+            )
+        raise ProviderAccessError("espn GET http://x -> 403: access denied")
+
+    provider._get_json = fake_get_json  # type: ignore[method-assign]
+    with pytest.raises(ProviderAccessError):
+        await provider.get_game_odds(BASKETBALL_LEAGUE, "9100200")
+
+
 # ---------------------------------------------------------------------------
 # Standings
 # ---------------------------------------------------------------------------

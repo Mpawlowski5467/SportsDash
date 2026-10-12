@@ -43,6 +43,31 @@ _COMPETITION_ACTIVE_AFTER = timedelta(days=21)
 # trip a rate limit on a 48-nation field.
 _COMPETITION_RESOLVE_DELAY_SECONDS = 1.0
 
+# A long pre-resolve trips TheSportsDB's rate limit all the same.  Measured
+# on a copy of a real database (two US leagues and 18 soccer leagues followed
+# in whole): some 50 lookups at the pace above were answered, and the next 29
+# teams were each refused with HTTP 429.  A refusal says nothing about the
+# team, so recording it as a miss took 29 real stadiums off the map until a
+# later sweep.  Instead the sweep waits this long and asks about the team
+# once more ...
+_TSDB_RATE_LIMIT_PAUSE_SECONDS = 30.0
+# ... and from that first refusal on spaces its resolves this far apart
+# instead, for the rest of the pass, so it stops tripping the limit.
+_COMPETITION_THROTTLED_DELAY_SECONDS = 5.0
+# A pause the retry came back from still unanswered bought nothing, and a few
+# of those mean TheSportsDB is blocking rather than counting — it has refused
+# every lookup for a whole session before.  No pause in this pass will
+# outlast that, and each one keeps the sweep half a minute longer.  As a
+# stage of daily_refresh the sweep does step aside for a save in the setup
+# wizard (it is handed the pass's supersede check — see
+# refresh_competition_stadiums), so the pass that save asks for is not what
+# a pause holds up.  The rest of an undisturbed pass is: the venue geocoding
+# and the stale-game prune run after this stage, and the status's
+# `refreshing` flag cannot clear until they have.  So after this many
+# fruitless pauses the pass stops waiting and records what it gets, as it
+# always did.
+_TSDB_MAX_FRUITLESS_PAUSES = 3
+
 # Single-flight guard for refresh_competition_stadiums.  It is reachable from
 # THREE callers (startup daily_refresh, the daily cron, and the on-demand
 # map kick), and the cache write is a get-then-insert; two overlapping runs
@@ -52,11 +77,12 @@ _COMPETITION_RESOLVE_DELAY_SECONDS = 1.0
 # no-op so only one resolve sweep ever runs at a time.
 _competition_stadiums_lock = asyncio.Lock()
 
-# A competition stadium that resolves to a definitive MISS (no coordinates) is
-# cached so the map stops asking — but the "miss" is often just a transient
-# TheSportsDB 429 during a big resolve sweep, NOT a club that truly has no
-# stadium.  So a miss is retried once it is older than this, instead of being
-# stuck forever; a real miss simply costs one cheap retry every interval.
+# A competition stadium that resolves to a MISS (no coordinates) is cached so
+# the map stops asking — but a "miss" is not always a club that truly has no
+# stadium: it is also what is recorded when TheSportsDB refused the lookup
+# and refused it again after the pause above.  So a miss is retried once it
+# is older than this, instead of being stuck forever; a real miss simply
+# costs one cheap retry every interval.
 _STADIUM_MISS_RETRY = timedelta(minutes=15)
 
 # How far ahead the game-venue geocoder warms its cache.  The map's

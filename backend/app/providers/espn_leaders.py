@@ -47,6 +47,14 @@ class LeaderEntry:
     photo_url: str | None = None
 
 
+class EspnLeadersError(Exception):
+    """Raised when the athlete-stats feed cannot be fetched/decoded.
+
+    Kept apart from an empty board: "ESPN did not answer" is not "the feed
+    has no leaders", and the route treats the two differently.
+    """
+
+
 def supports(sport: Sport) -> bool:
     return sport in _SPECS
 
@@ -85,8 +93,9 @@ async def fetch_league_leaders(
     """Top ``limit`` athletes by the sport's headline stat; ``[]`` on miss.
 
     ``provider_key`` is the ESPN ``sport/league`` fragment (e.g.
-    ``"basketball/nba"``).  Never raises — a network/parse failure logs and
-    returns ``[]`` so the leaders route can fall back gracefully.
+    ``"basketball/nba"``).  ``[]`` means ESPN answered with nothing usable;
+    a network/parse failure logs and raises :class:`EspnLeadersError`, so
+    the leaders route can tell an outage from an empty feed.
     """
     spec = _SPECS.get(sport)
     if spec is None:
@@ -103,9 +112,9 @@ async def fetch_league_leaders(
             response = await client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError) as exc:
         logger.warning("espn_leaders: fetch failed for %s", provider_key, exc_info=True)
-        return []
+        raise EspnLeadersError(f"Failed to fetch ESPN leaders for {provider_key!r}: {exc}") from exc
     if not isinstance(data, dict):
         return []
 

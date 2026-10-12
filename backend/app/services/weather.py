@@ -1,23 +1,28 @@
 """Free, keyless venue weather via Open-Meteo.
 
 Returns current conditions plus a one-day forecast for a lat/lon, used by
-the map view (stadium pins) and the game-detail endpoint (outdoor scheduled
-games).  Like every external-HTTP helper here it is defensive end to end —
-network errors, timeouts, bad statuses, and unparseable bodies are logged
-and collapse to ``None``; it never raises, so one un-fetchable venue can't
-break the map.
+the map view (stadium pins), the game-detail endpoint and the calendar's
+batch (outdoor scheduled games).  Like every external-HTTP helper here
+``fetch`` is defensive end to end — network errors, timeouts, bad statuses,
+and unparseable bodies are logged and collapse to ``None``; it never raises,
+so one un-fetchable venue can't break the map.
 
-Results are cached in Redis (best-effort) keyed by coarse coordinates, since
-weather changes slowly and many calls hit the same stadiums.  A small
-semaphore bounds concurrent upstream calls so a fresh many-pin map stays a
-good citizen of the free service.
+``fetch_or_raise`` is the same lookup for the one caller that has to tell an
+outage from "no forecast" (``GET /schedule/weather``): where Open-Meteo
+could not be asked, or did not answer, it raises ``WeatherUnavailable``
+instead of returning ``None``.
+
+Results are cached (``services/cache``, best-effort) keyed by coarse
+coordinates, since weather changes slowly and many calls hit the same
+stadiums.  A small semaphore bounds concurrent upstream calls so a fresh
+many-pin map stays a good citizen of the free service.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import httpx
@@ -28,6 +33,7 @@ from app.services import http_client
 from app.config import get_settings
 from app.models import domain
 from app.services import cache
+from app.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +42,10 @@ _HEADERS = useragent.headers("self-hosted")
 _TIMEOUT = httpx.Timeout(15.0)
 # Cap concurrent upstream calls regardless of how many pins ask at once.
 _MAX_INFLIGHT = asyncio.Semaphore(8)
+# Open-Meteo forecasts today and the 15 days after it, counted in the UTC the
+# request asks for; a later ``start_date`` is answered 400 (checked live
+# 2026-10-11: the 26th answered, the 27th was "out of allowed range").
+_FORECAST_DAYS_AHEAD = 15
 
 # WMO weather-code -> human label.  A curated, grouped subset covering the
 # codes Open-Meteo returns; unknown codes fall back to "—" (the frontend
@@ -72,6 +82,27 @@ _WMO_LABELS: dict[int, str] = {
 }
 
 
+class WeatherUnavailable(Exception):
+    """Open-Meteo could not be asked, or did not answer.
+
+    A transport error, a timeout, a 429, a 5xx, a redirect or a body that is
+    not JSON.  NOT raised for an answer that holds no forecast: any other
+    4xx (the out-of-range 400 among them) and a 200 with nothing usable in
+    it are still ``None``.
+    """
+
+
+def _is_answer(exc: Exception) -> bool:
+    """Whether a failed request was Open-Meteo saying "no forecast".
+
+    A 4xx other than 429: asked again, it would be refused again.
+    """
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return False
+    status = exc.response.status_code
+    return 400 <= status < 500 and status != 429
+
+
 def _units_params(units: str) -> dict[str, str]:
     if units == "imperial":
         return {"temperature_unit": "fahrenheit", "wind_speed_unit": "mph"}
@@ -85,23 +116,54 @@ async def fetch(
     units: str | None = None,
     target_date: date | None = None,
 ) -> domain.Weather | None:
+    """Venue weather for ``(lat, lon)``, or ``None``.  Never raises.
+
+    :func:`fetch_or_raise` for the callers that show no weather either way
+    (a map pin, the game detail, the matchup preview): an upstream failure
+    collapses to ``None`` like every other "no forecast".
+    """
+    try:
+        return await fetch_or_raise(lat, lon, units=units, target_date=target_date)
+    except WeatherUnavailable:
+        return None
+
+
+async def fetch_or_raise(
+    lat: float,
+    lon: float,
+    *,
+    units: str | None = None,
+    target_date: date | None = None,
+) -> domain.Weather | None:
     """Venue weather for ``(lat, lon)``.
 
     With no ``target_date`` (the map's current-conditions use) returns
     today's conditions plus a one-day forecast.  With a ``target_date`` (the
     game-detail use) returns that UTC calendar day's forecast: the request
     asks Open-Meteo for exactly that day and the daily row whose ``time``
-    matches is selected.  Returns ``None`` when weather is disabled, on any
-    upstream/parse failure, when the payload lacks a usable current
-    temperature, or when the requested day is outside Open-Meteo's forecast
-    window (it answers an out-of-range date with HTTP 400 → degrades to
-    ``None`` rather than showing today's weather mislabeled).  Cached for
-    ``weather_cache_minutes`` keyed by coarse coordinates and the target day.
+    matches is selected.  Returns ``None`` when weather is disabled, when
+    the payload lacks a usable current temperature, or when the requested day
+    is outside Open-Meteo's forecast window — rather than showing today's
+    weather mislabeled.  A day past the window's known far edge is not asked
+    for at all; any other out-of-range date is answered with HTTP 400, which
+    degrades to ``None``.  Cached for ``weather_cache_minutes`` keyed by
+    coarse coordinates and the target day.
+
+    Raises :class:`WeatherUnavailable` when Open-Meteo could not be asked or
+    did not answer — the one failure that is not "no forecast".  Nothing is
+    cached from it.
     """
     settings = get_settings()
     if not settings.weather_enabled:
         return None
     units = units or settings.weather_units
+    if target_date is not None and target_date > utcnow().date() + timedelta(
+        days=_FORECAST_DAYS_AHEAD
+    ):
+        # Past the forecast window, so the request is a guaranteed 400 — and
+        # a ``None`` is never cached, so a calendar would send it again for
+        # every far-off fixture on every refresh.
+        return None
 
     date_key = target_date.isoformat() if target_date is not None else "today"
     key = f"weather:{lat:.2f},{lon:.2f},{units},{date_key}"
@@ -122,9 +184,9 @@ async def fetch(
         **_units_params(units),
     }
     if target_date is not None:
-        # Ask for exactly the game's UTC day.  An out-of-range date returns
-        # HTTP 400, which raise_for_status turns into the degrade-to-None
-        # path below — so a far-future game shows no weather rather than
+        # Ask for exactly the game's UTC day.  An out-of-range date that got
+        # past the window check above returns HTTP 400, which raise_for_status
+        # turns into the degrade-to-None path below — no weather rather than
         # today's.
         params["start_date"] = target_date.isoformat()
         params["end_date"] = target_date.isoformat()
@@ -136,14 +198,16 @@ async def fetch(
             response = await client.get(_URL, params=params)
             response.raise_for_status()
             payload = response.json()
-    except Exception:
+    except Exception as exc:
         logger.warning(
-            "weather: lookup failed for (%s, %s) — returning None",
+            "weather: lookup failed for (%s, %s)",
             lat,
             lon,
             exc_info=True,
         )
-        return None
+        if _is_answer(exc):
+            return None
+        raise WeatherUnavailable(str(exc)) from exc
 
     weather = _parse(payload, units, target_date=target_date)
     if weather is not None:

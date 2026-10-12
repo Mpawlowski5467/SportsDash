@@ -7,16 +7,20 @@ aiosqlite engine, and seeds fictional data directly via the ORM.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tomllib
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, Iterator
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -41,10 +45,14 @@ from app.models.orm import (
     StandingsORM,
     TeamORM,
 )
+from app.providers import espn_catalog
+from app.providers.espn_catalog import CatalogLeague, CatalogTeam
+from app.services import cache, http_client
 from app.services import game_detail as game_detail_service
 from app.routes import meta as meta_route
 from app.routes import odds as odds_route
 from app.routes import router as api_router
+from app.routes import schedule as schedule_route
 from app.services.ics import games_to_ics
 from app.timeutil import local_day_bounds, local_today, utcnow
 
@@ -334,6 +342,42 @@ def test_app_version_has_one_source_of_truth() -> None:
     lock = tomllib.loads((tauri_conf.parent / "Cargo.lock").read_text())
     crate = next(p for p in lock["package"] if p["name"] == cargo["package"]["name"])
     assert crate["version"] == meta_route.APP_VERSION
+
+
+async def test_an_unhandled_error_is_answered_without_cors_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash's 500 carries no ``Access-Control-Allow-Origin``; a 404 does.
+
+    Starlette answers an unhandled exception outside ``CORSMiddleware``.  The
+    desktop app calls the API cross-origin, so its webview rejects that
+    response with no status, and the frontend's freshness keeper then paces
+    a backend crash as "unreachable" — docs/CONTRACTS.md, *When a query is
+    due* and the *Known limits* after it.  A catch-all added inside the CORS
+    middleware would give the 500 its header and flip the first half of this
+    test: correct those two passages along with it.
+    """
+    # The real application object, for its real middleware stack.  Neither
+    # request touches the database, and no lifespan runs under ASGITransport.
+    from app.main import app as application
+
+    cors = next(m for m in application.user_middleware if m.cls.__name__ == "CORSMiddleware")
+    origin = cors.kwargs["allow_origins"][0]
+
+    def crash() -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(meta_route, "get_settings", crash)
+    transport = ASGITransport(app=application, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        crashed = await c.get("/api/meta", headers={"Origin": origin})
+        answered = await c.get("/api/no-such-route", headers={"Origin": origin})
+
+    assert crashed.status_code == 500
+    assert "access-control-allow-origin" not in crashed.headers
+    # An HTTPException is answered inside the middleware and keeps the header.
+    assert answered.status_code == 404
+    assert answered.headers["access-control-allow-origin"] == origin
 
 
 async def test_teams(client: AsyncClient) -> None:
@@ -1106,6 +1150,448 @@ async def test_odds_batch_unpriced_game_absent(
     assert resp.json() == {}
 
 
+class _ScriptedOddsProvider:
+    """Odds scripted per provider game key, re-scriptable mid-test.
+
+    A key maps to a ``GameOdds`` (priced), ``None`` (the provider answers
+    "no line") or an exception to raise (the fetch failed).
+    """
+
+    provider_id = "mock"
+
+    def __init__(self, script: dict[str, GameOdds | Exception | None]) -> None:
+        self.script = script
+        self.odds_calls: list[str] = []
+
+    async def get_game_odds(self, league, provider_game_key):  # type: ignore[no-untyped-def]
+        self.odds_calls.append(provider_game_key)
+        answer = self.script[provider_game_key]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+_ODDS_DOWN = RuntimeError("boom: upstream odds fetch failed")
+
+
+async def test_odds_batch_is_503_only_when_every_fetch_failed(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An outage is not "no lines": an empty 200 would wipe the chips on
+    screen.  Any game that is priced, or answered with no line, keeps the
+    batch a 200 — and a failure is never cached."""
+    provider = _ScriptedOddsProvider(
+        {"vc-tonight": _ODDS_DOWN, "vc-live": _ODDS_DOWN, "vc-future": None}
+    )
+    monkeypatch.setattr(odds_route.registry, "get_provider", lambda provider_id: provider)
+
+    outage = await client.get(f"/api/odds?ids={GAME_TONIGHT},{GAME_LIVE}")
+    assert outage.status_code == 503
+    assert outage.json() == {"detail": "Upstream provider unavailable"}
+
+    # One of the two priced, the other still failing: a partial map.
+    provider.script["vc-live"] = _SAMPLE_ODDS
+    partial = await client.get(f"/api/odds?ids={GAME_TONIGHT},{GAME_LIVE}")
+    assert partial.status_code == 200
+    assert set(partial.json()) == {GAME_LIVE}
+    # The outage left nothing behind: both games were fetched a second time.
+    assert sorted(provider.odds_calls) == ["vc-live", "vc-live", "vc-tonight", "vc-tonight"]
+
+    # "No line for this game" is an answer too, even next to a failure.
+    no_line = await client.get(f"/api/odds?ids={GAME_TONIGHT},{GAME_FUTURE}")
+    assert no_line.status_code == 200
+    assert no_line.json() == {}
+
+
+async def test_odds_batch_serves_cached_lines_through_an_outage(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No Redis in this suite: each game's answer is held in-process for its
+    TTL, so a poll during an outage re-serves it without asking upstream."""
+    provider = _ScriptedOddsProvider(
+        {"vc-tonight": _SAMPLE_ODDS, "vc-live": None, "vc-future": _ODDS_DOWN}
+    )
+    monkeypatch.setattr(odds_route.registry, "get_provider", lambda provider_id: provider)
+
+    fresh = await client.get(f"/api/odds?ids={GAME_TONIGHT},{GAME_LIVE}")
+    assert fresh.status_code == 200
+    assert set(fresh.json()) == {GAME_TONIGHT}
+
+    provider.script = dict.fromkeys(provider.script, _ODDS_DOWN)
+    during_outage = await client.get(f"/api/odds?ids={GAME_TONIGHT},{GAME_LIVE}")
+    assert during_outage.status_code == 200
+    assert during_outage.json() == fresh.json()
+    # Neither the line nor the cached "no line" went back upstream.
+    assert sorted(provider.odds_calls) == ["vc-live", "vc-tonight"]
+
+    # A game that does need fetching fails, but anything served from the
+    # cache — a line, or a remembered "no line" — keeps the batch a 200.
+    with_line = await client.get(f"/api/odds?ids={GAME_TONIGHT},{GAME_FUTURE}")
+    assert with_line.status_code == 200
+    assert set(with_line.json()) == {GAME_TONIGHT}
+    with_no_line = await client.get(f"/api/odds?ids={GAME_LIVE},{GAME_FUTURE}")
+    assert with_no_line.status_code == 200
+    assert with_no_line.json() == {}
+
+
+class _OverlapOddsProvider:
+    """Prices every game, noting how many fetches were in flight as each began."""
+
+    provider_id = "mock"
+
+    def __init__(self) -> None:
+        self._in_flight = 0
+        self.in_flight_at_start: list[int] = []
+
+    async def get_game_odds(self, league, provider_game_key):  # type: ignore[no-untyped-def]
+        self._in_flight += 1
+        self.in_flight_at_start.append(self._in_flight)
+        # A network round trip: anything else ready to start gets to.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        self._in_flight -= 1
+        return _SAMPLE_ODDS
+
+
+async def test_odds_batch_sends_one_fetch_ahead_and_the_rest_together(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first fetch for a provider goes alone — on a half-open circuit
+    breaker it is the one call admitted, and the rest must not be turned
+    away behind it — and only that one: the others still go out in parallel."""
+    provider = _OverlapOddsProvider()
+    monkeypatch.setattr(odds_route.registry, "get_provider", lambda provider_id: provider)
+
+    resp = await client.get(f"/api/odds?ids={GAME_TONIGHT},{GAME_LIVE},{GAME_FUTURE}")
+
+    assert resp.status_code == 200
+    assert set(resp.json()) == {GAME_TONIGHT, GAME_LIVE, GAME_FUTURE}
+    # Alone; then the second starts with nothing in flight, and the third
+    # while the second still is.
+    assert provider.in_flight_at_start == [1, 1, 2]
+
+
+async def test_odds_batch_unregistered_provider_is_not_an_outage(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A league whose provider is not registered cannot be priced, but
+    nothing upstream failed: counted as a failed fetch, its games would turn
+    every batch they are alone in into a 503, forever."""
+
+    def no_such_provider(provider_id: str) -> object:
+        raise KeyError(provider_id)
+
+    monkeypatch.setattr(odds_route.registry, "get_provider", no_such_provider)
+
+    resp = await client.get(f"/api/odds?ids={GAME_TONIGHT},{GAME_LIVE}")
+
+    assert resp.status_code == 200
+    assert resp.json() == {}
+
+
+async def test_odds_batch_with_nothing_priceable_is_empty_not_503(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A final game and an unknown id leave nothing to price.  No fetch was
+    made, so none failed: "every one of zero fetches" is not an outage."""
+    provider = _ScriptedOddsProvider({})
+    monkeypatch.setattr(odds_route.registry, "get_provider", lambda provider_id: provider)
+
+    resp = await client.get(f"/api/odds?ids={GAME_FINAL_1},mock:no-such-game")
+
+    assert resp.status_code == 200
+    assert resp.json() == {}
+    assert provider.odds_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Calendar forecasts (/api/schedule/weather batch)
+#
+# Real route, real ``game_detail.fetch_weather``, real ``weather`` service and
+# the real in-process cache: only Open-Meteo's transport is scripted, and the
+# cache clock is moved by hand.
+# ---------------------------------------------------------------------------
+
+TURF_LEAGUE = "amber-turf"
+TURF_GAMES = 5
+
+
+async def _seed_outdoor_games(
+    db: async_sessionmaker[AsyncSession], *, days_ahead: int = 3
+) -> list[str]:
+    """Five scheduled soccer games, each at its own located home ground."""
+    ids = [f"mock:fenmoor-{i}" for i in range(TURF_GAMES)]
+    async with db() as session:
+        session.add(
+            LeagueORM(
+                id=TURF_LEAGUE,
+                sport="soccer",
+                name="Amber Turf",
+                provider="mock",
+                provider_key="mock-soccer",
+            )
+        )
+        await session.flush()  # parents before children: postgres enforces FKs
+        for i in range(TURF_GAMES):
+            session.add(
+                TeamORM(
+                    id=f"fenmoor-{i}",
+                    league_id=TURF_LEAGUE,
+                    name=f"Fenmoor {i}",
+                    abbreviation="FEN",
+                    provider_key=f"fenmoor-{i}",
+                    rss_feeds=[],
+                    venue_lat=50.0 + i,
+                    venue_lon=1.0 + i,
+                )
+            )
+        await session.flush()
+        for i, game_id in enumerate(ids):
+            session.add(
+                GameORM(
+                    id=game_id,
+                    league_id=TURF_LEAGUE,
+                    home_team_id=f"fenmoor-{i}",
+                    away_team_id=None,
+                    home_name=f"Fenmoor {i}",
+                    away_name="Saltmarsh Town",
+                    home_abbreviation="FEN",
+                    away_abbreviation="SLT",
+                    start_time=utcnow() + timedelta(days=days_ahead),
+                    phase="scheduled",
+                )
+            )
+        await session.commit()
+    return ids
+
+
+def _open_meteo_forecast(request: httpx.Request) -> httpx.Response:
+    day = request.url.params["start_date"]
+    return httpx.Response(
+        200,
+        json={
+            "current": {"temperature_2m": 11.0, "weather_code": 3, "wind_speed_10m": 4.0},
+            "daily": {
+                "time": [day],
+                "temperature_2m_max": [14.0],
+                "temperature_2m_min": [6.0],
+                "precipitation_probability_max": [10],
+                "weather_code": [3],
+            },
+        },
+    )
+
+
+class _ScriptedOpenMeteo:
+    """Answers every request until ``failure`` is set, then fails that way.
+
+    ``failure`` is ``"connect"``, ``"timeout"``, ``"html"`` (a 200 that is
+    not JSON) or an HTTP status.  While failing, the next ``answer_first``
+    requests are still answered.
+    """
+
+    def __init__(self) -> None:
+        self.failure: str | None = None
+        self.answer_first = 0
+        self.requests = 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests += 1
+        if self.failure is None:
+            return _open_meteo_forecast(request)
+        if self.answer_first > 0:
+            self.answer_first -= 1
+            return _open_meteo_forecast(request)
+        if self.failure == "connect":
+            raise httpx.ConnectError("refused", request=request)
+        if self.failure == "timeout":
+            raise httpx.ReadTimeout("slow", request=request)
+        if self.failure == "html":
+            return httpx.Response(200, text="<html>sign in to the network</html>")
+        if self.failure == "400":
+            return httpx.Response(400, json={"error": True, "reason": "out of allowed range"})
+        return httpx.Response(int(self.failure), text="no")
+
+
+@pytest.fixture
+def open_meteo(monkeypatch: pytest.MonkeyPatch) -> _ScriptedOpenMeteo:
+    upstream = _ScriptedOpenMeteo()
+    monkeypatch.setitem(
+        http_client._clients, "weather", httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+    )
+    return upstream
+
+
+@pytest.fixture
+def cache_clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """The in-process cache's clock, as a one-element list a test adds to."""
+    now = [1_800_000_000.0]
+    monkeypatch.setattr(cache, "_now", lambda: now[0])
+    return now
+
+
+def _weather_url(ids: list[str]) -> str:
+    return "/api/schedule/weather?ids=" + ",".join(ids)
+
+
+@pytest.mark.parametrize("failure", ["connect", "timeout", "500", "503", "429", "302", "html"])
+async def test_schedule_weather_is_503_when_every_forecast_failed_upstream(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    open_meteo: _ScriptedOpenMeteo,
+    cache_clock: list[float],
+    failure: str,
+) -> None:
+    """An outage is not "no forecasts".  The frontend asks again after an
+    hour and a ``weather:`` entry lives 45 minutes, so that request is cold:
+    an empty 200 took every glyph off the calendar for the next hour, where a
+    503 leaves them and is asked again in five minutes."""
+    ids = await _seed_outdoor_games(db)
+    loaded = await client.get(_weather_url(ids))
+    assert loaded.status_code == 200
+    assert set(loaded.json()) == set(ids)
+
+    open_meteo.failure = failure
+    cache_clock[0] += 44 * 60
+    still_cached = await client.get(_weather_url(ids))
+    assert still_cached.status_code == 200
+    assert set(still_cached.json()) == set(ids)
+
+    cache_clock[0] += 16 * 60
+    outage = await client.get(_weather_url(ids))
+    assert outage.status_code == 503
+    assert outage.json() == {"detail": "Upstream provider unavailable"}
+
+    # The outage left nothing behind: every game is fetched afresh.
+    open_meteo.failure = None
+    back = await client.get(_weather_url(ids))
+    assert back.status_code == 200
+    assert set(back.json()) == set(ids)
+
+
+async def test_schedule_weather_gives_up_a_walk_that_only_fails(
+    client: AsyncClient, db: async_sessionmaker[AsyncSession], open_meteo: _ScriptedOpenMeteo
+) -> None:
+    """A 503 is asked again after 5 minutes (twice: the app retries once),
+    not after an hour.  Walking every game each time would send a failing or
+    rate-limiting Open-Meteo many times the requests the empty 200 did."""
+    ids = await _seed_outdoor_games(db)
+    open_meteo.failure = "429"
+
+    resp = await client.get(_weather_url(ids))
+
+    assert resp.status_code == 503
+    assert open_meteo.requests == schedule_route._GIVE_UP_AFTER_FAILURES
+    assert open_meteo.requests < TURF_GAMES
+
+
+async def test_schedule_weather_partial_failure_is_still_200(
+    client: AsyncClient, db: async_sessionmaker[AsyncSession], open_meteo: _ScriptedOpenMeteo
+) -> None:
+    """One forecast served and the walk goes on to the end: the games that
+    failed are simply absent, as they were."""
+    ids = await _seed_outdoor_games(db)
+    open_meteo.failure, open_meteo.answer_first = "503", 2
+
+    resp = await client.get(_weather_url(ids))
+
+    assert resp.status_code == 200
+    assert set(resp.json()) == set(ids[:2])
+    assert open_meteo.requests == TURF_GAMES
+
+
+async def test_schedule_weather_cached_forecast_keeps_it_200(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    open_meteo: _ScriptedOpenMeteo,
+    cache_clock: list[float],
+) -> None:
+    ids = await _seed_outdoor_games(db)
+    assert (await client.get(_weather_url(ids[:1]))).status_code == 200  # the first game only
+    open_meteo.failure = "connect"
+    cache_clock[0] += 10 * 60
+    asked_before = open_meteo.requests
+
+    resp = await client.get(_weather_url(ids))
+
+    assert resp.status_code == 200
+    assert set(resp.json()) == set(ids[:1])
+    # Something was served, so every other game was asked for.
+    assert open_meteo.requests - asked_before == TURF_GAMES - 1
+
+
+async def test_schedule_weather_given_up_before_a_cached_forecast_is_503(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    open_meteo: _ScriptedOpenMeteo,
+    cache_clock: list[float],
+) -> None:
+    """The one case a cached forecast is not served: it sits behind the
+    failures the walk gives up on.  On a refetch the client then keeps every
+    glyph it holds, where a 200 with this one forecast would drop the rest."""
+    ids = await _seed_outdoor_games(db)
+    assert (await client.get(_weather_url(ids[-1:]))).status_code == 200  # the last game only
+    open_meteo.failure = "connect"
+    cache_clock[0] += 10 * 60
+
+    resp = await client.get(_weather_url(ids))
+
+    assert resp.status_code == 503
+
+
+async def test_schedule_weather_no_forecast_answer_is_not_an_outage(
+    client: AsyncClient, db: async_sessionmaker[AsyncSession], open_meteo: _ScriptedOpenMeteo
+) -> None:
+    """Open-Meteo's 400 for a day outside its window is an answer: counted
+    as a failure, such a game would turn every batch it is alone in into a
+    503 until it kicked off."""
+    ids = await _seed_outdoor_games(db)
+    open_meteo.failure = "400"
+
+    resp = await client.get(_weather_url(ids))
+
+    assert resp.status_code == 200
+    assert resp.json() == {}
+    assert open_meteo.requests == TURF_GAMES
+
+
+async def test_schedule_weather_with_nothing_to_ask_is_empty_not_503(
+    client: AsyncClient, db: async_sessionmaker[AsyncSession], open_meteo: _ScriptedOpenMeteo
+) -> None:
+    """Games past the 15-day window are not asked for, an unknown id is
+    skipped and an indoor game has no forecast.  No request was made, so
+    none failed."""
+    ids = await _seed_outdoor_games(db, days_ahead=30)
+    open_meteo.failure = "connect"
+
+    resp = await client.get(_weather_url([*ids, "mock:no-such-game", GAME_FUTURE]))
+
+    assert resp.status_code == 200
+    assert resp.json() == {}
+    assert (await client.get("/api/schedule/weather")).json() == {}
+    assert open_meteo.requests == 0
+
+
+async def test_game_detail_stays_200_when_open_meteo_is_down(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+    open_meteo: _ScriptedOpenMeteo,
+) -> None:
+    """Only the calendar's batch asks for the outage to be raised.  The
+    detail modal replaces its content with an error panel when a refetch
+    fails, so its forecast is still just missing."""
+    await _seed_scheduled_soccer_game(db)
+    _use_provider(monkeypatch, _FakeProvider(None))
+    open_meteo.failure = "connect"
+
+    resp = await client.get(f"/api/games/{SOCCER_GAME}")
+
+    assert resp.status_code == 200
+    assert resp.json()["weather"] is None
+    assert open_meteo.requests == 1
+
+
 # ---------------------------------------------------------------------------
 # Matchup preview (/api/matchup)
 # ---------------------------------------------------------------------------
@@ -1468,17 +1954,17 @@ async def test_map_plots_offseason_follow_all_league(client, db, monkeypatch) ->
     isn't running) must still return every catalog team whose home stadium
     is cached, as ``source="competition"`` — the activity gate that used to
     hide off-season leagues is gone.  The teams resolve from the stadium
-    cache (``StadiumORM`` by ``"{provider}:{provider_key}"``), no host-venue
-    fixtures needed.
+    cache (``StadiumORM`` by ``repository.stadium_key`` — one id space for
+    all of ESPN soccer), no host-venue fixtures needed.
     """
-    from app.providers import espn_catalog
-    from app.providers.espn_catalog import CatalogLeague, CatalogTeam
     from app.scheduler import jobs
 
-    # Keep the route hermetic: don't spawn background resolves at a real DB.
+    # Keep the route hermetic: don't spawn background resolves at a real DB,
+    # and don't ask Open-Meteo for the weather at the soccer pins it returns.
     monkeypatch.setattr(jobs, "kick_game_venue_coords", lambda: None)
     monkeypatch.setattr(jobs, "kick_locations_if_pending", lambda: None)
     monkeypatch.setattr(jobs, "kick_competition_stadiums", lambda: None)
+    monkeypatch.setattr(get_settings(), "weather_enabled", False)
 
     # A real catalog league (so get_catalog_league resolves) followed in
     # whole, with NO games at all → it is off-season / inactive.
@@ -1512,7 +1998,7 @@ async def test_map_plots_offseason_follow_all_league(client, db, monkeypatch) ->
         # Two of the three teams have cached home stadiums with coords.
         session.add(
             StadiumORM(
-                key="espn:111",
+                key="espn:soccer:111",
                 team_name="Ivory Stags",
                 venue="Ivory Park",
                 lat=51.5079,
@@ -1523,7 +2009,7 @@ async def test_map_plots_offseason_follow_all_league(client, db, monkeypatch) ->
         )
         session.add(
             StadiumORM(
-                key="espn:222",
+                key="espn:soccer:222",
                 team_name="Cobalt Wolves",
                 venue="Cobalt Grounds",
                 lat=48.8566,
@@ -1553,6 +2039,274 @@ async def test_map_plots_offseason_follow_all_league(client, db, monkeypatch) ->
     assert stags["lat"] == pytest.approx(51.5079)
     assert stags["lon"] == pytest.approx(-0.1281)
     assert stags["capacity"] == 42000
+
+
+# --- Whole-competition pins: one provider id is not one team ----------------
+#
+# ESPN numbers the teams of each US league from 1, so the NFL and the NHL both
+# have a team 1 (fictional names here; the league ids are real because the
+# route only plots leagues the catalog knows).  Soccer is the opposite case:
+# a club keeps one id in every competition it plays.
+
+MAP_NFL_ONE = CatalogTeam(provider_key="1", name="Ashgrove Falcons", abbreviation="ASH")
+MAP_NHL_ONE = CatalogTeam(provider_key="1", name="Tidewater Bruins", abbreviation="TID")
+
+
+@pytest.fixture
+def competition_fields(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[CatalogTeam]]:
+    """Catalog fields by league id, for a hermetic whole-competition map."""
+    fields: dict[str, list[CatalogTeam]] = {}
+
+    async def fake_get_league_teams(league: CatalogLeague) -> list[CatalogTeam]:
+        return list(fields.get(league.id, []))
+
+    monkeypatch.setattr(espn_catalog, "get_league_teams", fake_get_league_teams)
+    # Football and soccer are outdoor sports: the route would otherwise ask
+    # Open-Meteo for the weather at every pin these tests return.
+    monkeypatch.setattr(get_settings(), "weather_enabled", False)
+    return fields
+
+
+async def _add_catalog_league(
+    db: async_sessionmaker[AsyncSession], league_id: str, *, follow_all: bool
+) -> None:
+    catalog = espn_catalog.get_catalog_league(league_id)
+    assert catalog is not None
+    async with db() as session:
+        session.add(
+            LeagueORM(
+                id=catalog.id,
+                sport=catalog.sport.value,
+                name=catalog.name,
+                provider=catalog.provider,
+                provider_key=catalog.provider_key,
+                follow_all=follow_all,
+            )
+        )
+        await session.commit()
+
+
+async def _cache_stadium(
+    db: async_sessionmaker[AsyncSession],
+    key: str,
+    team_name: str,
+    venue: str,
+    lat: float,
+    lon: float,
+) -> None:
+    async with db() as session:
+        session.add(
+            StadiumORM(key=key, team_name=team_name, venue=venue, lat=lat, lon=lon, resolved=True)
+        )
+        await session.commit()
+
+
+async def _cached_stadiums(
+    db: async_sessionmaker[AsyncSession],
+) -> dict[str, tuple[str, str | None, float | None, float | None]]:
+    async with db() as session:
+        rows = (await session.execute(select(StadiumORM))).scalars().all()
+    return {row.key: (row.team_name, row.venue, row.lat, row.lon) for row in rows}
+
+
+def _competition_pins(data: dict) -> dict[str, dict]:
+    return {team["team_id"]: team for team in data["teams"] if team["source"] == "competition"}
+
+
+@contextmanager
+def _recorded_sql(db: async_sessionmaker[AsyncSession]) -> Iterator[list[str]]:
+    """Every statement sent to the test database while the block is open.
+
+    A request session never commits, so a write the route should not have
+    made is rolled back and leaves the rows looking untouched — only the
+    statements themselves show it.
+    """
+    statements: list[str] = []
+
+    def record(
+        _conn: Any, _cursor: Any, statement: str, _params: Any, _context: Any, _many: bool
+    ) -> None:
+        statements.append(statement)
+
+    engine = db.kw["bind"].sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        yield statements
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+
+async def test_map_does_not_pin_team_at_another_leagues_legacy_stadium(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    competition_fields: dict[str, list[CatalogTeam]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A legacy stadium row is one team's, not every team's with its number.
+
+    An older build cached the NFL and NHL sides numbered 1 under a single
+    key, ``espn:1``, and drew both at whichever ground was resolved first.
+    The row here names the NFL side, so that side keeps its pin straight
+    away — but to the NHL side it reads as "not cached yet": no pin, and
+    the sweep is kicked to give it a row of its own.  The route writes
+    nothing; the sweep is the cache's only writer.
+    """
+    kicked: list[bool] = []
+    monkeypatch.setattr(
+        "app.routes.map_view.jobs.kick_competition_stadiums", lambda: kicked.append(True)
+    )
+    competition_fields.update(nfl=[MAP_NFL_ONE], nhl=[MAP_NHL_ONE])
+    await _add_catalog_league(db, "nfl", follow_all=True)
+    await _add_catalog_league(db, "nhl", follow_all=True)
+    await _cache_stadium(db, "espn:1", MAP_NFL_ONE.name, "Falcon Field", 33.7554, -84.4008)
+    before = await _cached_stadiums(db)
+
+    with _recorded_sql(db) as statements:
+        resp = await client.get("/api/map")
+    assert resp.status_code == 200
+
+    pins = _competition_pins(resp.json())
+    assert set(pins) == {"nfl:1"}
+    assert pins["nfl:1"]["venue"] == "Falcon Field"
+    assert kicked == [True]
+    assert await _cached_stadiums(db) == before
+    # The NFL side's row passed the name proof, which is exactly when the
+    # sweep's adopting read copies it.  A request session is never committed,
+    # so the same copy made here would only hold a write transaction open
+    # against the sweep and then be rolled back.
+    assert any("stadiums" in statement for statement in statements)
+    assert [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+    ] == []
+
+
+async def test_map_pins_same_id_teams_at_their_own_stadiums(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    competition_fields: dict[str, list[CatalogTeam]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each league's team 1 is read from its own row, at its own ground."""
+    kicked: list[bool] = []
+    monkeypatch.setattr(
+        "app.routes.map_view.jobs.kick_competition_stadiums", lambda: kicked.append(True)
+    )
+    competition_fields.update(nfl=[MAP_NFL_ONE], nhl=[MAP_NHL_ONE])
+    await _add_catalog_league(db, "nfl", follow_all=True)
+    await _add_catalog_league(db, "nhl", follow_all=True)
+    await _cache_stadium(db, "espn:nfl:1", MAP_NFL_ONE.name, "Falcon Field", 33.7554, -84.4008)
+    await _cache_stadium(db, "espn:nhl:1", MAP_NHL_ONE.name, "Tidewater Garden", 42.3662, -71.0621)
+
+    resp = await client.get("/api/map")
+    assert resp.status_code == 200
+
+    pins = _competition_pins(resp.json())
+    assert {team_id: pin["venue"] for team_id, pin in pins.items()} == {
+        "nfl:1": "Falcon Field",
+        "nhl:1": "Tidewater Garden",
+    }
+    assert pins["nhl:1"]["lat"] == pytest.approx(42.3662)
+    # Both are cached, so there is nothing for a sweep to do.
+    assert kicked == []
+
+
+async def test_map_followed_team_does_not_hide_same_id_in_other_league(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    competition_fields: dict[str, list[CatalogTeam]],
+) -> None:
+    """Following the NFL's team 1 must not remove the NHL's team 1.
+
+    "Followed wins the dedupe" matched on provider + id alone, so a followed
+    team silently took every other league's team with its number off the
+    map.
+    """
+    competition_fields.update(nhl=[MAP_NHL_ONE])
+    await _add_catalog_league(db, "nfl", follow_all=False)
+    await _add_catalog_league(db, "nhl", follow_all=True)
+    async with db() as session:
+        session.add(
+            TeamORM(
+                id="nfl-ashgrove-falcons",
+                league_id="nfl",
+                name=MAP_NFL_ONE.name,
+                abbreviation=MAP_NFL_ONE.abbreviation,
+                provider_key=MAP_NFL_ONE.provider_key,
+                rss_feeds=[],
+                home_venue="Falcon Field",
+                venue_lat=33.7554,
+                venue_lon=-84.4008,
+            )
+        )
+        await session.commit()
+    # As an upgraded database holds the NHL side: the row an older build
+    # cached, and the copy under the team's own key.  Whichever the route
+    # reads, only the dedupe decides whether the pin is drawn.
+    for key in ("espn:1", "espn:nhl:1"):
+        await _cache_stadium(db, key, MAP_NHL_ONE.name, "Tidewater Garden", 42.3662, -71.0621)
+
+    resp = await client.get("/api/map")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    pins = _competition_pins(data)
+    assert set(pins) == {"nhl:1"}
+    assert pins["nhl:1"]["venue"] == "Tidewater Garden"
+    followed = [team for team in data["teams"] if team["team_id"] == "nfl-ashgrove-falcons"]
+    assert [team["source"] for team in followed] == ["followed"]
+
+
+async def test_map_followed_soccer_club_dedupes_across_competitions(
+    client: AsyncClient,
+    db: async_sessionmaker[AsyncSession],
+    competition_fields: dict[str, list[CatalogTeam]],
+) -> None:
+    """A followed club is still recognised in another competition it plays.
+
+    The guard on the other side of the id-space rule: a club has one ESPN
+    id across every soccer competition, so one followed in the Premier
+    League must not come back as a second, competition pin when the
+    Champions League is followed in whole.
+    """
+    club = CatalogTeam(provider_key="364", name="Harbour Reds", abbreviation="HAR")
+    rival = CatalogTeam(provider_key="222", name="Cobalt Wolves", abbreviation="COB")
+    competition_fields.update(ucl=[club, rival])
+    await _add_catalog_league(db, "epl", follow_all=False)
+    await _add_catalog_league(db, "ucl", follow_all=True)
+    async with db() as session:
+        session.add(
+            TeamORM(
+                id="epl-harbour-reds",
+                league_id="epl",
+                name=club.name,
+                abbreviation=club.abbreviation,
+                provider_key=club.provider_key,
+                rss_feeds=[],
+                home_venue="Harbour Road",
+                venue_lat=53.4308,
+                venue_lon=-2.9608,
+            )
+        )
+        await session.commit()
+    # Both clubs are located in the stadium cache, under the legacy key and
+    # the scoped one, so nothing but the dedupe keeps the followed club's
+    # competition pin off the map — and the rival proves pins are drawn.
+    for key in ("espn:364", "espn:soccer:364"):
+        await _cache_stadium(db, key, club.name, "Harbour Road", 53.4308, -2.9608)
+    for key in ("espn:222", "espn:soccer:222"):
+        await _cache_stadium(db, key, rival.name, "Cobalt Grounds", 48.8566, 2.3522)
+
+    resp = await client.get("/api/map")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert set(_competition_pins(data)) == {"ucl:222"}
+    reds = [team for team in data["teams"] if team["name"] == club.name]
+    assert [(team["team_id"], team["source"]) for team in reds] == [
+        ("epl-harbour-reds", "followed")
+    ]
 
 
 async def test_map_days_param_validation(client) -> None:

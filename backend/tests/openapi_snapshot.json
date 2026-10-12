@@ -4220,7 +4220,7 @@
     },
     "/api/schedule/weather": {
       "get": {
-        "description": "Best-effort venue forecasts for the given games, keyed by game id.\n\n``ids`` is a comma-separated list of game ids (game ids never contain a\ncomma).  The map includes ONLY games that are outdoor, scheduled, have\nresolvable venue coordinates, and returned a forecast \u2014 every other game\nis simply absent (the calendar shows no glyph for it).  Reuses the same\nper-game ``game_detail.fetch_weather`` the detail endpoint uses, so a calendar\nglyph and the modal forecast always agree.  Never fails the request.",
+        "description": "Best-effort venue forecasts for the given games, keyed by game id.\n\n``ids`` is a comma-separated list of game ids (game ids never contain a\ncomma).  The map includes ONLY games that are outdoor, scheduled, have\nresolvable venue coordinates, and returned a forecast \u2014 every other game\nis simply absent (the calendar shows no glyph for it).  Reuses the same\nper-game ``game_detail.fetch_weather`` the detail endpoint uses, so a calendar\nglyph and the modal forecast always agree.\n\nOne failure is not \"absent\": when no forecast could be served and at\nleast one Open-Meteo request failed, an empty map would report an outage\nas \"no forecasts\", so that answers 503.  Any forecast served, cached or\nfresh, keeps the response a 200.",
         "operationId": "schedule_weather_api_schedule_weather_get",
         "parameters": [
           {

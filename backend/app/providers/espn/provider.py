@@ -782,6 +782,10 @@ class EspnProvider:
         predictor 404 (no projection for this game) still yields the odds,
         and vice-versa.  Individual sports return ``None`` up front; an
         all-empty result also collapses to ``None``.
+
+        ``None`` therefore means "no line".  A source that could not be
+        asked is raised instead: a transient failure of either half, or the
+        summary host refusing access (``ProviderAccessError``).
         """
         if league.sport in INDIVIDUAL_SPORTS:
             return None
@@ -800,7 +804,11 @@ class EspnProvider:
                 summary_data
             )
         else:
-            if isinstance(summary_data, TransientProviderError):
+            # A source that is down or DENYING access is not "no line": let
+            # it reach the breaker, and the odds route's 503 rule, instead of
+            # being cached as a negative (http_util: a denial must never pass
+            # for an empty data set).
+            if isinstance(summary_data, (TransientProviderError, ProviderAccessError)):
                 raise summary_data
             provider = details = home_ml = away_ml = spread = over_under = None
         if isinstance(predictor_data, dict):

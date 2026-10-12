@@ -227,11 +227,12 @@ async def test_fetch_bracket_falls_back_to_month_buckets(
     assert rounds[0].series[0].summary == "NY wins series 4-2"
 
 
-async def test_fetch_bracket_is_empty_when_a_month_bucket_fails(
+async def test_fetch_bracket_raises_when_a_month_bucket_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """All-or-nothing: a bracket missing a month of series would mislead,
-    so a failed bucket degrades to 'no active bracket' (never raises)."""
+    so a failed bucket fails the whole fetch — as a typed error, never as
+    the empty list that means 'no active bracket'."""
     calls = _stub_scoreboard(
         monkeypatch,
         {
@@ -250,7 +251,8 @@ async def test_fetch_bracket_is_empty_when_a_month_bucket_fails(
             "202605": httpx.ConnectError("May bucket down"),
         },
     )
-    assert await espn_playoffs.fetch_playoff_bracket("basketball/nba", Sport.BASKETBALL) == []
+    with pytest.raises(espn_playoffs.EspnPlayoffsError):
+        await espn_playoffs.fetch_playoff_bracket("basketball/nba", Sport.BASKETBALL)
     assert [params["dates"] for params in calls] == [_RANGE, "202603", "202604", "202605"]
 
 
@@ -258,5 +260,6 @@ async def test_fetch_bracket_only_a_400_triggers_the_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _stub_scoreboard(monkeypatch, {_RANGE: _status_error(404)})
-    assert await espn_playoffs.fetch_playoff_bracket("basketball/nba", Sport.BASKETBALL) == []
+    with pytest.raises(espn_playoffs.EspnPlayoffsError):
+        await espn_playoffs.fetch_playoff_bracket("basketball/nba", Sport.BASKETBALL)
     assert [params["dates"] for params in calls] == [_RANGE]

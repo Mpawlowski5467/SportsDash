@@ -214,8 +214,37 @@ async def list_located_stadiums(session: AsyncSession) -> list[StadiumORM]:
     return list(result.scalars().all())
 
 
+def stadium_key(league: domain.League | LeagueORM, team_provider_key: str) -> str:
+    """The stadium-cache key for a team: ``"{provider}:{scope}:{team_provider_key}"``.
+
+    ``scope`` names the id space the provider numbers that team in, because
+    a bare provider id is not an identity:
+
+    - TheSportsDB: ``"all"`` — the provider looks a team up by ``idTeam``
+      alone, no league involved, so the whole provider is one space.
+    - ESPN soccer: ``"soccer"`` — a club or nation keeps its id in every
+      competition (France is 478 in each of them), so a side in two followed
+      competitions must be one row and one identity.
+    - anything else: the league's own id — the NFL, NHL, NBA, WNBA and MLB
+      each number their teams from 1, and the athlete ids of an
+      individual-sport league followed in whole are kept apart the same way.
+
+    The stadium cache and the map's followed-team dedupe both build their
+    key here, so "the same team" means the same thing in both.  Accepts the
+    domain league or its ORM row: ``Sport`` is a ``str`` enum, so the soccer
+    test reads the same on either.
+    """
+    if league.provider == "thesportsdb":
+        scope = "all"
+    elif league.provider == "espn" and league.sport == domain.Sport.SOCCER:
+        scope = "soccer"
+    else:
+        scope = league.id
+    return f"{league.provider}:{scope}:{team_provider_key}"
+
+
 async def get_stadium(session: AsyncSession, key: str) -> StadiumORM | None:
-    """Fetch a cached stadium by ``"{provider}:{provider_key}"`` key.
+    """Fetch a cached stadium by its exact key (see :func:`stadium_key`).
 
     The cache is decoupled from ``TeamORM`` so a whole-competition follow
     (e.g. every World Cup nation) can plot teams that have no followed-team
@@ -224,6 +253,92 @@ async def get_stadium(session: AsyncSession, key: str) -> StadiumORM | None:
     the caller checks ``lat``/``lon``.
     """
     return await session.get(StadiumORM, key)
+
+
+async def find_team_stadium(
+    session: AsyncSession,
+    league: domain.League | LeagueORM,
+    team_provider_key: str,
+    team_name: str,
+    *,
+    adopt: bool = False,
+) -> StadiumORM | None:
+    """A competition team's cached stadium, wherever an older build left it.
+
+    Rows used to be keyed ``"{provider}:{team_provider_key}"`` with no id
+    space, so two teams sharing a provider id in different leagues shared one
+    row — whichever was resolved first — and the other was plotted at its
+    ground.  This is the only code that still knows that spelling.
+
+    The row under :func:`stadium_key` always wins.  Without one, a legacy row
+    is believed only when its ``team_name`` is this team's catalog name
+    (trimmed, case-insensitive, never empty): one upsert wrote the name and
+    the facts together from the name the lookup used, so a matching name
+    proves the facts are this team's.  A row that fails the proof belongs to
+    another league's team, or to this one before a rename, and is ignored —
+    the team then resolves fresh.
+
+    ``adopt`` is for the single-flight stadium sweep, the cache's only
+    writer: it COPIES a proven legacy row to the scoped key and returns the
+    copy.  The legacy row is deliberately left in place — an older build run
+    against the same database (a rollback, an older desktop app) still finds
+    every row it wrote, where a re-keyed table would look empty to it and
+    send the whole field back through the rate-limited lookups.  Adopting
+    twice copies nothing: the scoped row is found before the legacy key is
+    consulted.  Without ``adopt`` (the map route, which never writes) the
+    proven legacy row itself is returned, read-only, so pins survive the
+    gap between an upgrade and the first sweep.
+    """
+    key = stadium_key(league, team_provider_key)
+    row = await session.get(StadiumORM, key)
+    if row is not None:
+        return row
+
+    legacy_key = f"{league.provider}:{team_provider_key}"
+    legacy = await session.get(StadiumORM, legacy_key)
+    if legacy is None:
+        return None
+    # Compared as stored: upsert_stadium clips the name to the column width.
+    wanted = (_clip(team_name, 128) or "").strip().casefold()
+    if not wanted or (legacy.team_name or "").strip().casefold() != wanted:
+        # How a cross-league id collision or a renamed team shows up in the
+        # log.  INFO only for the sweep, which writes the team's own row
+        # straight afterwards and so reports each row once; the map route
+        # would repeat the line on every poll until then.
+        logger.log(
+            logging.INFO if adopt else logging.DEBUG,
+            "find_team_stadium: legacy row %s holds %r, not %r — ignored for %s",
+            legacy_key,
+            legacy.team_name,
+            team_name,
+            key,
+        )
+        return None
+    if not adopt:
+        return legacy
+
+    row = StadiumORM(
+        key=key,
+        team_name=legacy.team_name,
+        venue=legacy.venue,
+        lat=legacy.lat,
+        lon=legacy.lon,
+        capacity=legacy.capacity,
+        opened=legacy.opened,
+        image_url=legacy.image_url,
+        location=legacy.location,
+        surface=legacy.surface,
+        # The copy is the same lookup, not a new one: a cached miss keeps its
+        # age, so the sweep's retry cool-down runs from when it really missed.
+        resolved=legacy.resolved,
+        fetched_at=legacy.fetched_at,
+    )
+    session.add(row)
+    await session.flush()
+    logger.info(
+        "find_team_stadium: adopted legacy row %s as %s (%s)", legacy_key, key, legacy.team_name
+    )
+    return row
 
 
 async def upsert_stadium(
@@ -243,10 +358,11 @@ async def upsert_stadium(
 ) -> StadiumORM:
     """Insert-or-update one cached stadium; returns the row.
 
-    Written by the competition-stadium refresh (and the on-request map
-    fallback) once a team's venue is resolved — or definitively missed — so
-    the map view reads coordinates straight from the cache without
-    re-running the multi-source enrichment/geocode pipeline on every poll.
+    Written by the competition-stadium refresh (its only caller; the map
+    route reads the cache and never writes it) once a team's venue is
+    resolved — or definitively missed — so the map view reads coordinates
+    straight from the cache without re-running the multi-source
+    enrichment/geocode pipeline on every poll.
     ``resolved`` is stored ``True`` even for a miss (no coords) so a
     known-missing team is not re-resolved hot; a later run can still
     overwrite it once data appears.  String facts are clipped to their

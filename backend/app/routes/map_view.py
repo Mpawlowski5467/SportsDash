@@ -12,13 +12,17 @@ The map assembles two sources of pins:
 2. ``source="competition"`` — for every whole-competition follow
    (``League.follow_all``), the competition's full catalog field, each
    team resolved from the stadium cache (``StadiumORM`` keyed by
-   ``"{provider}:{provider_key}"``).  The whole field is plotted in or out
-   of season: while the competition is running and has fixtures at known
-   host-country stadiums, each team pins at its next-match host venue;
-   otherwise it falls back to its home ground.
+   ``repository.stadium_key``: ``"{provider}:{scope}:{provider_key}"``,
+   where ``scope`` is the id space the provider numbers the team in).  The
+   whole field is plotted in or out of season: while the competition is
+   running and has fixtures at known host-country stadiums, each team pins
+   at its next-match host venue; otherwise it falls back to its home ground.
 
 Dedupe: a team that is both followed *and* in a followed competition
-appears once, as ``"followed"`` (the user's own team wins).
+appears once, as ``"followed"`` (the user's own team wins).  "The same
+team" is the same ``repository.stadium_key`` — the key the stadium cache
+uses — so a followed club is recognised in every soccer competition it
+plays, while an NFL team never hides the NHL team that shares its number.
 
 ON-DEMAND: when followed teams still lack coordinates, or a followed
 competition has teams not yet in the stadium cache, the route kicks the
@@ -117,12 +121,14 @@ async def map_view(
     sport_by_league = {league.id: league.sport for league in leagues}
 
     out_teams: list[MapTeamOut] = []
-    # Followed teams' (provider, provider_key) identities so the competition
-    # pass can skip a team the user follows directly — even when it has no
-    # coordinates yet — so it never appears twice (followed wins the dedupe).
-    # A competition team is keyed by the same ESPN id, so this matches across
-    # the two sources regardless of differing internal slug ids.
-    followed_identities: set[tuple[str, str]] = set()
+    # Followed teams' identities so the competition pass can skip a team the
+    # user follows directly — even when it has no coordinates yet — so it
+    # never appears twice (followed wins the dedupe).  The identity is the
+    # stadium-cache key: provider + id space + provider id, which matches a
+    # competition team across the two sources regardless of differing
+    # internal slug ids.  The id space is what keeps a followed NFL team from
+    # hiding the NHL team ESPN gave the same number.
+    followed_identities: set[str] = set()
     # Set when a followed team still lacks coordinates → kick a resolve.
     locations_pending = False
 
@@ -131,7 +137,7 @@ async def map_view(
     for team in teams:
         league = league_by_id.get(team.league_id)
         if league is not None:
-            followed_identities.add((league.provider, team.provider_key))
+            followed_identities.add(repository.stadium_key(league, team.provider_key))
         if team.venue_lat is None or team.venue_lon is None:
             locations_pending = True
             continue
@@ -336,25 +342,29 @@ async def _competition_teams(
     session: AsyncSession,
     league_by_id,
     sport_by_league,
-    followed_identities: set[tuple[str, str]],
+    followed_identities: set[str],
 ) -> tuple[list[MapTeamOut], bool]:
     """Build the ``source="competition"`` pins for every follow_all league.
 
     For each ``follow_all`` league — in or out of season — enumerate its
     catalog field and resolve each team from the stadium cache
-    (``StadiumORM`` by ``"{provider}:{provider_key}"``).  Teams whose
-    stadium isn't cached yet are simply omitted — the returned ``pending``
-    flag tells the route to kick a background pre-resolve so they fill in
-    on a later poll, rather than geocoding the field inline.  Whenever a
-    league has fixtures at a known host-country stadium (a World Cup-style
-    tournament in progress), each nation pins at its next-match host venue
-    instead of its home ground; off-season, with no such fixtures, the
-    field falls back to home stadiums.
+    (``repository.find_team_stadium``: the row under the team's
+    ``repository.stadium_key``, else one an older build cached under the
+    league-blind key, believed only when its name is this team's).  Teams
+    whose stadium isn't cached yet are simply omitted — the returned
+    ``pending`` flag tells the route to kick a background pre-resolve so
+    they fill in on a later poll, rather than geocoding the field inline.
+    The cache is only ever read here; the sweep is its one writer.
+    Whenever a league has fixtures at a known host-country stadium (a World
+    Cup-style tournament in progress), each nation pins at its next-match
+    host venue instead of its home ground; off-season, with no such
+    fixtures, the field falls back to home stadiums.
 
     Per-league failures are isolated (an unreachable catalog can't break
-    the followed-team map); a competition team whose ``(provider,
-    provider_key)`` the user already follows directly is skipped, so a
-    followed team also in the competition is plotted once (as "followed").
+    the followed-team map); a competition team whose
+    ``repository.stadium_key`` is in ``followed_identities`` — one the user
+    already follows directly — is skipped, so a followed team also in the
+    competition is plotted once (as "followed").
     """
     follow_all_rows = await repository.list_follow_all_leagues(session)
 
@@ -385,9 +395,10 @@ async def _competition_teams(
         sport = sport_by_league.get(league_row.id, catalog_league.sport.value)
         for catalog_team in catalog_teams:
             # Followed wins the dedupe: skip a competition team the user
-            # already follows directly (matched by ESPN provider + id, since
-            # internal slug ids differ between the two sources).
-            if (league_row.provider, catalog_team.provider_key) in followed_identities:
+            # already follows directly (matched by stadium-cache key, since
+            # internal slug ids differ between the two sources and a bare
+            # provider id repeats across leagues).
+            if repository.stadium_key(league_row, catalog_team.provider_key) in followed_identities:
                 continue
             # A competition team has no TeamORM row; synthesize a stable id
             # from the league + ESPN provider_key so the frontend has a key.
@@ -427,8 +438,12 @@ async def _competition_teams(
             # 2. Fallback: the team's home stadium from the cache (the normal
             #    path for non-host competitions, e.g. a continental cup at home
             #    grounds).  Omit + flag a background pre-resolve until cached.
-            key = f"{league_row.provider}:{catalog_team.provider_key}"
-            stadium = await repository.get_stadium(session, key)
+            #    A legacy row that is not provably this team's reads as "not
+            #    cached", so the team waits for its own lookup instead of
+            #    borrowing the ground of whoever shares its provider id.
+            stadium = await repository.find_team_stadium(
+                session, league_row, catalog_team.provider_key, catalog_team.name
+            )
             if stadium is None or stadium.lat is None or stadium.lon is None:
                 # Not resolved yet (or a cached miss): omit it and flag a
                 # background pre-resolve.  A cached miss won't be re-resolved

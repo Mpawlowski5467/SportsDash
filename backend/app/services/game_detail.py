@@ -9,7 +9,8 @@ routes → services layering.
 Every fetch here is strictly additive to whatever endpoint calls it: an
 unknown provider, a provider with no data for the game, or any exception
 collapses to ``None`` so a detail endpoint never 500s because of an
-enrichment lookup.
+enrichment lookup.  The one opt-in exception is ``fetch_weather`` with
+``strict=True``, for the calendar's batch route.
 """
 
 from __future__ import annotations
@@ -107,13 +108,19 @@ async def _home_venue_coords(session: AsyncSession, row: GameORM) -> tuple[float
 
 
 async def fetch_weather(
-    session: AsyncSession, league: domain.League, row: GameORM
+    session: AsyncSession, league: domain.League, row: GameORM, *, strict: bool = False
 ) -> WeatherOut | None:
     """Best-effort venue forecast for an outdoor SCHEDULED game.
 
     Gated to outdoor sports and scheduled games (a pre-game artifact); skips
-    when weather is disabled or no coordinates resolve.  Never raises — any
-    failure collapses to ``None`` so the detail endpoint can't 500 on it.
+    when weather is disabled or no coordinates resolve.  Without ``strict``
+    it never raises — any failure collapses to ``None`` so the detail
+    endpoint can't 500 on it.
+
+    ``strict`` is for ``GET /schedule/weather``, which must tell an outage
+    from "no forecast": with it a lookup Open-Meteo could not be asked for,
+    or did not answer, raises ``weather.WeatherUnavailable`` instead.  Every
+    other failure still collapses to ``None``.
     """
     if not get_settings().weather_enabled:
         return None
@@ -128,7 +135,13 @@ async def fetch_weather(
     # because SQLite returns the tz-aware start_time as a naive datetime.
     target_date = ensure_utc(row.start_time).date()
     try:
-        result = await weather.fetch(*coords, target_date=target_date)
+        if strict:
+            result = await weather.fetch_or_raise(*coords, target_date=target_date)
+        else:
+            result = await weather.fetch(*coords, target_date=target_date)
+    except weather.WeatherUnavailable:
+        # Only the strict lookup raises it, for the caller that asked.
+        raise
     except Exception:
         logger.exception("weather fetch failed for game %s", row.id)
         return None

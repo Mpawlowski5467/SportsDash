@@ -195,7 +195,10 @@ flowchart LR
 **Stack:** React + Vite + Tailwind v4 + TanStack Query (frontend, served by
 Bun); FastAPI + SQLAlchemy (async) + APScheduler (backend); PostgreSQL for
 storage, Redis for caching, ntfy for push. Tests and local dev run on SQLite
-with zero setup.
+with zero setup. Redis is optional: without it — the desktop app, local dev —
+the caches in front of ESPN and the weather service are kept in the
+backend's own memory instead, so a view that refreshes does not repeat every
+upstream request.
 
 ## Running SportsDash
 
@@ -367,6 +370,40 @@ monitor icon next to the gear (remembered in `localStorage`):
 - After idle, a full-screen **idle clock overlay** appears with the local
   time, date, and a compact "N live / N upcoming today" line. Any interaction
   dismisses it.
+
+**Left running, it stays current.** A display nobody reloads used to go on
+showing the standings, calendar and results it loaded on the day it was
+opened. Every view now refreshes on a schedule matched to its data — the
+schedule, results and current standings every 5 minutes, rosters every 15,
+leaders, brackets and betting lines every half hour, the Golden Boot and
+calendar weather hourly. Live games keep their own faster polling, and a
+finished season's archive is never refreshed. This is not tied to kiosk
+mode: it holds for any tab or desktop window left open, and each tab you (or
+the rotation) have visited is kept current behind the others, so it comes
+round already fresh. That background refreshing is rationed — at most one
+refresh that can reach ESPN or the weather service is started every 30
+seconds, each behind a server-side cache — so seven tabs kept warm do not
+arrive upstream as a burst. Three things to know:
+
+- **Nothing is fetched while the browser tab is hidden** — a background tab
+  or a minimised window. It catches up as soon as it is back on screen: the
+  database-backed views at once, the ones that call ESPN or the weather
+  service one every 30 seconds rather than all together.
+- **The Calendar stays on the month it was opened in.** Its games and scores
+  stay current, but a display left on past the end of a month keeps showing
+  that month until you navigate or reload.
+- **An outage mostly leaves the wall as it was.** If the backend or ESPN
+  cannot be reached, a view keeps what it last loaded and asks again within
+  minutes. The Matchup preview and an open box score are the exceptions.
+  While the backend is down they show an error until their next successful
+  load. While only ESPN is down they stay up, but at their next refresh
+  they drop the parts ESPN supplies — betting lines and win probability,
+  the box score itself — until ESPN answers again. The odds chips on game
+  cards can also drop if the list of games changes during an outage (a
+  game kicks off, or the day rolls over), and so can the forecast icons on
+  the calendar while the weather service is down. A forecast icon can also
+  go missing for up to an hour when the weather service answered for some
+  games and not for others.
 
 The app is also an installable **PWA** — add it to your home screen for a
 chrome-less, full-screen kiosk window.

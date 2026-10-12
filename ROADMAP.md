@@ -57,6 +57,155 @@ for a live sighting.
 
 ## ✅ Recently shipped
 
+- **A display left running stays current** (2026-10-11) — most views
+  fetched their data once and never again, so a wall display, a pinned tab
+  or the desktop app went on showing the standings, calendar, results,
+  leaders and brackets of the day it was opened; only Today, News, a live
+  box score and a busy map kept polling. One keeper
+  (`frontend/src/lib/freshness.ts`, started by a single line in `main.tsx`)
+  now refetches every mounted query that has outlived a max age set per
+  kind of data: 5 to 15 minutes for what comes straight from the database,
+  up to an hour for the provider-backed boards, never for an archive or a
+  final. It reads each query's age rather than adding timers, so a view
+  that already polls faster is left alone. It asks nothing while the
+  browser tab is hidden, starts at most one provider-backed refresh per
+  30-second tick — a night's backlog drains instead of bursting — and
+  retries a failure by what failed: a minute when the backend is
+  unreachable, five after any other error. A proxy timeout gets the five as
+  well, not a longer wait: the backend finishes the request the proxy gave
+  up on and caches what it fetched, so the retry is answered from that
+  cache instead of starting the fan-out over. A view
+  whose first load never reached the backend — a display that booted before
+  the API — is retried about every minute until it loads, even where its
+  data is otherwise never refreshed, and a system clock set back does not
+  hold the refreshes up. Two things had to change underneath before a timer
+  was safe. Without Redis — the desktop app, local dev — every request
+  repeated its whole ESPN or Open-Meteo fan-out, so the backend now keeps
+  those caches in memory: bounded, only an explicit list of them, and
+  expiring on wall-clock time, so a laptop that slept does not wake to last
+  night's forecast served as fresh. And `/scorers`, `/odds`, `/bracket` and
+  `/leaders` answered an ESPN outage with an empty 200, which a refresh
+  would have painted over good data; they now answer 503 and the view keeps
+  what it had. The calendar's forecast batch (`/schedule/weather`) does the
+  same when Open-Meteo is the one that is down, and with nothing to show
+  after three failed requests it stops asking instead of walking every
+  game. The first request after an outage needed care too: the
+  circuit breaker in front of ESPN admits exactly one call when its
+  cooldown ends, so `/scorers` and `/odds` send one fetch ahead and the
+  rest behind it, and a Golden Boot walk the breaker cut short is a 503
+  rather than a board built from the few matches that got through. A season
+  archive of which only part arrived is shown but not cached, and a
+  forecast past Open-Meteo's 15-day window is no longer requested at all.
+  Left as they are, on purpose: the Calendar stays on the month it was
+  opened in, and a tab visited once keeps refreshing behind the others.
+  Known gaps: while ESPN is down the Matchup preview and an open box score
+  stay up but lose the sections ESPN supplies at their next refresh, and
+  the odds chips drop if the list of games changes meanwhile (that one
+  needs a stable query key in `hooks.ts`; the calendar's forecast icons
+  share it for an Open-Meteo outage). In the desktop app a backend crash
+  is retried after a minute rather than five, because its 500 reaches the
+  webview without a status. Pinned against a real
+  QueryClient under fake timers and, for the backend, on SQLite and
+  Postgres — but nobody has yet watched a browser stay current for days.
+  *Verify:* leave the app on a wall — or in a visible tab nobody reloads —
+  through at least one finished game and one midnight, then open a fresh
+  tab beside it: the Standings table, the Results list and the Calendar's
+  scores must match. In the network panel `/api/standings/…` should recur
+  about every 5 minutes, and the refreshes of the provider-backed boards
+  (`/api/leaders`, `/api/bracket`, `/api/scorers`) should start at least 30
+  seconds apart, never as a burst. Hide the tab for an hour: **zero**
+  `/api` requests while hidden, then the database-backed ones at once on
+  return and the rest one per half-minute. (An embedded pane that reports
+  `visibilityState: "hidden"` proves nothing — there the keeper never
+  fires at all.) Stop the API for ten minutes — on the Docker stack or the
+  desktop app; under `bun run dev` the Vite proxy answers an unreachable
+  API with a bare 500, which is retried at five minutes, not one: the
+  boards on screen must stay, and be current again within a minute or two
+  of its return. Then, on the Docker stack, reload the page with the API
+  container stopped: the "Couldn't reach the SportsDash API" splash must
+  clear by itself within about a minute and a half of the API coming back,
+  with nobody pressing Retry. On a run without Redis,
+  `sportsdash_cache_hits_total` at `/api/metrics` should climb, where it
+  used to stay at zero.
+- **The stadium sweep waits out TheSportsDB's rate limit** (2026-10-11) — a
+  long pre-resolve talks itself into one. Measured on a copy of a real
+  database, two US leagues and 18 soccer leagues followed in whole: some 50
+  lookups were answered and the next 29 teams were each refused with HTTP
+  429. A refusal says nothing about the team, yet each was recorded as a
+  miss, and a miss row is what stops the map asking — so 29 real stadiums
+  stayed off the map until a later sweep. The sweep now tells the two
+  apart. A team TheSportsDB has no record of is a miss at once, as before.
+  For a team it would not answer for, the sweep pauses 30 seconds, asks
+  once more and records whatever that second attempt gets (a miss included,
+  which a later sweep retries once it is 15 minutes old), and from the
+  first refusal on it spaces its lookups 5 seconds apart instead of 1 for
+  the rest of the pass. After three pauses that changed nothing it stops
+  pausing and behaves as it used to: TheSportsDB has refused every lookup
+  for a whole session before, and every pause holds up the rest of the
+  daily refresh the sweep is a stage of. A save in the setup wizard does
+  not wait for any of it: the slow pace makes a large sweep last tens of
+  minutes, so as a stage of the daily refresh the sweep now checks before
+  each league, before each team and after a pause whether the followed set
+  changed, and leaves the rest to the pass that starts over. Pinned against
+  a scripted TheSportsDB — the 30 seconds, the 5 and the cap of three have
+  not met the real limit, whose length nobody has measured.
+  *Verify:* on a database that needs well over 50 fresh lookups (many
+  whole leagues newly followed), restart the API and read the log. When
+  the limit bites there should be one `refresh_competition_stadiums:
+  TheSportsDB is rate limiting (no answer for <team>) — pausing 30s before
+  asking once more, and resolving every 5s for the rest of this pass` for
+  each team that was refused, and the leagues' `N/M team stadium(s)
+  located` lines should go on climbing after it rather than flat-lining at
+  the first refusal. Note how long TheSportsDB really refuses for: if
+  teams are still refused after their pause, the 30 seconds is too short.
+  `TheSportsDB still gave no answer after 3 pauses — not waiting on it
+  again this pass` means the block outlasted the sweep; the teams after it
+  are misses again, as before this change, and are retried by the next
+  sweep once their 15 minutes are up. While the sweep is still logging,
+  save a change in Manage teams: within about half a minute the log should
+  read `refresh_competition_stadiums: the followed set changed — leaving
+  the rest of the sweep to the next pass`, then `daily_refresh: the
+  followed set changed — running another pass`, and the newly followed
+  team's games should be on the dashboard well before the sweep's summary
+  lines finish.
+- **Two teams with the same ESPN number no longer share a stadium**
+  (2026-10-11) — the map's stadium cache was keyed by provider and team
+  id, and ESPN numbers each US league's teams from 1. Follow the NFL and
+  the NHL in whole and the two sides numbered 1 shared one row: whichever
+  was looked up first owned it, and the other was drawn at its ground
+  without ever being looked up. The "your team wins" dedupe matched on the
+  same pair, so following an NFL team took the NHL team with its number
+  off the map. The key now carries the id space — `espn:nfl:1`,
+  `espn:nhl:1`; one space for all of ESPN soccer, where a club keeps its id
+  across competitions, and one for TheSportsDB — and is built in one place,
+  `repository.stadium_key`, for the cache and the dedupe alike. An upgrade
+  does not start over: the sweep adopts an old row when its stored team
+  name proves whose it is, by **copying** it to the new key, and looks up
+  only the teams whose row was really someone else's. **The old rows are
+  kept on purpose.** A rollback, or an older desktop app pointed at the
+  same database, still finds everything it cached; renamed keys would have
+  looked like an empty table to it and sent the whole field back through
+  rate-limited lookups. Nothing deletes them. Pinned on SQLite and
+  Postgres; not yet watched against a real upgraded database.
+  *Verify:* on a database an older build has populated, with two US
+  leagues followed in whole (the NFL and the NHL will do), restart the API
+  and read the log. Each league's line should read
+  `refresh_competition_stadiums: <league> — N/M team stadium(s) located (A
+  adopted from legacy rows, F resolved fresh)` with **F small** — the
+  teams whose number another league's team held, plus any earlier miss now
+  due its retry — and one `find_team_stadium: legacy row espn:<n> holds
+  '<team>', not '<other team>' — ignored for espn:<league>:<n>` for each
+  team of the first kind. A second restart must read `0 adopted from legacy
+  rows` for every league and log no ignored row; whatever it still counts
+  as resolved fresh is a team with no ground yet, retried after its
+  cool-down. In the database, `SELECT key, team_name, venue FROM stadiums
+  WHERE key LIKE 'espn:nfl:%' OR key LIKE 'espn:nhl:%' ORDER BY key;`
+  should list each team once, at its own ground, and `SELECT count(*) FROM
+  stadiums WHERE key NOT LIKE '%:%:%';` should be what it was before the
+  upgrade: the old rows are all still there. On the map, pick an NHL team
+  whose number an NFL team shares: both pins must exist, in two different
+  cities.
+
 - **Manage teams edits your follows instead of replacing them**
   (2026-10-10) — the wizard opened empty, and saving it wiped every table
   and left the refresh to rebuild them. A refresh reaches back seven days,
@@ -557,8 +706,12 @@ Most are small; the ones that are not say so.
   byte-identical to `venue_location`, so check that first. Then the
   database directly — `SELECT id, home_venue, venue_location FROM teams
   WHERE home_venue = venue_location;` and `SELECT key, venue, location FROM
-  stadiums WHERE venue = location;` must both return **zero rows**; any
-  survivor was written by a path the fix did not find and is worth chasing.
+  stadiums WHERE venue = location AND key LIKE '%:%:%';` must both return
+  **zero rows**; any survivor was written by a path the fix did not find
+  and is worth chasing. (The `LIKE` was added 2026-10-11: stadium keys now
+  have three parts, and a two-part row an older build cached is kept on
+  purpose — the sweep repairs its copy under the new key, so the original
+  still has `venue = location` and is expected to.)
   Finally `GET /api/map`: a club whose stadium TheSportsDB does not know
   should reappear at the ground **its own stored fixtures name** (spot-check
   the coordinates against the real stadium, not just that a pin exists), and
@@ -628,7 +781,12 @@ Most are small; the ones that are not say so.
   stayed unresolved for reasons that had nothing to do with the fallback.
   *Verify:* on a run where TheSportsDB answers, watch
   `refresh_competition_stadiums: <league> — N/M team stadium(s) located`
-  climb, then check the recovered pins land at a plausible coordinate for
+  climb (since 2026-10-11 the line ends with how many rows were adopted
+  from an older build's cache and how many teams were looked up fresh;
+  the sweep now also pauses and asks once more when a lookup is refused —
+  see *The stadium sweep waits out TheSportsDB's rate limit* above — but a
+  block lasting the whole session, like that day's, still ends in misses),
+  then check the recovered pins land at a plausible coordinate for
   the ground their fixtures name rather than at a city centre. The original
   note follows. A followed team with
   no upstream venue falls back to its most-common stored home-game venue; a
