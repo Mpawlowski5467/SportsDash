@@ -5953,3 +5953,110 @@ did mid-postseason, for a team in it and a team that missed it: both
 season types are asked for and the regular season is in the result
 either way. `test_history.py` — the same two cases through
 `fetch_season_results`.
+
+## Wikipedia "About" text: the article has to be the team's own (2026-10-11)
+
+The club description falls back to Wikipedia when TheSportsDB has none
+(`services/wiki.py`, called from `refresh_team_info`). It used to search
+`"{name} {sport qualifier}"` and take the first hit that was not a
+rivalry, list or season page. That search is full text and its order is
+not stable: `New York Rangers ice hockey team` returns *New York
+Americans* — a defunct club whose lead matches every qualifier word —
+first on some requests and the Rangers first on others, so the Rangers
+were stored with the Americans' history, attributed "via Wikipedia". Nothing compared the
+article's title with the team's name.
+
+One contract replaces that: **the search proposes articles, it never
+picks one. An article is used only if it is verifiably the team's own, and
+otherwise the team has no Wikipedia description.**
+
+### What makes an article the team's own (`_is_title_for`, `_names_sport`)
+
+All three must hold:
+
+- **The title is the name.** The same words in the same order once case,
+  accents and punctuation are folded away (`St. Louis` = `St Louis`, `&` =
+  `and`, `F.C.` = `FC`). The one addition allowed is a trailing `(…)` that
+  names the sport — `Texas Rangers (baseball)`, `Adam Scott (golfer)` —
+  from the per-sport list in `_SPORT_TERMS`. Any other parenthetical
+  (`(1972–96)`, `(Montevideo)`, `(original)`, `(ice hockey, born 2002)`)
+  marks a different holder of the name and is no match. A sport-suffixed
+  title is tried before the bare one, which it exists to tell apart.
+- **It is an article.** A disambiguation page is a miss, and the summary
+  endpoint follows redirects, so the title of the page that answers is
+  checked again.
+- **It says it is that sport's.** One of the sport's `evidence` words must
+  appear in the page's short description or in the first 200 characters of
+  its lead. The same title can be a town (`Brentford`), a namesake, or
+  another sport's team (`Colorado Rockies`); the opening of the lead only,
+  because a town's lead goes on to mention the club that plays there.
+
+A title is **not stretched to fit a shorter name**: `Chelsea` does not
+match `Chelsea F.C.`. Allowing a club abbreviation the name does not carry
+was tried and returned `FC Lyon` — a different club — for `Lyon`, and the
+name alone cannot tell that case from `Chelsea`. A team stored as
+`Toronto FC` or `AFC Bournemouth` matches as it stands.
+
+A sport with no row in `_SPORT_TERMS` gets nothing (every `Sport` has one;
+a test holds that). The qualifier and evidence words are English, so a
+non-English `wiki_lang` finds little.
+
+### What is already stored
+
+- **Redis:** the cache key is now `wiki:v{MATCH_VERSION}:{lang}:{name}|{sport}`
+  (`MATCH_VERSION` = 2). Entries under the old `wiki:{lang}:…` keys are
+  never read and expire within `wiki_cache_minutes`. Still positive-only,
+  still off the in-process allowlist.
+- **`teams.description`:** a stored description is never revisited — the
+  job only processes teams without one — so a wrong one would have stayed.
+  The article's title was never stored, so a wrong row cannot be told from
+  a right one. `refresh_team_info` therefore starts with
+  `_clear_unverified_descriptions`: it nulls `description` and
+  `description_source` on every team whose description is not attributed
+  to TheSportsDB (`"wikipedia"`, and `NULL` — rows from before 2026-07-20,
+  when the source was not recorded and Wikipedia was already the
+  fallback). `founded_year` and `venue_description` come from TheSportsDB
+  alone and are kept. The cleared teams are pending again, so the same
+  pass re-resolves them, TheSportsDB first.
+- It runs **once per `MATCH_VERSION`**: the version is written to
+  `app_meta` (`wiki_match_version`) in the same transaction as the clear.
+  A failed repair is logged, writes nothing, and is retried by the next
+  pass. Changing the matching rule again means bumping `MATCH_VERSION`,
+  which both retires the Redis entries and re-runs the clear.
+
+No schema, route or `types.ts` change; `tests/openapi_snapshot.json` is
+unchanged.
+
+### Known limits
+
+- Two teams of the same sport with the same name cannot be told apart by
+  name, here or in the TheSportsDB lookup before it.
+- Coverage is narrower on purpose. A team whose article is filed under a
+  longer or different title (`Chelsea F.C.`, `Olympique Lyonnais`,
+  `France national football team`) gets no Wikipedia description; it has
+  one only if TheSportsDB supplies it.
+- The fallback still runs when TheSportsDB could not be asked (a 429, a
+  timeout), not only when it has no description. A team given Wikipedia's
+  text that way keeps it unless its stadium prose is still missing, which
+  is what brings it back to TheSportsDB on a later pass.
+
+### Tests
+
+`tests/test_wiki.py`, on `fixtures/wiki_search.json` and
+`fixtures/wiki_summary.json` (both endpoints' real response shapes,
+fictional names; the search is the one that ranks the defunct neighbour
+first): only the article titled like the team is fetched; hits that are
+all about the team but none of them its article fetch nothing; the title
+rule case by case, accepted and refused; an abbreviation is part of the
+name; the sport-suffixed title goes first; the town, another sport's team,
+a disambiguation page and a redirect to another article are all misses; a
+short description naming only the league's initials is rescued by the
+lead; no recognised sport means no request; every `Sport` has terms; the
+cache key carries the version and a miss is not cached.
+`tests/test_scheduler.py` (SQLite and Postgres): a stored Wikipedia
+description on a fully enriched row is dropped and re-resolved in the same
+pass; with no matching article it stays empty, for a `"wikipedia"` and for
+an unattributed row, the founding year and stadium prose kept; a
+TheSportsDB description is untouched and nothing is asked; the clear does
+not run twice; a failing repair does not stop the pass and leaves the
+version unwritten.

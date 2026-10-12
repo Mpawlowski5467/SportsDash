@@ -1,0 +1,43 @@
+{
+  "type": "standard",
+  "title": "Port Varen Lanterns",
+  "displaytitle": "<span lang=\"en\" dir=\"ltr\"><span class=\"mw-page-title-main\">Port Varen Lanterns</span></span>",
+  "namespace": {
+    "id": 0,
+    "text": ""
+  },
+  "wikibase_item": "Q90000001",
+  "titles": {
+    "canonical": "Port_Varen_Lanterns",
+    "normalized": "Port Varen Lanterns",
+    "display": "<span lang=\"en\" dir=\"ltr\"><span class=\"mw-page-title-main\">Port Varen Lanterns</span></span>"
+  },
+  "pageid": 66881,
+  "thumbnail": {
+    "source": "https://upload.example.org/thumb/lanterns/330px-Port_Varen_Lanterns.svg.png",
+    "width": 330,
+    "height": 330
+  },
+  "originalimage": {
+    "source": "https://upload.example.org/lanterns/Port_Varen_Lanterns.svg.png",
+    "width": 500,
+    "height": 500
+  },
+  "lang": "en",
+  "dir": "ltr",
+  "revision": "1379227734",
+  "tid": "2bc9c9d0-c345-11f1-8445-32dd24acbe64",
+  "timestamp": "2026-10-08T18:22:08Z",
+  "description": "Northern Hockey League team in Port Varen",
+  "description_source": "local",
+  "content_urls": {
+    "desktop": {
+      "page": "https://en.wikipedia.org/wiki/Port_Varen_Lanterns"
+    },
+    "mobile": {
+      "page": "https://en.m.wikipedia.org/wiki/Port_Varen_Lanterns"
+    }
+  },
+  "extract": "The Port Varen Lanterns are a professional ice hockey team based in Port Varen. The Lanterns compete in the Northern Hockey League as a member of the Harbour Division. The team plays its home games at Breakwater Garden.",
+  "extract_html": "<p>The <b>Port Varen Lanterns</b> are a professional ice hockey team based in Port Varen. The Lanterns compete in the Northern Hockey League as a member of the Harbour Division. The team plays its home games at Breakwater Garden.</p>"
+}

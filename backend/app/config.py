@@ -68,7 +68,10 @@ class Settings(BaseSettings):
 
     # Club "About" enrichment via Wikipedia (keyless).  Fallback prose for the
     # team page when TheSportsDB has no description; best-effort and cached
-    # with a long TTL (a club's history changes rarely).
+    # with a long TTL (a club's history changes rarely).  Only an article
+    # titled exactly like the team is used (services/wiki.py); the sport
+    # words it is checked against are English, so another ``wiki_lang``
+    # finds little.
     wiki_enabled: bool = True
     wiki_lang: str = "en"
     wiki_cache_minutes: int = 10080  # 7 days

@@ -1,0 +1,59 @@
+{
+  "batchcomplete": "",
+  "continue": {
+    "sroffset": 5,
+    "continue": "-||"
+  },
+  "query": {
+    "searchinfo": {
+      "totalhits": 6694
+    },
+    "search": [
+      {
+        "ns": 0,
+        "title": "Port Varen Mariners",
+        "pageid": 274462,
+        "size": 24303,
+        "wordcount": 2425,
+        "snippet": "The <span class=\"searchmatch\">Port</span> <span class=\"searchmatch\">Varen</span> Mariners, colloquially known as the Tars, were a professional <span class=\"searchmatch\">ice</span> <span class=\"searchmatch\">hockey</span> <span class=\"searchmatch\">team</span> based in <span class=\"searchmatch\">Port</span> <span class=\"searchmatch\">Varen</span> from 1925 to 1942. They were the",
+        "timestamp": "2026-09-23T18:42:05Z"
+      },
+      {
+        "ns": 0,
+        "title": "Port Varen Lanterns",
+        "pageid": 66881,
+        "size": 188903,
+        "wordcount": 15253,
+        "snippet": "The <span class=\"searchmatch\">Port</span> <span class=\"searchmatch\">Varen</span> <span class=\"searchmatch\">Lanterns</span> are a professional <span class=\"searchmatch\">ice</span> <span class=\"searchmatch\">hockey</span> <span class=\"searchmatch\">team</span> based in <span class=\"searchmatch\">Port</span> <span class=\"searchmatch\">Varen</span>. The <span class=\"searchmatch\">Lanterns</span> compete in the",
+        "timestamp": "2026-10-08T18:22:08Z"
+      },
+      {
+        "ns": 0,
+        "title": "Ilse Brandvold",
+        "pageid": 71200431,
+        "size": 31022,
+        "wordcount": 2610,
+        "snippet": "professional <span class=\"searchmatch\">ice</span> <span class=\"searchmatch\">hockey</span> player who is a right winger for the <span class=\"searchmatch\">Port</span> <span class=\"searchmatch\">Varen</span> <span class=\"searchmatch\">Lanterns</span> of the Northern Hockey League",
+        "timestamp": "2026-10-02T09:11:40Z"
+      },
+      {
+        "ns": 0,
+        "title": "Tomas Verhage (ice hockey)",
+        "pageid": 4410982,
+        "size": 28770,
+        "wordcount": 2204,
+        "snippet": "professional <span class=\"searchmatch\">ice</span> <span class=\"searchmatch\">hockey</span> coach and former player who is the assistant coach for the <span class=\"searchmatch\">Port</span> <span class=\"searchmatch\">Varen</span> <span class=\"searchmatch\">Lanterns</span>",
+        "timestamp": "2026-09-30T21:03:17Z"
+      },
+      {
+        "ns": 0,
+        "title": "List of Port Varen Lanterns draft picks",
+        "pageid": 9030117,
+        "size": 61240,
+        "wordcount": 1018,
+        "snippet": "This is a complete list of <span class=\"searchmatch\">ice</span> <span class=\"searchmatch\">hockey</span> players who were drafted in the Northern Hockey League Entry Draft by the <span class=\"searchmatch\">Port</span> <span class=\"searchmatch\">Varen</span> <span class=\"searchmatch\">Lanterns</span>",
+        "timestamp": "2026-07-01T14:55:02Z"
+      }
+    ]
+  }
+}

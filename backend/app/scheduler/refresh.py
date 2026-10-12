@@ -940,7 +940,9 @@ async def _resolve_team_info(team: domain.Team, sport: str) -> _AboutFacts | Non
     TheSportsDB's ``searchteams`` description is sport-correct and reliable,
     and the team's venue record adds the stadium's own prose; Wikipedia only
     fills a missing club description (its lead paragraph), never the venue
-    text.  All defensive — returns ``None`` when neither source has anything.
+    text, and only from an article that is verifiably the team's own (see
+    :mod:`app.services.wiki`).  All defensive — returns ``None`` when neither
+    source has anything.
     """
     info = await stadiums.lookup_team_info(team.name, sport=sport)
     description = info.description if info is not None else None
@@ -964,16 +966,61 @@ async def _resolve_team_info(team: domain.Team, sport: str) -> _AboutFacts | Non
     )
 
 
+# ``app_meta`` key: the ``wiki.MATCH_VERSION`` the stored club descriptions
+# were resolved under.  Absent on a database that predates the key.
+_WIKI_MATCH_META_KEY = "wiki_match_version"
+
+
+async def _clear_unverified_descriptions() -> None:
+    """Drop club descriptions resolved under an older Wikipedia matching rule.
+
+    Repairs rows written before the Wikipedia fallback checked the article's
+    title: it used to take the first search hit, so a team could be stored
+    with another club's history — and kept it, because the job only
+    processes teams *without* a description.  Which rows are wrong cannot be
+    told from the row (the article's title was never stored), so every
+    description that may have come from Wikipedia is dropped: the ones
+    attributed to it, and the ones stored before the source was recorded.
+    Clearing puts those teams back in the pending set, so the very same pass
+    re-resolves them — TheSportsDB first, then the stricter match — or
+    leaves them without a description.
+
+    Runs once per ``wiki.MATCH_VERSION``: the version is recorded in
+    ``app_meta`` in the same transaction as the clear, so descriptions
+    resolved under the current rule are not dropped again.  Never raises: a
+    repair failure must not cost the caller its refresh.
+    """
+    version = str(wiki.MATCH_VERSION)
+    try:
+        async with session_scope() as session:
+            if await repository.get_meta(session, _WIKI_MATCH_META_KEY) == version:
+                return
+            cleared = await repository.clear_unverified_descriptions(session)
+            await repository.set_meta(session, _WIKI_MATCH_META_KEY, version)
+    except Exception:
+        logger.exception("refresh_team_info: description repair failed — continuing")
+        return
+    if cleared:
+        logger.info(
+            "refresh_team_info: cleared %d club description(s) resolved under an "
+            "older Wikipedia match — re-resolving",
+            cleared,
+        )
+
+
 async def refresh_team_info() -> None:
     """Resolve + cache club "About" facts (description + founded + venue prose).
 
     Only teams still missing the club description OR their venue's prose are
     processed (both usually resolve in the same pass), so an enriched team is
     never re-fetched — while a team enriched before venue prose existed still
-    gets it backfilled.  Per-team failures are isolated and the job never
-    raises — the scheduler and the startup kick both rely on that.
+    gets it backfilled, and one whose description
+    :func:`_clear_unverified_descriptions` dropped gets a new one.  Per-team
+    failures are isolated and the job never raises — the scheduler and the
+    startup kick both rely on that.
     """
     try:
+        await _clear_unverified_descriptions()
         leagues, _ = await _load_leagues_and_teams()
         async with session_scope() as session:
             team_rows = await repository.list_teams(session)

@@ -187,6 +187,29 @@ async def set_team_info(
         row.description_source = description_source
 
 
+async def clear_unverified_descriptions(session: AsyncSession) -> int:
+    """Drop every club description not attributed to TheSportsDB; returns the count.
+
+    That is the Wikipedia ones, and the ones stored before the source was
+    recorded — either upstream may have supplied those.  Only the club prose
+    and its attribution go: the founding year and the stadium prose come
+    from TheSportsDB alone.  A cleared team has no description, which is
+    what puts it back in the team-info job's pending set.
+    """
+    result = await session.execute(
+        update(TeamORM)
+        .where(
+            TeamORM.description.is_not(None),
+            or_(
+                TeamORM.description_source.is_(None),
+                TeamORM.description_source != "thesportsdb",
+            ),
+        )
+        .values(description=None, description_source=None)
+    )
+    return result.rowcount or 0
+
+
 async def list_teams_with_location(session: AsyncSession) -> list[TeamORM]:
     """Followed teams that have resolved coordinates (for the map view)."""
     stmt = (

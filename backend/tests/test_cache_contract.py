@@ -83,7 +83,7 @@ _LOCAL_KEYS = [
 _REDIS_ONLY_KEYS = [
     "venuecoords:foxhollow arena",
     "tsdbphoto:v2:wren halloway|glimmer foxes|soccer",
-    "wiki:en:glimmer foxes|soccer",
+    "wiki:v2:en:glimmer foxes|soccer",
     "standings:lastgood:violet-circuit",
     "onthisday:ember-otters:10-11",
 ]
@@ -211,7 +211,7 @@ async def test_local_store_counts_hits_and_misses(clock: _Clock) -> None:
     assert await cache.cache_get_json("bracket:harbor-hoops") == {"rounds": []}  # hit
     clock.now += 60
     assert await cache.cache_get_json("bracket:harbor-hoops") is None  # expired
-    assert await cache.cache_get_json("wiki:en:glimmer foxes|soccer") is None  # not stored
+    assert await cache.cache_get_json("wiki:v2:en:glimmer foxes|soccer") is None  # not stored
 
     hits, misses = cache.cache_counters()
     assert hits == hits_before + 1
