@@ -1,15 +1,15 @@
 /**
  * eventSpan: the start..end day arithmetic behind the calendar's multi-day
- * tournament bars. The `end` it produces is EXCLUSIVE (FullCalendar's rule
- * for all-day events, and iCalendar's for DTEND), which is the off-by-one
- * this suite pins down — along with the local-vs-UTC day boundary.
+ * tournament bars. The `end` it produces is EXCLUSIVE (iCalendar's rule for
+ * DTEND, which the `.ics` feed follows), which is the off-by-one this suite
+ * pins down, along with the local-vs-UTC day boundary.
  *
  * The suite runs under TZ=America/New_York (see package.json), so a UTC
  * instant before 05:00 belongs to the previous local day.
  */
 import { describe, expect, it } from "vitest";
 
-import { eventIdFromSpanId, eventSpan, SPAN_ID_PREFIX } from "./eventSpans";
+import { eventSpan } from "./eventSpans";
 import type { SportEvent } from "../../types";
 
 function makeEvent(overrides: Partial<SportEvent>): SportEvent {
@@ -94,26 +94,17 @@ describe("eventSpan", () => {
     expect(span.end).toBe("2027-01-01");
   });
 
-  it("prefixes the id so it cannot collide with a game id", () => {
-    const span = eventSpan(makeEvent({ id: "mock:gl-open" }));
+  it("carries the event's id and sport, and no decoration", () => {
+    // The bar's label is the event's own name; what kind of event it is
+    // (golf, racing) is written beside it as a word, never as a glyph.
+    const span = eventSpan(makeEvent({ id: "mock:gl-open", sport: "racing" }));
 
-    expect(span.id).toBe(`${SPAN_ID_PREFIX}mock:gl-open`);
-    expect(span.eventId).toBe("mock:gl-open");
-  });
-
-  it("marks the title with a sport glyph when there is one", () => {
-    // Golf and racing are the leaderboard sports, so theirs are the only
-    // glyphs that can resolve from real data; every other sport takes the
-    // bare-name branch.
-    expect(eventSpan(makeEvent({ sport: "golf" })).title).toBe(
-      "⛳ The Gilded Open",
-    );
-    expect(eventSpan(makeEvent({ sport: "racing" })).title).toBe(
-      "🏁 The Gilded Open",
-    );
-    expect(eventSpan(makeEvent({ sport: "soccer" })).title).toBe(
-      "The Gilded Open",
-    );
+    expect(span).toEqual({
+      eventId: "mock:gl-open",
+      sport: "racing",
+      start: "2026-07-16",
+      end: "2026-07-20",
+    });
   });
 });
 
@@ -156,15 +147,5 @@ describe("eventSpan in the server's timezone", () => {
 
     expect(eventSpan(event, undefined).start).toBe("2026-07-16");
     expect(eventSpan(event, "Not/AZone").start).toBe("2026-07-16");
-  });
-});
-
-describe("eventIdFromSpanId", () => {
-  it("reverses a span id", () => {
-    expect(eventIdFromSpanId(eventSpan(makeEvent({})).id)).toBe("mock:gl-open");
-  });
-
-  it("returns null for a game id", () => {
-    expect(eventIdFromSpanId("mock:vc-live")).toBeNull();
   });
 });

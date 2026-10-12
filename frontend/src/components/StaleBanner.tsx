@@ -15,13 +15,12 @@ export default function StaleBanner({
   onRetry: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-md border border-amber-900/50 bg-amber-950/20 px-3 py-1.5">
-      <p className="text-xs text-amber-400">{message}</p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="shrink-0 text-xs font-medium text-amber-300 underline-offset-2 hover:underline"
-      >
+    <div
+      role="status"
+      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t-[3px] border-ink bg-tint px-4 py-2"
+    >
+      <p className="m-0 font-medium text-ink">{message}</p>
+      <button type="button" onClick={onRetry} className="bs-btn bs-btn--ghost">
         Retry
       </button>
     </div>

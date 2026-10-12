@@ -28,7 +28,7 @@ const SURFACE: Partial<
 > = {
   soccer: {
     className:
-      "bg-[repeating-linear-gradient(0deg,#16331f,#16331f_28px,#173a22_28px,#173a22_56px)] border-emerald-900/60",
+      "bg-[repeating-linear-gradient(0deg,#16331f,#16331f_28px,#173a22_28px,#173a22_56px)] border-[#1e4a2c]",
     units: [
       { key: "GK", label: "Goalkeeper" },
       { key: "DEF", label: "Defence" },
@@ -37,7 +37,7 @@ const SURFACE: Partial<
     ],
   },
   basketball: {
-    className: "bg-amber-950/40 border-amber-900/50",
+    className: "bg-[#3b2a1a] border-[#5a4126]",
     units: [
       { key: "G", label: "Guards" },
       { key: "F", label: "Forwards" },
@@ -45,7 +45,7 @@ const SURFACE: Partial<
     ],
   },
   hockey: {
-    className: "bg-sky-950/40 border-sky-900/50",
+    className: "bg-[#10283a] border-[#1d4563]",
     units: [
       { key: "G", label: "Goalie" },
       { key: "D", label: "Defense" },
@@ -53,7 +53,7 @@ const SURFACE: Partial<
     ],
   },
   volleyball: {
-    className: "bg-yellow-950/30 border-yellow-900/50",
+    className: "bg-[#3a3210] border-[#5c5019]",
     units: [
       { key: "S", label: "Setter" },
       { key: "L", label: "Libero" },
@@ -63,7 +63,7 @@ const SURFACE: Partial<
     ],
   },
   football: {
-    className: "bg-green-950/40 border-green-900/50",
+    className: "bg-[#12301c] border-[#1e4a2c]",
     units: [
       { key: "OFF", label: "Offense" },
       { key: "DEF", label: "Defense" },
@@ -163,10 +163,14 @@ function FieldLineup({
   const config = SURFACE[sport];
   const units = config?.units ?? inferredUnits(teamLineup.slots);
   return (
+    // A playing surface is an illustration with its own fixed, opaque
+    // colours, the same in every theme; names on it are white. The dark
+    // scope makes any token-coloured text inside follow suit.
     <div
+      data-theme="dark"
       className={
         "flex flex-col gap-2 rounded-lg border px-2 py-3 " +
-        (config?.className ?? "border-zinc-800 bg-zinc-900/40")
+        (config?.className ?? "border-[#3a424c] bg-[#1c222a]")
       }
     >
       {units.map((unit) => {
@@ -210,7 +214,7 @@ function BattingCard({
           </span>
           <span
             className="w-9 shrink-0 rounded px-1 py-0.5 text-center text-[11px] font-semibold uppercase tabular-nums"
-            style={{ backgroundColor: color + "33", color: "#e4e4e7" }}
+            style={{ backgroundColor: color + "33", color: "var(--bs-ink)" }}
           >
             {slot.role}
           </span>

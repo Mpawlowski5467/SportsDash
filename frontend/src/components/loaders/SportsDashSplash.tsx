@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from "react";
 import SportsDashBall from "../logo/SportsDashBall";
-import { Wordmark } from "../logo/Wordmark";
+import { MastheadWordmark } from "../logo/Wordmark";
 import { usePrefersReducedMotion } from "../../lib/usePrefersReducedMotion";
 
 /**
@@ -56,32 +56,25 @@ export default function SportsDashSplash({
         alignItems: "center",
         justifyContent: "center",
         gap: 26,
-        backgroundColor: "#15171C",
-        color: "#F4F1EC",
+        // The theme's ground and ink (set on <html> before first paint by
+        // the index.html bootstrap), so the boot is one surface from the
+        // first frame to the app instead of a dark flash in a light theme.
+        backgroundColor: "var(--bs-ground)",
+        color: "var(--bs-ink)",
         textAlign: "center",
         padding: 24,
       }}
     >
       <span className="sd-splash-ball" style={{ display: "inline-flex", lineHeight: 0 }}>
-        <SportsDashBall size={size} variant="detailed" onDark />
+        <SportsDashBall size={size} variant="ink" />
       </span>
 
       <div
         className="sd-splash-word"
         style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}
       >
-        <Wordmark size={23} sportsColor="#F4F1EC" />
-        <span
-          style={{
-            fontFamily: "var(--sd-font-mono)",
-            fontSize: 11,
-            textTransform: "uppercase",
-            letterSpacing: "0.14em",
-            color: "#7D7A70",
-          }}
-        >
-          Starting up
-        </span>
+        <MastheadWordmark className="text-3xl" />
+        <span className="bs-label">Starting up</span>
       </div>
 
       {children}

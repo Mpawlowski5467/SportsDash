@@ -1,229 +1,106 @@
-import { localKeyFromDate, parseLocalDateKey } from "../lib/time";
 import { useMemo, useState } from "react";
-import { useGameOdds, useOnThisDay, useTeams, useToday } from "../hooks";
-import GameRow, { NEUTRAL_FALLBACK_COLOR } from "../components/GameRow";
+
+import { Loading, Notice, SectionHead, SpotChip } from "../components/bs";
 import EventLeaderboardModal from "../components/EventLeaderboardModal";
+import GameDetailModal from "../components/GameDetailModal";
+import { useNavigateTab } from "../components/NavigateContext";
 import StaleBanner from "../components/StaleBanner";
 import {
-  anniversaryYear,
-  isOnThisDayCurrent,
-  scoreline,
-  winningSide,
-} from "./today/onThisDay";
-import type { Game, League, OnThisDayTeam, SportEvent } from "../types";
+  useEvents,
+  useGameOdds,
+  useOnThisDay,
+  useSchedule,
+  useTeams,
+  useToday,
+} from "../hooks";
+import { errorText } from "../lib/errorText";
+import { dateKeyInZone, localKeyFromDate, parseLocalDateKey } from "../lib/time";
+import { useNow } from "../lib/useNow";
+import type { Game, League, Team } from "../types";
+import { ResultsList, UpcomingList } from "./today/GameLists";
+import Leaderboards from "./today/Leaderboards";
+import LiveHero from "./today/LiveHero";
+import {
+  dayKeyOffset,
+  nextStartNote,
+  pickHero,
+  standingColumns,
+  upcomingTitle,
+  weekStrip,
+  yesterdayTitle,
+} from "./today/model";
+import { isOnThisDayCurrent } from "./today/onThisDay";
+import { TeamColorsContext } from "./today/parts";
+import OnThisDaySection from "./today/OnThisDaySection";
+import StandingsBox from "./today/StandingsBox";
+import WeekStrip from "./today/WeekStrip";
 
+/** How many leagues get a standings box beside the slate. */
+const STANDINGS_LEAGUES = 3;
 /**
- * Parse a "YYYY-MM-DD" key as a LOCAL calendar date. `new Date("YYYY-MM-DD")`
- * parses as UTC midnight, which shifts the day for anyone west of Greenwich —
- * so we split and use the local-time constructor instead.
+ * The week's schedule is a plain database read, and Today stays on screen
+ * across midnight: without a refresh, a game still being played when the
+ * day rolls over would never reach "Last night".
  */
-/** Score colored by sign: under par emerald, at/over par zinc. */
-function eventScoreClass(score: string): string {
-  const t = score.trim();
-  if (t.startsWith("-")) return "text-emerald-400";
-  if (t.startsWith("+")) return "text-zinc-300";
-  return "text-zinc-200";
-}
+const SCHEDULE_REFRESH_MS = 5 * 60_000;
 
-/**
- * Compact leaderboard-event card for the Today landing screen: tournament
- * name, current round, the top three, plus any followed athlete's line when
- * they're outside the top three. Followedness comes from the backend
- * contract — a non-null `player_id` IS a followed athlete (the scheduler
- * rewrites the row's id to the followed-team id, else null). The athlete's
- * team color is purely an accent: driver catalog rows carry no color, so a
- * missing entry falls back to the neutral chip gray rather than making the
- * row read as unfollowed.
- */
-function EventCard({
-  event,
-  teamColors,
-  onOpen,
+/** One figure of the count strip beside the date. */
+function Count({
+  value,
+  label,
+  live = false,
 }: {
-  event: SportEvent;
-  teamColors: Record<string, string>;
-  onOpen: () => void;
+  value: number;
+  label: string;
+  live?: boolean;
 }) {
-  const top3 = event.leaderboard.slice(0, 3);
-  const top3Ids = new Set(top3.map((row) => row.player_id));
-  // Followed athletes not already shown in the top three.
-  const followedExtra = event.leaderboard.filter(
-    (row) => row.player_id !== null && !top3Ids.has(row.player_id),
-  );
-
-  // First followed athlete's color accents the card border.
-  const accent =
-    event.leaderboard.find((row) => row.player_id !== null)?.player_id ?? null;
-  const accentColor =
-    accent !== null
-      ? (teamColors[accent] ?? NEUTRAL_FALLBACK_COLOR)
-      : undefined;
-
-  const live = event.phase === "in_progress";
-  const roundText =
-    event.round_label || (event.phase === "final" ? "Final" : "Upcoming");
-
-  const renderRow = (
-    row: SportEvent["leaderboard"][number],
-    key: string | number,
-  ) => {
-    const color =
-      row.player_id !== null
-        ? (teamColors[row.player_id] ?? NEUTRAL_FALLBACK_COLOR)
-        : undefined;
-    const followed = color !== undefined;
-    return (
-      <div key={key} className="flex items-center gap-2 text-sm">
-        <span className="w-7 shrink-0 tabular-nums text-xs text-zinc-500">
-          {row.position_label || row.position}
-        </span>
-        {followed && (
-          <span
-            className="h-2 w-2 shrink-0 rounded-full"
-            style={{ backgroundColor: color }}
-            aria-hidden="true"
-          />
-        )}
-        <span
-          className={
-            "min-w-0 flex-1 truncate " +
-            (followed ? "font-semibold text-zinc-100" : "text-zinc-300")
-          }
-        >
-          {row.name}
-        </span>
-        <span
-          className={"shrink-0 tabular-nums font-semibold " + eventScoreClass(row.score)}
-        >
-          {row.score.trim() || "—"}
-        </span>
-        {row.detail !== null && (
-          <span className="w-12 shrink-0 text-right text-xs tabular-nums text-zinc-500">
-            {row.detail}
-          </span>
-        )}
-      </div>
-    );
-  };
-
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={`Open ${event.name} leaderboard`}
-      className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-left transition-colors hover:border-zinc-700 hover:bg-zinc-800/40"
-      style={
-        accentColor !== undefined
-          ? { borderLeftWidth: "3px", borderLeftColor: accentColor }
-          : undefined
-      }
-    >
-      <div className="flex items-start justify-between gap-2">
-        <span className="min-w-0 truncate text-sm font-semibold text-zinc-100">
-          {event.name}
+    <div className="flex items-baseline gap-1.5 border-l-2 border-ink px-2 first:border-l-0 first:pl-0 last:pr-0 sm:gap-2 sm:px-[1.375rem]">
+      <span
+        className={
+          "text-[2.5rem] font-bold leading-[0.85] sm:text-[3.75rem] " +
+          (value === 0 ? "text-muted" : "text-ink")
+        }
+      >
+        {value}
+      </span>
+      {live && value > 0 ? (
+        <SpotChip className="text-base">{label}</SpotChip>
+      ) : (
+        <span className="text-base font-semibold tracking-[0.08em] text-ink-2">
+          {label}
         </span>
-        {live ? (
-          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-400">
-            <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-red-500" />
-            </span>
-            <span className="uppercase tracking-wide">{roundText}</span>
-          </span>
-        ) : (
-          <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-            {roundText}
-          </span>
-        )}
-      </div>
-      <div className="mt-2 space-y-1">
-        {top3.length === 0 ? (
-          <p className="text-xs text-zinc-500">Leaderboard not available yet.</p>
-        ) : (
-          top3.map((row, i) => renderRow(row, `top-${i}`))
-        )}
-        {followedExtra.length > 0 && (
-          <div className="mt-1 space-y-1 border-t border-zinc-800/70 pt-1">
-            {followedExtra.map((row, i) => renderRow(row, `followed-${i}`))}
-          </div>
-        )}
-      </div>
-    </button>
-  );
-}
-
-/**
- * One historical final for the "On this day" section: a year chip and an
- * away-first scoreline with the winner bolded. Deliberately NOT interactive —
- * history games are assembled on demand and never stored, so there is no
- * /games/{id} detail behind them to open.
- */
-function OnThisDayRow({ game }: { game: Game }) {
-  const winner = winningSide(game);
-  const nameClass = (side: "home" | "away") =>
-    winner === side ? "font-semibold text-zinc-100" : "text-zinc-300";
-  return (
-    <div className="sd-hair sd-body flex items-baseline gap-4 py-2">
-      <span className="sd-figure shrink-0 text-[13px] text-zinc-500">
-        {anniversaryYear(game)}
-      </span>
-      {/* Wraps rather than truncates: inside the reading measure there is
-          room for the whole line, and a clipped scoreline is worse than a
-          two-line one. */}
-      <span className="min-w-0 flex-1 text-balance">
-        <span className={nameClass("away")}>{game.away.name}</span>{" "}
-        <span className="sd-figure text-zinc-400">{scoreline(game)}</span>{" "}
-        <span className={nameClass("home")}>{game.home.name}</span>
-      </span>
+      )}
     </div>
   );
 }
 
-/** One followed team's anniversary block: a name label, then its finals. */
-function OnThisDayTeamBlock({ team }: { team: OnThisDayTeam }) {
+/** The shapes of the page while the first payload is on its way. */
+function Skeleton() {
   return (
-    <div>
-      <p className="sd-body font-semibold text-zinc-100">{team.team_name}</p>
-      <div className="mt-1.5">
-        {team.games.map((game) => (
-          <OnThisDayRow key={game.id} game={game} />
-        ))}
+    <Loading label="Loading today’s games" className="flex flex-col gap-7">
+      <div className="flex flex-wrap items-end justify-between gap-5">
+        <div className="h-[5.5rem] w-72 max-w-full bg-hair" />
+        <div className="h-14 w-64 max-w-full bg-hair" />
       </div>
-    </div>
-  );
-}
-
-function SkeletonGrid() {
-  return (
-    <div className="animate-pulse space-y-4">
-      <div className="flex items-end justify-between">
-        <div className="space-y-2">
-          <div className="h-6 w-40 rounded bg-zinc-800" />
-          <div className="h-4 w-28 rounded bg-zinc-800/70" />
+      <div className="flex flex-wrap items-start gap-7">
+        <div className="flex min-w-0 flex-[999_1_35rem] flex-col gap-7">
+          <div className="h-64 border-t-[3px] border-rule bg-tint" />
+          <div className="h-40 border-t-[3px] border-rule bg-tint" />
         </div>
-        <div className="h-6 w-44 rounded-full bg-zinc-800/70" />
+        <div className="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-7">
+          <div className="h-56 border-t-[3px] border-rule bg-tint" />
+        </div>
       </div>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {Array.from({ length: 6 }, (_, i) => (
-          <div
-            key={i}
-            className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5"
-          >
-            <div className="space-y-2">
-              <div className="h-5 w-3/4 rounded bg-zinc-800" />
-              <div className="h-5 w-2/3 rounded bg-zinc-800" />
-              <div className="mt-1 h-4 w-1/2 rounded bg-zinc-800/70" />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+    </Loading>
   );
 }
 
 /**
- * Kiosk landing screen: every game on the local calendar day for followed
- * teams, dense and glanceable.
+ * Kiosk landing screen: the local calendar day for the followed teams, by
+ * phase. The live game large, what is still to come, what has finished
+ * today and last night; beside them where the followed teams stand and
+ * what happened on this date; under them the week ahead.
  */
 export default function TodayView() {
   const todayQuery = useToday();
@@ -232,11 +109,34 @@ export default function TodayView() {
   // while pending, so it never gates the main slate. (Hooks run before the
   // early returns below — the view's standing rule.)
   const onThisDayQuery = useOnThisDay();
+  const navigate = useNavigateTab();
+  // "First pitch in 12 minutes" is a function of the clock, not of a payload.
+  const now = useNow(30_000);
 
+  const [openGame, setOpenGame] = useState<Game | null>(null);
   // The leaderboard-event id whose modal is open, or null. Golf has no
-  // dedicated tab anymore — its leaderboards are reached by clicking an
-  // event card here.
+  // dedicated tab — its leaderboards are reached from the section here.
   const [openEventId, setOpenEventId] = useState<string | null>(null);
+
+  // Days are the server's days: `/today` says which day it is and in which
+  // zone, and `/schedule` takes days in the same terms. Until it answers,
+  // the browser's own day is the best guess (and almost always the same).
+  const todayKey = todayQuery.data?.date ?? localKeyFromDate(new Date());
+  const zone = todayQuery.data?.timezone;
+  const yesterdayKey = dayKeyOffset(todayKey, -1);
+  const weekEndKey = dayKeyOffset(todayKey, 6);
+  // One request covers last night and the week ahead; leaderboard events
+  // (a tournament, a race weekend) are not games and come separately.
+  const scheduleQuery = useSchedule(yesterdayKey, weekEndKey, undefined, {
+    refetchInterval: SCHEDULE_REFRESH_MS,
+  });
+  const weekEventsQuery = useEvents(todayKey, weekEndKey);
+
+  const teamsById = useMemo(() => {
+    const map: Record<string, Team> = {};
+    for (const team of teamsQuery.data?.teams ?? []) map[team.id] = team;
+    return map;
+  }, [teamsQuery.data]);
 
   const teamColors = useMemo(() => {
     const map: Record<string, string> = {};
@@ -246,8 +146,6 @@ export default function TodayView() {
     return map;
   }, [teamsQuery.data]);
 
-  // For whole-competition games (no followed team) GameCard labels the card
-  // with the league name; supply the league lookup it needs.
   const leaguesById = useMemo(() => {
     const map: Record<string, League> = {};
     for (const league of teamsQuery.data?.leagues ?? []) {
@@ -257,8 +155,7 @@ export default function TodayView() {
   }, [teamsQuery.data]);
 
   // Odds + win-probability for the scheduled / live games on screen, fetched
-  // in one batch and threaded into each card. (Hooks run before the early
-  // returns below, so the ids are empty until today's data loads.)
+  // in one batch. (Empty until today's data loads.)
   const oddsGameIds = useMemo(
     () =>
       (todayQuery.data?.games ?? [])
@@ -269,7 +166,7 @@ export default function TodayView() {
   const oddsByGame = useGameOdds(oddsGameIds).data ?? {};
 
   if (todayQuery.isPending || teamsQuery.isPending) {
-    return <SkeletonGrid />;
+    return <Skeleton />;
   }
 
   // Full-screen error only when there is nothing to show. A failed
@@ -277,25 +174,18 @@ export default function TodayView() {
   // dashboard — keep rendering the stale data with a slim warning.
   if (todayQuery.isError && !todayQuery.data) {
     return (
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-red-900/50 bg-red-950/30 px-4 py-3">
-        <p className="min-w-0 truncate text-sm text-red-300">
-          Couldn&rsquo;t load today&rsquo;s games
-          {todayQuery.error instanceof Error && todayQuery.error.message
-            ? ` — ${todayQuery.error.message}`
-            : ""}
-        </p>
-        <button
-          type="button"
-          onClick={() => void todayQuery.refetch()}
-          className="shrink-0 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
-        >
-          Retry
-        </button>
-      </div>
+      <Notice
+        title="Today"
+        alert
+        action={{ label: "Retry", onClick: () => void todayQuery.refetch() }}
+      >
+        Couldn&rsquo;t load today&rsquo;s games
+        {errorText(todayQuery.error)}
+      </Notice>
     );
   }
   if (!todayQuery.data) {
-    return <SkeletonGrid />;
+    return <Skeleton />;
   }
 
   const stale = todayQuery.isError;
@@ -309,10 +199,59 @@ export default function TodayView() {
     day: "numeric",
     year: "numeric",
   });
+  const monthDay = localDate.toLocaleDateString(undefined, {
+    month: "long",
+    day: "numeric",
+  });
 
-  const liveCount = games.filter((g) => g.phase === "in_progress").length;
-  const upcomingCount = games.filter((g) => g.phase === "scheduled").length;
-  const finalCount = games.filter((g) => g.phase === "final").length;
+  // The slate by phase; the server already sends it in start order.
+  const live = games.filter((g) => g.phase === "in_progress");
+  const hero = pickHero(live);
+  const otherLive = live.filter((g) => g !== hero);
+  const finals = games.filter((g) => g.phase === "final");
+  // Postponed and canceled games stay with the games still to come, with
+  // the status where the time would be: they were on today's card.
+  const upcoming = games.filter(
+    (g) => g.phase !== "in_progress" && g.phase !== "final",
+  );
+  const scheduled = upcoming.filter((g) => g.phase === "scheduled");
+
+  const schedule = scheduleQuery.data ?? [];
+  const lastNight = schedule.filter(
+    (g) =>
+      g.phase === "final" && dateKeyInZone(g.start_time, zone) === yesterdayKey,
+  );
+  const yesterday = parseLocalDateKey(yesterdayKey).toLocaleDateString(
+    undefined,
+    { weekday: "long", month: "long", day: "numeric" },
+  );
+
+  // Today's games come from the live `/today` poll; the rest of the week
+  // from the schedule. Today's copy wins where both have a game.
+  const todayIds = new Set(games.map((g) => g.id));
+  const week = weekStrip(
+    date,
+    [...games, ...schedule.filter((g) => !todayIds.has(g.id))],
+    weekEventsQuery.data ?? events,
+    zone,
+  );
+
+  // A standings box for each league a followed team plays in, the leagues
+  // with a game today first. Only leagues that HAVE a team table: a followed
+  // tennis player or driver is a "team" too, and would otherwise take a slot
+  // (and a request) for a box that can never be drawn.
+  const playingToday = new Set(games.map((g) => g.league_id));
+  const standingsLeagues = [
+    ...new Set((teamsQuery.data?.teams ?? []).map((team) => team.league_id)),
+  ]
+    .filter((leagueId) => {
+      const sport = leaguesById[leagueId]?.sport;
+      return sport !== undefined && standingColumns(sport) !== null;
+    })
+    .sort(
+      (a, b) => Number(playingToday.has(b)) - Number(playingToday.has(a)),
+    )
+    .slice(0, STANDINGS_LEAGUES);
 
   // "On this day" hides entirely unless it loaded with content FOR THIS
   // local day: an error, a pending fetch, an anniversary-free date, or a
@@ -333,103 +272,141 @@ export default function TodayView() {
       ? (events.find((e) => e.id === openEventId) ?? null)
       : null;
 
+  const startNote = nextStartNote(scheduled, now);
+
   return (
-    <div className="sd-measure space-y-9 py-2">
+    <TeamColorsContext.Provider value={teamColors}>
+    <div className="flex flex-col gap-7">
       {stale && (
         <StaleBanner
           message="Connection lost — showing the last loaded scores."
           onRetry={() => void todayQuery.refetch()}
         />
       )}
-      {/* One heading, with the date and the counts as a subordinate line
-          beneath it — the counts used to sit far right as a pill, which read
-          as a second, competing headline. */}
-      <header className="sd-rule flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 pb-3.5">
-        <h1 className="sd-title text-zinc-100">{weekday}</h1>
-        <p className="sd-meta flex items-center gap-2 text-zinc-500">
-          <span>{longDate}</span>
-          {games.length > 0 && (
-            <>
-              <span aria-hidden="true" className="text-zinc-500">
-                ·
-              </span>
-              <span className={liveCount > 0 ? "font-semibold text-red-400" : ""}>
-                {liveCount} live
-              </span>
-              <span aria-hidden="true" className="text-zinc-500">
-                ·
-              </span>
-              <span>{upcomingCount} upcoming</span>
-              <span aria-hidden="true" className="text-zinc-500">
-                ·
-              </span>
-              <span>{finalCount} final</span>
-            </>
-          )}
-        </p>
+
+      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-5 gap-y-1">
+          <h1 className="bs-title">{weekday}</h1>
+          <p className="bs-deck m-0">{longDate}</p>
+        </div>
+        <div className="flex flex-wrap items-stretch gap-y-2 font-condensed uppercase">
+          <Count value={live.length} label="Live" live />
+          <Count value={scheduled.length} label="Upcoming" />
+          <Count value={finals.length} label="Final" />
+        </div>
       </header>
 
-      {events.length > 0 && (
-        <section>
-          <h2 className="sd-eyebrow sd-rule pb-2.5 text-zinc-500">
-            Leaderboards
-          </h2>
-          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {events.map((event) => (
-              <EventCard
-                key={event.id}
-                event={event}
-                teamColors={teamColors}
-                onOpen={() => setOpenEventId(event.id)}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {games.length === 0 && events.length === 0 ? (
-        <div className="py-20">
-          <p className="sd-title-sm text-zinc-300">No games today</p>
-          <p className="sd-meta mt-2 text-zinc-500">
-            Check the Calendar tab for upcoming games.
-          </p>
-        </div>
-      ) : (
-        games.length > 0 && (
-          <section>
-            {events.length > 0 && (
-              <h2 className="sd-eyebrow sd-rule pb-2.5 text-zinc-500">Games</h2>
-            )}
+      <div className="flex flex-wrap items-start gap-7">
+        <div className="flex min-w-0 flex-[999_1_35rem] flex-col gap-7">
+          {hero !== null && (
             <div>
-              {games.map((game) => (
-                <GameRow
-                  key={game.id}
-                  game={game}
-                  teamColors={teamColors}
+              <LiveHero
+                game={hero}
+                league={leaguesById[hero.league_id]}
+                onOpen={setOpenGame}
+              />
+              {otherLive.length > 0 && (
+                <ResultsList
+                  games={otherLive}
                   leaguesById={leaguesById}
-                  odds={oddsByGame[game.id]}
+                  onOpen={setOpenGame}
+                  oddsByGame={oddsByGame}
+                  flushTop
+                  label="Also live"
                 />
-              ))}
+              )}
             </div>
-          </section>
-        )
-      )}
+          )}
 
-      {/* Sits OUTSIDE the games/empty-state conditional above, so the
-          anniversaries render on quiet days too. */}
-      {onThisDayTeams.length > 0 && (
-        <section>
-          <h2 className="sd-eyebrow sd-rule pb-2.5 text-zinc-500">
-            On this day
-          </h2>
-          <div className="mt-4 grid grid-cols-1 gap-x-12 gap-y-7 md:grid-cols-2">
-            {onThisDayTeams.map((team) => (
-              <OnThisDayTeamBlock key={team.team_id} team={team} />
-            ))}
-          </div>
-        </section>
-      )}
+          {upcoming.length > 0 && (
+            <section aria-label={upcomingTitle(scheduled)}>
+              <SectionHead
+                title={upcomingTitle(scheduled)}
+                note={startNote ?? undefined}
+              />
+              <UpcomingList
+                games={upcoming}
+                oddsByGame={oddsByGame}
+                leaguesById={leaguesById}
+                onOpen={setOpenGame}
+              />
+            </section>
+          )}
 
+          {finals.length > 0 && (
+            <section aria-label="Final today">
+              <SectionHead
+                title="Final today"
+                note={`${finals.length} ${finals.length === 1 ? "game" : "games"} finished`}
+              />
+              <ResultsList
+                games={finals}
+                leaguesById={leaguesById}
+                onOpen={setOpenGame}
+              />
+            </section>
+          )}
+
+          {games.length === 0 && events.length === 0 && (
+            <Notice
+              title="Today"
+              headline="No games today"
+              action={{
+                label: "Open calendar",
+                onClick: () => navigate("calendar"),
+              }}
+            >
+              The week ahead is below, and the Calendar has the rest.
+            </Notice>
+          )}
+
+          {lastNight.length > 0 && (
+            <section aria-label={yesterdayTitle(lastNight)}>
+              <SectionHead title={yesterdayTitle(lastNight)} note={yesterday} />
+              <ResultsList
+                games={lastNight}
+                leaguesById={leaguesById}
+                onOpen={setOpenGame}
+              />
+            </section>
+          )}
+
+          {events.length > 0 && (
+            <Leaderboards events={events} onOpen={setOpenEventId} />
+          )}
+        </div>
+
+        {/* `empty:hidden`: every child here can turn out to have nothing to
+            show, and an empty column would still hold its 360px. */}
+        <div className="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-7 empty:hidden">
+          {standingsLeagues.map((leagueId) => (
+            <StandingsBox
+              key={leagueId}
+              leagueId={leagueId}
+              limit={standingsLeagues.length === 1 ? 2 : 1}
+            />
+          ))}
+          {/* Outside the games/empty-state logic, so the anniversaries
+              render on quiet days too. */}
+          {onThisDayTeams.length > 0 && (
+            <OnThisDaySection
+              teams={onThisDayTeams}
+              teamsById={teamsById}
+              dayLabel={monthDay}
+            />
+          )}
+        </div>
+      </div>
+
+      <WeekStrip days={week} loaded={scheduleQuery.data !== undefined} />
+
+      {openGame !== null && (
+        <GameDetailModal
+          gameId={openGame.id}
+          fallbackGame={openGame}
+          onClose={() => setOpenGame(null)}
+        />
+      )}
       {openEvent !== null && (
         <EventLeaderboardModal
           event={openEvent}
@@ -438,5 +415,6 @@ export default function TodayView() {
         />
       )}
     </div>
+    </TeamColorsContext.Provider>
   );
 }

@@ -5,14 +5,16 @@
  */
 
 import {
+  keepPreviousData,
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
 
-import { api } from "./api";
+import { api, ApiError } from "./api";
 import { localDateKey, localKeyFromDate } from "./lib/time";
 import type {
   Bracket,
@@ -137,14 +139,27 @@ export function useMap(days?: number): UseQueryResult<MapResponse> {
   });
 }
 
+/**
+ * Options for a query that a long-lived view keeps on screen. By default
+ * these queries are fetched once and left alone, which suits a view the
+ * user opens, reads and leaves. Today never unmounts, so it asks for a
+ * refresh on a beat instead.
+ */
+export interface RefreshOptions {
+  /** Refetch this often, in ms, while a component is using the query. */
+  refetchInterval?: number;
+}
+
 export function useSchedule(
   start: string,
   end: string,
   teamId?: string,
+  options?: RefreshOptions,
 ): UseQueryResult<Game[]> {
   return useQuery({
     queryKey: ["schedule", start, end, teamId ?? null],
     queryFn: () => api.schedule({ start, end, teamId }),
+    refetchInterval: options?.refetchInterval,
   });
 }
 
@@ -191,15 +206,24 @@ export function useScheduleWeather(
  * live) game ids and threads the resulting map into the cards. Lines drift
  * slowly and the backend caches them ~10 min, so a 5-minute stale window
  * keeps cards quiet without going stale.
+ *
+ * The query is keyed by the list of games, so a list that changes (a game
+ * ends, the day turns) is a new query with nothing loaded. `keepPrevious`
+ * lets the last list's answer stand in until the new one lands: the map is
+ * keyed by game id, so a game in both lists keeps its own line and a game
+ * that left is simply not looked up. Off by default: existing callers get
+ * what they always got.
  */
 export function useGameOdds(
   ids: string[],
+  options?: { keepPrevious?: boolean },
 ): UseQueryResult<Record<string, GameOdds>> {
   return useQuery({
     queryKey: ["game-odds", [...ids].sort().join(",")],
     queryFn: () => api.odds(ids),
     enabled: ids.length > 0,
     staleTime: 5 * 60_000,
+    placeholderData: options?.keepPrevious ? keepPreviousData : undefined,
   });
 }
 
@@ -212,6 +236,14 @@ export function useGameOdds(
  */
 export function useGameDetail(
   gameId: string | undefined,
+  options?: {
+    /**
+     * False parks the query: it keeps what it has and stops polling, and
+     * refetches when re-enabled if that is stale. For a caller that stays
+     * mounted while hidden; passing no id instead would drop the data.
+     */
+    enabled?: boolean;
+  },
 ): UseQueryResult<GameDetail> {
   return useQuery({
     queryKey: ["game-detail", gameId ?? null],
@@ -221,7 +253,7 @@ export function useGameDetail(
       }
       return api.gameDetail(gameId);
     },
-    enabled: !!gameId,
+    enabled: !!gameId && (options?.enabled ?? true),
     refetchInterval: (query) =>
       query.state.data?.game.phase === "in_progress" ? 30_000 : false,
     staleTime: (query) =>
@@ -253,6 +285,7 @@ export function useMatchup(
 export function useStandings(
   leagueId: string | undefined,
   season?: number,
+  options?: RefreshOptions,
 ): UseQueryResult<Standings> {
   return useQuery({
     queryKey: ["standings", leagueId ?? null, season ?? "current"],
@@ -265,8 +298,10 @@ export function useStandings(
     enabled: !!leagueId,
     // A past season's table never changes; the current one refetches
     // on the default policy. A 404 means "no archive for that season".
-    staleTime: season !== undefined ? Infinity : undefined,
-    retry: season !== undefined ? false : undefined,
+    // Spread, not `x ? y : undefined`: an explicit undefined overrides the
+    // app-wide defaults (30 s stale time, one retry) for the live table.
+    ...(season !== undefined ? { staleTime: Infinity, retry: false } : {}),
+    refetchInterval: season !== undefined ? undefined : options?.refetchInterval,
   });
 }
 
@@ -277,6 +312,14 @@ export function useStandings(
 export function useSeasonResults(
   teamId: string | undefined,
   season: number | undefined,
+  options?: {
+    /**
+     * The season being played, not an archive: one failed request is worth
+     * a retry — unless it is a 404, which is an answer ("no such season"),
+     * not a failure.
+     */
+    live?: boolean;
+  },
 ): UseQueryResult<Game[]> {
   return useQuery({
     queryKey: ["history-results", teamId ?? null, season ?? null],
@@ -288,7 +331,11 @@ export function useSeasonResults(
     },
     enabled: !!teamId && season !== undefined,
     staleTime: Infinity,
-    retry: false, // a 404 means "no archive for that season" — don't hammer
+    // A 404 means "no archive for that season" — don't hammer.
+    retry: (failureCount, error) =>
+      options?.live === true &&
+      failureCount < 1 &&
+      !(error instanceof ApiError && error.status === 404),
   });
 }
 
@@ -392,6 +439,7 @@ export function useRoster(teamId: string | undefined): UseQueryResult<Roster> {
 export function useResults(
   teamId: string | undefined,
   limit?: number,
+  options?: RefreshOptions,
 ): UseQueryResult<Game[]> {
   return useQuery({
     queryKey: ["results", teamId ?? null, limit ?? null],
@@ -402,6 +450,7 @@ export function useResults(
       return api.results(teamId, limit);
     },
     enabled: !!teamId,
+    refetchInterval: options?.refetchInterval,
   });
 }
 
@@ -410,6 +459,33 @@ export function useNews(scope?: NewsScope): UseQueryResult<NewsItem[]> {
     queryKey: ["news", scope?.teamId ?? null, scope?.leagueId ?? null],
     queryFn: () => api.news(scope),
     refetchInterval: FIVE_MINUTES,
+  });
+}
+
+/** How often a news feed is read again. The News screen says so in words. */
+export const NEWS_REFETCH_MS = FIVE_MINUTES;
+
+/**
+ * One news feed per scope, held side by side: the News screen puts a count
+ * on every filter and has each filter's list in hand before it is pressed.
+ * `undefined` in the list is the unscoped feed. `limit` is part of the key,
+ * so these entries are never shared with `useNews`, which sends none.
+ *
+ * `poll` false stops the five-minute reads: that is one request per scope
+ * each time, and a view stays mounted while another tab is showing. The
+ * caller reads again itself when it comes back to feeds grown old.
+ */
+export function useNewsFeeds(
+  scopes: readonly (NewsScope | undefined)[],
+  limit: number,
+  poll = true,
+): UseQueryResult<NewsItem[]>[] {
+  return useQueries({
+    queries: scopes.map((scope) => ({
+      queryKey: ["news", scope?.teamId ?? null, scope?.leagueId ?? null, limit],
+      queryFn: () => api.news(scope, limit),
+      refetchInterval: poll ? NEWS_REFETCH_MS : (false as const),
+    })),
   });
 }
 
@@ -495,6 +571,30 @@ export function useSetupTeams(
     },
     enabled: !!leagueId,
     staleTime: FIVE_MINUTES, // backend caches the ESPN catalog for 1h
+  });
+}
+
+/** Each catalog as it stands, in the order asked; the same array while unchanged. */
+const catalogData = (
+  results: UseQueryResult<CatalogTeamsResponse>[],
+): (CatalogTeamsResponse | undefined)[] => results.map((result) => result.data);
+
+/**
+ * The setup catalogs of several leagues at once, answered in the order
+ * asked: the Matchup picker lists games from more than one league. These
+ * are the entries `useSetupTeams` reads, so a catalog already fetched for
+ * the League view is not asked for twice.
+ */
+export function useSetupTeamsFor(
+  leagueIds: readonly string[],
+): (CatalogTeamsResponse | undefined)[] {
+  return useQueries({
+    queries: leagueIds.map((leagueId) => ({
+      queryKey: ["setup-teams", leagueId],
+      queryFn: () => api.setupTeams(leagueId),
+      staleTime: FIVE_MINUTES,
+    })),
+    combine: catalogData,
   });
 }
 

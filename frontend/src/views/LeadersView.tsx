@@ -1,218 +1,191 @@
-import { useMemo, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
-import { useLeaders, useScorers, useSetupLeagues, useTeams } from "../hooks";
-import TeamLogo from "../components/TeamLogo";
+import {
+  FollowMark,
+  Loading,
+  MarkedName,
+  Notice,
+  SectionHead,
+} from "../components/bs";
 import PlayerAvatar from "../components/PlayerAvatar";
-import Select, { type SelectOption } from "../components/Select";
 import StaleBanner from "../components/StaleBanner";
+import { useLeaders, useScorers } from "../hooks";
+import { errorText } from "../lib/errorText";
+import type { League } from "../types";
+import { BoardTeamBlock, useTeamCodes } from "./league/LeadersBlock";
+import { formatStat, leadersBoard } from "./league/model";
+import { useTeamLookup } from "./league/parts";
 
-export default function LeadersView() {
-  const teamsQuery = useTeams();
-  const setupLeaguesQuery = useSetupLeagues();
-  const [selected, setSelected] = useState<string | undefined>(undefined);
+/**
+ * The Leaders sub-view: the league's whole board, one player a row. Real
+ * tournament scorers (the Golden Boot) when the league has finished
+ * matches with goals to count; otherwise the stat board, which is
+ * league-wide where the provider ranks the league and is otherwise built
+ * from the followed teams' rosters.
+ *
+ * A player you follow is the ink row; a player on a team you follow wears
+ * the marker alone.
+ */
+export default function LeadersView({
+  league,
+  seasonYear,
+  onCurrentSeason,
+}: {
+  league: League;
+  /** The archive season picked, or undefined for the season in progress. */
+  seasonYear: number | undefined;
+  onCurrentSeason: () => void;
+}) {
+  const scorersQuery = useScorers(league.id);
+  const leadersQuery = useLeaders(league.id);
+  const lookup = useTeamLookup(league);
+  const codeFor = useTeamCodes();
 
-  const leagues = useMemo(() => teamsQuery.data?.leagues ?? [], [teamsQuery.data?.leagues]);
-  const leagueId = leagues.some((league) => league.id === selected)
-    ? selected
-    : leagues[0]?.id;
-
-  // League logos for the selector come from the setup catalog (the /teams
-  // league rows don't carry one); a plain name shows when none is found.
-  const leagueOptions: SelectOption[] = useMemo(() => {
-    const logoById: Record<string, string | null> = {};
-    for (const cat of setupLeaguesQuery.data?.leagues ?? []) {
-      logoById[cat.id] = cat.logo_url;
-    }
-    return leagues.map((league) => ({
-      id: league.id,
-      label: league.name,
-      logoUrl: logoById[league.id],
-    }));
-  }, [leagues, setupLeaguesQuery.data]);
-  // Real tournament scorers (the Golden Boot) when the league is an active
-  // competition with finished matches; otherwise the roster-derived board.
-  const scorersQuery = useScorers(leagueId);
-  const leadersQuery = useLeaders(leagueId);
-  const scorers = scorersQuery.data;
-  const showGoldenBoot = (scorers?.rows.length ?? 0) > 0;
-
-  if (teamsQuery.isError && !teamsQuery.data) {
+  // Neither request takes a season: the board is the current one only.
+  if (seasonYear !== undefined) {
     return (
-      <p className="text-sm text-red-400">
-        Failed to load leagues: {teamsQuery.error?.message ?? "unknown error"}
-      </p>
-    );
-  }
-  if (!teamsQuery.data) {
-    return <p className="text-sm text-zinc-500">Loading leagues…</p>;
-  }
-  if (leagues.length === 0) {
-    return (
-      <p className="text-sm text-zinc-500">No leagues configured.</p>
+      <Notice
+        title="Leaders"
+        headline="Current season only"
+        action={{ label: "Current season", onClick: onCurrentSeason }}
+      >
+        Leaders are kept for the season in progress. The {seasonYear} season
+        has its standings, but no leaders board.
+      </Notice>
     );
   }
 
   const data = leadersQuery.data;
+  // Which board this is depends on the scorers request, so nothing is drawn
+  // until it has answered: otherwise the stat board would show for a moment
+  // and then be replaced by the Golden Boot.
+  const board = scorersQuery.isPending
+    ? null
+    : leadersBoard(scorersQuery.data, data);
   // A failed refetch keeps the cached board on screen behind a stale banner
-  // rather than blanking it (see TodayView); only an empty cache errors out.
-  const stale = !showGoldenBoot && leadersQuery.isError && data !== undefined;
+  // rather than blanking it; only an empty cache errors out.
+  const stale =
+    board?.kind !== "scorers" && leadersQuery.isError && data !== undefined;
 
   let body: ReactNode;
-  if (showGoldenBoot && scorers) {
-    // Golden Boot — real goals tallied from finished matches.
+  if (board !== null) {
     body = (
-      <div className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-sm font-semibold text-zinc-200">Golden Boot</h2>
-          <span className="text-xs uppercase tracking-wide text-zinc-500">
-            {scorers.games_counted}{" "}
-            {scorers.games_counted === 1 ? "match" : "matches"}
-          </span>
-        </div>
-        <ol className="flex flex-col divide-y divide-zinc-800">
-          {scorers.rows.map((row) => (
-            <li
-              key={`${row.team}-${row.player}`}
-              className={
-                "sd-stagger-item flex items-center gap-3 border-l-2 py-2 pl-2 " +
-                (row.highlighted
-                  ? "border-amber-500 bg-amber-500/10"
-                  : "border-transparent")
-              }
-            >
-              <span className="w-6 shrink-0 text-right text-sm tabular-nums text-zinc-500">
-                {row.rank}
-              </span>
-              <TeamLogo logoUrl={row.team_logo_url} name={row.team} size="sm" />
-              <div className="min-w-0 flex-1">
-                <p
+      <section aria-label={board.title}>
+        <SectionHead
+          title={board.title}
+          note={
+            board.kind === "scorers"
+              ? board.source
+              : `${board.source} · ranked by ${board.unit}`
+          }
+        />
+        <div className="bs-sheet tabular-nums">
+          <div
+            aria-hidden="true"
+            className="bs-label flex items-center gap-3 border-b border-ink px-4 py-2"
+          >
+            <span className="w-8 flex-none">#</span>
+            <span className="min-w-0 flex-1">Player</span>
+            {/* A roster-built board can mix stats; each row then names
+                its own beside the value, and the column has no one name. */}
+            <span className="flex-none font-bold text-ink">
+              {board.kind === "scorers" ||
+              board.rows.every((row) => row.unit === board.unit)
+                ? board.unit
+                : "Stat"}
+            </span>
+          </div>
+          <ol className="m-0 list-none p-0">
+            {board.rows.map((row, index) => {
+              const marked = row.followed || row.highlighted;
+              return (
+                // The row wraps: where the name would be squeezed under its
+                // floor (a phone, a long stat line), the value drops to a
+                // line of its own, at the right, and the name keeps the row.
+                <li
+                  key={row.key}
                   className={
-                    "truncate text-sm font-medium " +
-                    (row.highlighted ? "text-amber-200" : "text-zinc-100")
+                    "sd-stagger-item flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-hair px-4 py-2.5 first:border-t-0" +
+                    (row.followed ? " bs-inverse" : "")
                   }
                 >
-                  {row.player}
-                </p>
-                <p className="truncate text-xs text-zinc-500">{row.team}</p>
-              </div>
-              <span className="shrink-0 text-right">
-                <span className="text-base font-semibold tabular-nums text-zinc-100">
-                  {row.goals}
-                </span>{" "}
-                <span className="text-xs text-zinc-500">
-                  {row.goals === 1 ? "goal" : "goals"}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ol>
-      </div>
+                  <span
+                    className={
+                      "w-8 flex-none font-condensed text-[1.375rem] font-bold leading-none " +
+                      (index < 3 || row.followed ? "text-ink" : "text-muted")
+                    }
+                  >
+                    {row.rank}
+                  </span>
+                  <BoardTeamBlock row={row} lookup={lookup} codeFor={codeFor} />
+                  {board.photos && (
+                    <PlayerAvatar name={row.name} photoUrl={row.photoUrl} />
+                  )}
+                  <div className="min-w-[5.5rem] flex-1">
+                    <p className="m-0 text-base font-bold leading-5 wrap-anywhere">
+                      <MarkedName
+                        name={row.name}
+                        mark={
+                          marked && (
+                            <FollowMark
+                              className="ml-2"
+                              label={
+                                row.followed
+                                  ? "Followed player"
+                                  : "On a team you follow"
+                              }
+                            />
+                          )
+                        }
+                      />
+                    </p>
+                    <p className="m-0 text-sm text-muted wrap-anywhere">
+                      {[row.team, row.position].filter(Boolean).join(" · ")}
+                    </p>
+                  </div>
+                  <div className="ml-auto max-w-full flex-none text-right">
+                    <span className="font-condensed text-3xl font-bold leading-none">
+                      {formatStat(row.value)}
+                    </span>{" "}
+                    <span className="bs-label">{row.unit}</span>
+                    {row.detail !== null && (
+                      <p className="m-0 text-sm text-muted wrap-anywhere">
+                        {row.detail}
+                      </p>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      </section>
     );
   } else if (leadersQuery.isError && !data) {
     body = (
-      <p className="text-sm text-red-400">
-        Failed to load leaders: {leadersQuery.error?.message ?? "unknown error"}
-      </p>
+      <Notice
+        title="Leaders"
+        alert
+        action={{ label: "Retry", onClick: () => void leadersQuery.refetch() }}
+      >
+        Couldn&rsquo;t load the leaders
+        {errorText(leadersQuery.error)}
+      </Notice>
     );
-  } else if (!data) {
-    body = <p className="text-sm text-zinc-500">Loading leaders…</p>;
-  } else if (data.rows.length === 0) {
-    body = (
-      <p className="max-w-md text-sm text-zinc-500">
-        No player stats yet for {data.league_name}. Leaders are built from your
-        followed teams' rosters — follow more teams in this league to broaden
-        the board. (Rosters refresh on the daily update.)
-      </p>
-    );
+  } else if (!data || scorersQuery.isPending) {
+    body = <Loading label="Loading leaders" rows={8} />;
   } else {
     body = (
-      <div className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-sm font-semibold text-zinc-200">
-            {data.league_name}
-          </h2>
-          <span className="text-xs uppercase tracking-wide text-zinc-500">
-            Ranked by {data.stat_label}
-          </span>
-        </div>
-        <ol className="flex flex-col divide-y divide-zinc-800">
-          {data.rows.map((row) => (
-            <li
-              key={`${row.team_id}-${row.player_id}`}
-              className={
-                "sd-stagger-item flex items-center gap-3 border-l-2 py-2 pl-2 " +
-                // A player YOU follow outranks the team-level highlight:
-                // brighter border + wash, plus the star before the name.
-                (row.followed
-                  ? "border-amber-400 bg-amber-500/15"
-                  : row.highlighted
-                    ? "border-amber-500 bg-amber-500/10"
-                    : "border-transparent")
-              }
-            >
-              <span className="w-6 shrink-0 text-right text-sm tabular-nums text-zinc-500">
-                {row.rank}
-              </span>
-              <TeamLogo
-                logoUrl={row.team_logo_url}
-                name={row.team_name}
-                color={row.team_color}
-                size="sm"
-              />
-              <PlayerAvatar name={row.name} photoUrl={row.photo_url} />
-              <div className="min-w-0 flex-1">
-                <p
-                  className={
-                    "truncate text-sm font-medium " +
-                    (row.followed || row.highlighted
-                      ? "text-amber-200"
-                      : "text-zinc-100")
-                  }
-                >
-                  {row.followed && (
-                    <>
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="currentColor"
-                        aria-hidden="true"
-                        className="mr-1 inline-block h-3.5 w-3.5 -translate-y-px text-amber-400"
-                      >
-                        <path d="m12 2.6 2.95 5.9 6.55.95-4.75 4.6 1.12 6.5L12 17.5l-5.87 3.05 1.12-6.5-4.75-4.6 6.55-.95z" />
-                      </svg>
-                      <span className="sr-only">Followed player: </span>
-                    </>
-                  )}
-                  {row.name}
-                </p>
-                <p className="truncate text-xs text-zinc-500">
-                  {row.team_name}
-                  {row.position ? ` · ${row.position}` : ""}
-                </p>
-              </div>
-              <div className="shrink-0 text-right">
-                <span className="text-base font-semibold tabular-nums text-zinc-100">
-                  {formatValue(row.value)}
-                </span>{" "}
-                <span className="text-xs text-zinc-500">{row.stat_label}</span>
-                {row.detail && (
-                  <p className="text-[11px] text-zinc-500">{row.detail}</p>
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
-      </div>
+      <Notice title="Leaders" headline="No player stats yet">
+        No player stats yet for {data.league_name}. Leaders are built from
+        your followed teams&rsquo; rosters — follow more teams in this league
+        to broaden the board. (Rosters refresh on the daily update.)
+      </Notice>
     );
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <Select
-        options={leagueOptions}
-        value={leagueId}
-        onChange={setSelected}
-        ariaLabel="Choose league"
-      />
+    <>
       {stale && (
         <StaleBanner
           message="Connection lost — showing the last loaded leaders."
@@ -220,11 +193,6 @@ export default function LeadersView() {
         />
       )}
       {body}
-    </div>
+    </>
   );
-}
-
-/** Drop a trailing ".0" so integer stats read "3" not "3.0". */
-function formatValue(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }

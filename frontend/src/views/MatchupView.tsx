@@ -1,458 +1,524 @@
-import { useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
-import LineupView from "../components/LineupView";
-import PlayerAvatar from "../components/PlayerAvatar";
-import Select, { type SelectOption } from "../components/Select";
-import StatusBadge from "../components/StatusBadge";
-import TeamLogo from "../components/TeamLogo";
+import { ApiError } from "../api";
+import { Loading, Notice } from "../components/bs";
+import GameDetailModal from "../components/GameDetailModal";
+import { useManageTeams } from "../components/ManageTeamsContext";
+import { useIsActiveTab } from "../components/NavigateContext";
+import StaleBanner from "../components/StaleBanner";
+import { useTheme } from "../components/ThemeProvider";
 import UpsetRadar from "../components/UpsetRadar";
-import WeatherInline from "../components/WeatherInline";
-import { useMatchup, useSchedule, useToday } from "../hooks";
-import { localDayOffset } from "../lib/time";
-import OddsSection from "../components/OddsSection";
-import { oddsHasContent } from "../lib/odds";
-import { sideLabel } from "../lib/labels";
-import { OUTCOME_CHIP } from "../lib/outcome";
-import { formatDateTime, formatShortDate } from "../lib/time";
-import type {
-  Game,
-  GameSide,
-  HeadToHeadRecord,
-  Matchup,
-  Player,
-} from "../types";
-
-/** Phases that belong in a pre-game previews browser. */
-const PREVIEW_PHASES = new Set<Game["phase"]>(["scheduled", "in_progress"]);
+import {
+  useGameDetail,
+  useMatchup,
+  useSchedule,
+  useSetupTeamsFor,
+  useStandings,
+  useTeams,
+  useToday,
+} from "../hooks";
+import { errorText } from "../lib/errorText";
+import { localKeyFromDate } from "../lib/time";
+import { useNow } from "../lib/useNow";
+import type { Game } from "../types";
+import { teamLookup, type TeamLookup } from "./league/model";
+import GamePicker from "./matchup/GamePicker";
+import GameSheet from "./matchup/GameSheet";
+import LastGames from "./matchup/LastGames";
+import Meetings from "./matchup/Meetings";
+import {
+  PREVIEW_DAYS,
+  bettingLines,
+  catalogLeagues,
+  chooseGame,
+  freshest,
+  mergeMeetings,
+  pickerSplit,
+  previewGames,
+  probabilityRows,
+  viewerDay,
+} from "./matchup/model";
+import { IdentityContext, type Identify } from "./matchup/parts";
+import { Injuries, Lineups } from "./matchup/Squads";
+import StandingsContext from "./matchup/StandingsContext";
+import WinProbability from "./matchup/WinProbability";
+import { colorsByName, hasUnwatchedLive } from "./results/model";
+import { dayKeyOffset } from "./today/model";
 
 /**
- * Pre-game PREVIEW browser. Gathers the upcoming games over the next two weeks
- * (scheduled + in-progress), lets you pick one, and renders a rich matchup
- * preview — win-probability / odds, recent form, head-to-head, projected
- * lineups, injuries, and the venue forecast — each section appearing only when
- * the matchup actually carries that data. An upset radar sits across the top,
- * flagging games where the model and the betting market disagree.
+ * The view stays mounted once visited, so anything fetched once would stand
+ * until a reload: the schedule and the standings are read again on a beat.
+ * Both are plain reads of what the server has stored.
  */
-export default function MatchupView() {
-  // Schedule is the primary source (next 14 days); Today is a fallback for
-  // when the schedule query is empty (e.g. nothing scheduled in the window
-  // but games are live right now).
-  const scheduleQuery = useSchedule(localDayOffset(0), localDayOffset(14));
-  const todayQuery = useToday();
+const SCHEDULE_REFRESH_MS = 5 * 60_000;
+const STANDINGS_REFRESH_MS = 5 * 60_000;
+/** How often the schedule is read again while it alone holds a live game. */
+const LIVE_RECHECK_MS = 60_000;
+/**
+ * How old the preview on screen may get before it is asked for again. The
+ * preview is assembled from provider calls (lines, forecast), so it is not
+ * polled like the rest: it is refreshed this often, and only while Matchup
+ * is the tab on screen and the game is still to be played or under way.
+ */
+const PREVIEW_REFRESH_MS = 10 * 60_000;
 
-  const upcoming = useMemo(() => {
-    const fromSchedule = (scheduleQuery.data ?? []).filter((game) =>
-      PREVIEW_PHASES.has(game.phase),
-    );
-    const source =
-      fromSchedule.length > 0
-        ? fromSchedule
-        : (todayQuery.data?.games ?? []).filter((game) =>
-            PREVIEW_PHASES.has(game.phase),
-          );
-    return [...source].sort(
-      (a, b) =>
-        new Date(a.start_time).getTime() - new Date(b.start_time).getTime(),
-    );
-  }, [scheduleQuery.data, todayQuery.data]);
-
-  const [selected, setSelected] = useState<string | undefined>(undefined);
-  // Ignore a selection that's no longer in the window (the schedule shifts as
-  // games finish); default to the first upcoming game.
-  const selectedId = upcoming.some((game) => game.id === selected)
-    ? selected
-    : upcoming[0]?.id;
-
-  const options: SelectOption[] = useMemo(
-    () =>
-      upcoming.map((game) => ({
-        id: game.id,
-        label: `${sideLabel(game.away)} @ ${sideLabel(game.home)}`,
-        logoUrl: game.away.logo_url ?? game.home.logo_url,
-        color: game.away.color ?? game.home.color,
-      })),
-    [upcoming],
-  );
-
-  const matchupQuery = useMatchup(selectedId);
-
-  // Initial load: wait for the schedule (and its fallback) before deciding
-  // whether there's anything to preview at all.
-  if (scheduleQuery.isLoading && todayQuery.isLoading) {
-    return <PageSkeleton />;
-  }
-
-  if (upcoming.length === 0) {
-    return (
-      <div className="sd-measure flex flex-col gap-8 py-2">
-        <EmptyState
-          title="No upcoming games"
-          message="Previews appear here as soon as your followed teams have games on the schedule."
-        />
-        <UpsetRadar games={upcoming} />
-      </div>
-    );
-  }
-
+/** The page's name, beside the control that chooses the game. */
+function PageHead({ children }: { children?: ReactNode }) {
   return (
-    <div className="sd-measure flex flex-col gap-8 py-2">
-      <Select
-        options={options}
-        value={selectedId}
-        onChange={setSelected}
-        ariaLabel="Choose a matchup to preview"
-      />
-
-      {matchupQuery.isError ? (
-        <EmptyState
-          title="Couldn't load this preview"
-          message={matchupQuery.error?.message ?? "Please try again."}
-        />
-      ) : matchupQuery.data === undefined ? (
-        <PreviewSkeleton />
-      ) : (
-        <Preview matchup={matchupQuery.data} />
-      )}
-
-      {/* The radar sits UNDER the preview you asked for. It is empty most of
-          the time, and an empty state should not hold the top of the screen
-          ahead of the thing the view exists to show. */}
-      <UpsetRadar games={upcoming} />
-    </div>
-  );
-}
-
-/** A single matchup preview, top to bottom. Sections self-hide when empty. */
-function Preview({ matchup }: { matchup: Matchup }) {
-  const { game, odds, weather, lineup } = matchup;
-
-  const hasForm = matchup.home_form.length > 0 || matchup.away_form.length > 0;
-  const hasH2H = matchup.head_to_head.length > 0;
-  const record = matchup.head_to_head_record;
-  // The stored "Head to head" list already shows near-window meetings —
-  // only surface the cross-season ones it doesn't have.
-  const recentIds = new Set(matchup.head_to_head.map((meeting) => meeting.id));
-  const recordMeetings = (record?.meetings ?? []).filter(
-    (meeting) => !recentIds.has(meeting.id),
-  );
-  const hasLineup =
-    lineup !== null && (lineup.home !== null || lineup.away !== null);
-  const hasInjuries =
-    matchup.home_injuries.length > 0 || matchup.away_injuries.length > 0;
-  const hasOdds = odds !== null && oddsHasContent(odds);
-
-  return (
-    <article className="flex flex-col gap-6">
-      <PreviewHeader game={game} />
-
-      {hasOdds && <OddsSection odds={odds} game={game} />}
-
-      {hasForm && (
-        <Section title="Form">
-          <div className="space-y-2">
-            <FormRow label={sideLabel(game.away)} form={matchup.away_form} />
-            <FormRow label={sideLabel(game.home)} form={matchup.home_form} />
-          </div>
-        </Section>
-      )}
-
-      {hasH2H && (
-        <Section title="Head to head">
-          <ul className="flex flex-col gap-1.5">
-            {matchup.head_to_head.map((meeting) => (
-              <HeadToHeadRow key={meeting.id} game={meeting} />
-            ))}
-          </ul>
-        </Section>
-      )}
-
-      {record !== null && (
-        <Section title={`Head to head · last ${record.seasons} seasons`}>
-          <HeadToHeadRecordSummary record={record} />
-          {recordMeetings.length > 0 && (
-            <ul className="mt-2 flex flex-col gap-1.5">
-              {recordMeetings.map((meeting) => (
-                <HeadToHeadRow key={meeting.id} game={meeting} />
-              ))}
-            </ul>
-          )}
-        </Section>
-      )}
-
-      {hasLineup && <LineupView lineup={lineup} game={game} />}
-
-      {hasInjuries && (
-        <Section title="Injuries">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <InjuryGroup
-              title={game.away.name}
-              players={matchup.away_injuries}
-            />
-            <InjuryGroup
-              title={game.home.name}
-              players={matchup.home_injuries}
-            />
-          </div>
-        </Section>
-      )}
-
-      {weather !== null && (
-        <Section title="Weather">
-          <div className="rounded-lg border border-zinc-800 bg-zinc-800/30 px-3 py-3">
-            <WeatherInline weather={weather} />
-          </div>
-        </Section>
-      )}
-    </article>
-  );
-}
-
-/** Away / home logos + names, the status badge, and the formatted start time. */
-function PreviewHeader({ game }: { game: Game }) {
-  return (
-    <header className="sd-rule flex flex-col gap-4 pb-4">
-      <div className="flex items-center justify-between gap-4">
-        <SideHeader side={game.away} align="start" />
-        <span className="sd-eyebrow shrink-0 text-zinc-500">vs</span>
-        <SideHeader side={game.home} align="end" />
-      </div>
-      <div className="sd-meta flex items-center gap-2 text-zinc-500">
-        <StatusBadge game={game} />
-        <span className="text-zinc-500" aria-hidden="true">
-          ·
-        </span>
-        <span className="sd-figure">{formatDateTime(game.start_time)}</span>
-      </div>
+    <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
+      <h1 className="bs-title">Matchup</h1>
+      {children}
     </header>
   );
 }
 
-function SideHeader({
-  side,
-  align,
-}: {
-  side: GameSide;
-  align: "start" | "end";
-}) {
-  return (
-    <div
-      className={
-        "flex min-w-0 flex-1 items-center gap-2 " +
-        (align === "end" ? "flex-row-reverse text-right" : "")
-      }
-    >
-      <TeamLogo
-        logoUrl={side.logo_url}
-        name={side.name}
-        abbreviation={side.abbreviation}
-        color={side.color}
-        size="md"
-      />
-      <span className="min-w-0 truncate text-sm font-semibold text-zinc-100">
-        {side.name}
-      </span>
-    </div>
-  );
-}
+const SHAPE = "border-t-[3px] border-rule bg-tint";
 
-/** Cross-season W-D-L strip: "Moss Rovers 4W 1D 2L vs Tidewater FC". */
-function HeadToHeadRecordSummary({ record }: { record: HeadToHeadRecord }) {
-  const chips: { label: string; className: string }[] = [
-    { label: `${record.wins}W`, className: OUTCOME_CHIP.W },
-    ...(record.draws > 0
-      ? [{ label: `${record.draws}D`, className: OUTCOME_CHIP.D }]
-      : []),
-    { label: `${record.losses}L`, className: OUTCOME_CHIP.L },
-  ];
+/** The shape of the page while the list of games is on its way. */
+function PageLoading() {
   return (
-    <p className="flex flex-wrap items-center gap-1.5 text-sm text-zinc-300">
-      <span className="font-medium text-zinc-100">{record.team_name}</span>
-      {chips.map((chip) => (
-        <span
-          key={chip.label}
-          className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-bold ${chip.className}`}
-        >
-          {chip.label}
-        </span>
-      ))}
-      <span className="text-zinc-500">vs</span>
-      <span>{record.opponent_name}</span>
-    </p>
-  );
-}
-
-/** One side's recent form as W/L/D chips, newest-first, with a side label. */
-function FormRow({ label, form }: { label: string; form: string[] }) {
-  if (form.length === 0) return null;
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-12 shrink-0 truncate text-xs font-semibold uppercase tracking-wide text-zinc-400">
-        {label}
-      </span>
-      <div className="flex flex-wrap gap-1">
-        {form.map((result, index) => (
-          <FormChip key={index} result={result} />
-        ))}
+    <Loading label="Loading games" className="flex flex-col gap-7">
+      <div className={`h-60 ${SHAPE}`} />
+      <div className="flex flex-wrap gap-7">
+        <div className={`h-60 min-w-0 flex-[999_1_35rem] ${SHAPE}`} />
+        <div className={`h-60 min-w-0 flex-[1_1_23.75rem] ${SHAPE}`} />
       </div>
-    </div>
+    </Loading>
   );
 }
 
-function FormChip({ result }: { result: string }) {
-  const key = result.toUpperCase();
-  return (
-    <span
-      className={
-        "flex size-5 items-center justify-center rounded text-xs font-bold " +
-        (OUTCOME_CHIP[key as keyof typeof OUTCOME_CHIP] ?? "bg-zinc-700/40 text-zinc-300")
-      }
-    >
-      {key}
-    </span>
-  );
-}
+/**
+ * One game, previewed or followed live: the two sides with their records
+ * and the score, each side's chance to win, the games running against
+ * expectation, the two sides' meetings, the followed side's last few
+ * results, where both stand in the table, and (kept from the old view)
+ * the betting lines, projected lineups and injuries. Every section hides
+ * when the game carries no data for it.
+ */
+export default function MatchupView() {
+  const showing = useIsActiveTab("matchup");
+  const now = useNow(30_000);
+  const { favoriteTeam } = useTheme();
+  const openManageTeams = useManageTeams();
 
-/** Past meeting: date · away v home · score. */
-function HeadToHeadRow({ game }: { game: Game }) {
-  return (
-    <li className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm">
-      <span className="w-14 shrink-0 text-xs tabular-nums text-zinc-500">
-        {formatShortDate(game.start_time)}
-      </span>
-      <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate tabular-nums">
-        <TeamLogo
-          logoUrl={game.away.logo_url}
-          name={game.away.name}
-          abbreviation={game.away.abbreviation}
-          color={game.away.color}
-          size="xs"
-        />
-        <span className="text-zinc-300">{sideLabel(game.away)}</span>
-        <span className="text-zinc-500">v</span>
-        <TeamLogo
-          logoUrl={game.home.logo_url}
-          name={game.home.name}
-          abbreviation={game.home.abbreviation}
-          color={game.home.color}
-          size="xs"
-        />
-        <span className="text-zinc-300">{sideLabel(game.home)}</span>
-      </span>
-      <span className="shrink-0 text-right text-xs font-semibold tabular-nums text-zinc-200">
-        {game.away.score ?? "—"}–{game.home.score ?? "—"}
-      </span>
-    </li>
-  );
-}
+  // Which games are on offer goes by the server's day, as on Today. The
+  // Today payload is the one the score line already polls, so reading it
+  // here costs no request, and it is what turns the game on screen live.
+  const todayQuery = useToday();
+  const todayKey = todayQuery.data?.date ?? localKeyFromDate(now);
+  const zone = todayQuery.data?.timezone;
+  const todayGames = todayQuery.data?.games;
+  // The day words ("Tonight", a bare start time) go by the viewer's own
+  // day, the one the clock times are printed in.
+  const today = viewerDay(now);
 
-/** One side's unavailable players: avatar + name + position + status detail. */
-function InjuryGroup({
-  title,
-  players,
-}: {
-  title: string;
-  players: Player[];
-}) {
-  if (players.length === 0) return null;
-  return (
-    <div>
-      <h4 className="mb-2 truncate text-xs font-semibold uppercase tracking-wide text-zinc-500">
-        {title}
-      </h4>
-      <ul className="space-y-1.5">
-        {players.map((player) => (
-          <li key={player.id} className="flex items-center gap-2.5">
-            <PlayerAvatar
-              photoUrl={player.photo_url}
-              name={player.name}
-              size="sm"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-1.5">
-                <span className="min-w-0 truncate text-sm text-zinc-200">
-                  {player.name}
-                </span>
-                {player.position !== null && (
-                  <span className="shrink-0 text-[11px] uppercase tracking-wide text-zinc-500">
-                    {player.position}
-                  </span>
-                )}
-              </div>
-              {player.status_detail !== null && (
-                <p className="truncate text-xs text-rose-400">
-                  {player.status_detail}
-                </p>
+  // From yesterday, so a game still going past midnight is in the range.
+  // Today no longer carries such a game, so while the schedule holds a live
+  // game that Today does not, it is read again on a shorter beat.
+  const [recheckLive, setRecheckLive] = useState(false);
+  const scheduleQuery = useSchedule(
+    dayKeyOffset(todayKey, -1),
+    dayKeyOffset(todayKey, PREVIEW_DAYS),
+    undefined,
+    { refetchInterval: recheckLive ? LIVE_RECHECK_MS : SCHEDULE_REFRESH_MS },
+  );
+  // The range moves on when the server's day does, and a new range is a
+  // new query with nothing loaded yet. The last answer stands in until the
+  // new one lands, or the whole page would drop to its skeleton (or jump to
+  // another game) once a night.
+  const loadedSchedule = scheduleQuery.data;
+  const [heldSchedule, setHeldSchedule] = useState<Game[] | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    if (loadedSchedule !== undefined) setHeldSchedule(loadedSchedule);
+  }, [loadedSchedule]);
+  const schedule = loadedSchedule ?? heldSchedule;
+  const unwatchedLive = useMemo(
+    () => hasUnwatchedLive(schedule ?? [], todayGames ?? []),
+    [schedule, todayGames],
+  );
+  useEffect(() => {
+    setRecheckLive(unwatchedLive);
+  }, [unwatchedLive]);
+
+  const teamsQuery = useTeams();
+  const leagues = teamsQuery.data?.leagues;
+  const teams = teamsQuery.data?.teams;
+
+  // The games on offer, and the one on screen: the reader's choice, else
+  // the first (see `chooseGame` for what happens when a chosen game ends).
+  const list = useMemo(
+    () => previewGames(schedule ?? [], todayGames ?? [], todayKey, zone),
+    [schedule, todayGames, todayKey, zone],
+  );
+  const [chosenId, setChosenId] = useState<string | undefined>(undefined);
+  const listed = useMemo(
+    () => chooseGame(list, schedule ?? [], todayGames ?? [], chosenId, now),
+    [list, schedule, todayGames, chosenId, now],
+  );
+  const selectedId = listed?.id;
+
+  const matchupQuery = useMatchup(selectedId);
+  const matchup = matchupQuery.data;
+  // The box score is what carries the in-game win probability. Each poll of
+  // it costs the server uncached provider calls, so it runs only while the
+  // game is live and Matchup is the tab on screen.
+  const detailQuery = useGameDetail(selectedId, {
+    enabled: showing && listed?.phase === "in_progress",
+  });
+  const detail = detailQuery.data;
+
+  // The preview does not refresh, so its copy of the game stands still. The
+  // game on screen is the newest copy among the payloads that carry it.
+  const listedFromToday =
+    listed !== null && (todayGames ?? []).some((entry) => entry.id === listed.id);
+  const game: Game | null =
+    listed === null
+      ? null
+      : (freshest<Game>([
+          {
+            value: listed,
+            at: listedFromToday
+              ? todayQuery.dataUpdatedAt
+              : scheduleQuery.dataUpdatedAt,
+          },
+          { value: detail?.game, at: detailQuery.dataUpdatedAt },
+          { value: matchup?.game, at: matchupQuery.dataUpdatedAt },
+        ]) ?? listed);
+
+  const leagueId = game?.league_id;
+  const league = leagues?.find((entry) => entry.id === leagueId);
+  // A fighter has no table; every other sport has one or a ranking.
+  const standingsQuery = useStandings(
+    game !== null && game.sport !== "mma" ? game.league_id : undefined,
+    undefined,
+    { refetchInterval: STANDINGS_REFRESH_MS },
+  );
+  const standings = standingsQuery.data;
+
+  // ── Team colours and codes ──────────────────────────────────────────
+  // A game reached through a followed team's schedule carries no colour on
+  // either side. Joined here, per league: its standings rows (codes), the
+  // followed teams and the setup catalog (every team's colour).
+  const catalogKey = catalogLeagues(
+    game === null ? list : [game, ...list],
+    leagues ?? [],
+  ).join("\n");
+  const catalogIds = useMemo(
+    () => (catalogKey === "" ? [] : catalogKey.split("\n")),
+    [catalogKey],
+  );
+  const catalogs = useSetupTeamsFor(catalogIds);
+  const lookups = useMemo(() => {
+    const byLeague: Record<string, TeamLookup> = {};
+    const ids = new Set(catalogIds);
+    if (leagueId !== undefined) ids.add(leagueId);
+    for (const id of ids) {
+      const at = catalogIds.indexOf(id);
+      byLeague[id] = teamLookup([
+        id === leagueId
+          ? (standings?.rows ?? []).map((row) => ({
+              name: row.team_name,
+              abbreviation: row.abbreviation,
+              color: row.color,
+            }))
+          : [],
+        (teams ?? []).filter((team) => team.league_id === id),
+        at === -1 ? [] : (catalogs[at]?.teams ?? []),
+      ]);
+    }
+    return byLeague;
+  }, [catalogIds, catalogs, leagueId, standings, teams]);
+  const followedColors = useMemo(() => {
+    const colors: Record<string, string> = {};
+    for (const team of teams ?? []) {
+      if (team.color) colors[team.id] = team.color;
+    }
+    return colors;
+  }, [teams]);
+  const namedColors = useMemo(
+    () => colorsByName([...(schedule ?? []), ...(todayGames ?? [])]),
+    [schedule, todayGames],
+  );
+  const identify: Identify = useCallback(
+    (side, sideLeague) => {
+      const known = lookups[sideLeague]?.(side.name, side.abbreviation) ?? null;
+      return {
+        color:
+          side.color ||
+          (side.team_id === null ? undefined : followedColors[side.team_id]) ||
+          known?.color ||
+          namedColors[side.name] ||
+          null,
+        abbreviation: side.abbreviation || known?.abbreviation || null,
+      };
+    },
+    [lookups, followedColors, namedColors],
+  );
+
+  // ── Keeping the preview from going stale ────────────────────────────
+  const previewAt = Math.max(
+    matchupQuery.dataUpdatedAt,
+    matchupQuery.errorUpdatedAt,
+  );
+  const refetchPreview = matchupQuery.refetch;
+  const toPlay = game?.phase === "scheduled" || game?.phase === "in_progress";
+  useEffect(() => {
+    if (!showing || !toPlay || previewAt === 0) return;
+    const timer = window.setTimeout(
+      () => void refetchPreview(),
+      Math.max(0, PREVIEW_REFRESH_MS - (Date.now() - previewAt)),
+    );
+    return () => window.clearTimeout(timer);
+  }, [showing, toPlay, previewAt, refetchPreview]);
+
+  const [openGame, setOpenGame] = useState<Game | null>(null);
+
+  const meetings = useMemo(
+    () =>
+      matchup === undefined
+        ? []
+        : mergeMeetings(matchup.head_to_head, matchup.head_to_head_record),
+    [matchup],
+  );
+  // The games the API can open a box score for are the stored ones; the
+  // meetings that came only with the cross-season record are not.
+  const openable = useMemo(
+    () => new Set((matchup?.head_to_head ?? []).map((entry) => entry.id)),
+    [matchup],
+  );
+
+  const radar = (
+    <UpsetRadar
+      games={list}
+      currentId={selectedId}
+      today={today}
+      showing={showing}
+      onSelect={setChosenId}
+    />
+  );
+
+  // ── Nothing to preview ──────────────────────────────────────────────
+  if (game === null) {
+    const scheduleFailed = scheduleQuery.isError && schedule === undefined;
+    return (
+      <IdentityContext.Provider value={identify}>
+        <div className="flex flex-col gap-7">
+          <PageHead />
+          {scheduleFailed ? (
+            <Notice
+              title="Upcoming"
+              alert
+              headline="Couldn’t load the schedule"
+              action={{
+                label: "Retry",
+                onClick: () => {
+                  void scheduleQuery.refetch();
+                  void todayQuery.refetch();
+                },
+              }}
+            >
+              {`The request failed${errorText(scheduleQuery.error)}.`}
+            </Notice>
+          ) : schedule === undefined ? (
+            // Nothing answered yet. Once a range has answered, its games
+            // stand until the next range does (see `heldSchedule`).
+            <PageLoading />
+          ) : (
+            <>
+              {teamsQuery.data !== undefined &&
+              teamsQuery.data.teams.length === 0 &&
+              teamsQuery.data.leagues.length === 0 ? (
+                <Notice
+                  title="Upcoming"
+                  headline="No upcoming games"
+                  action={{ label: "Manage teams", onClick: openManageTeams }}
+                >
+                  Nothing is followed yet. Follow a team or a competition to
+                  see its games previewed here.
+                </Notice>
+              ) : (
+                <Notice title="Upcoming" headline="No upcoming games">
+                  Previews appear here as soon as your followed teams have
+                  games on the schedule.
+                </Notice>
               )}
+              {/* In a row of its own: the radar sizes itself as a column of
+                  the row it shares with the win probability. */}
+              <div className="flex">{radar}</div>
+            </>
+          )}
+        </div>
+      </IdentityContext.Provider>
+    );
+  }
+
+  const split = pickerSplit(list, listed);
+  const odds = matchup?.odds ?? detail?.odds ?? null;
+  const rows =
+    matchup === undefined ? [] : probabilityRows(game, odds, detail?.summary);
+  const lines = matchup === undefined ? [] : bettingLines(game, odds);
+  const hasLineup =
+    matchup !== undefined &&
+    matchup.lineup !== null &&
+    (matchup.lineup.home !== null || matchup.lineup.away !== null);
+
+  // A background refetch that failed keeps what was loaded behind a banner;
+  // only a request with nothing cached replaces its part of the page.
+  const stale =
+    scheduleQuery.isError && schedule !== undefined
+      ? {
+          message: "Connection lost — showing the last loaded games.",
+          retry: () => void scheduleQuery.refetch(),
+        }
+      : scheduleQuery.isError
+        ? {
+            message: "Couldn’t load the schedule — showing today’s games only.",
+            retry: () => void scheduleQuery.refetch(),
+          }
+        : matchupQuery.isError && matchup !== undefined
+          ? {
+              message: "Connection lost — showing the last loaded preview.",
+              retry: () => void matchupQuery.refetch(),
+            }
+          : null;
+
+  const previewMissing =
+    matchupQuery.error instanceof ApiError && matchupQuery.error.status === 404;
+
+  return (
+    <IdentityContext.Provider value={identify}>
+      <div className="flex flex-col gap-7">
+        {stale !== null && (
+          <StaleBanner message={stale.message} onRetry={stale.retry} />
+        )}
+
+        <PageHead>
+          <GamePicker
+            split={split}
+            currentId={game.id}
+            today={today}
+            onPick={setChosenId}
+          />
+        </PageHead>
+
+        <GameSheet
+          game={game}
+          leagueName={league?.name}
+          standings={standings}
+          // A forecast is for a game still to start. The server sends none
+          // for any other, but the copy fetched before the start is still
+          // held once the game is under way or over.
+          weather={
+            game.phase === "scheduled" ? (matchup?.weather ?? null) : null
+          }
+          now={now}
+          onOpen={setOpenGame}
+        />
+
+        <div className="flex flex-wrap items-stretch gap-7">
+          {matchup !== undefined ? (
+            <WinProbability game={game} rows={rows} lines={lines} />
+          ) : matchupQuery.isError ? (
+            previewMissing ? (
+              <Notice
+                title="Preview"
+                headline="No preview for this game"
+                className="min-w-0 flex-[999_1_35rem]"
+              >
+                It is no longer on the stored schedule.
+              </Notice>
+            ) : (
+              <Notice
+                title="Preview"
+                alert
+                headline="Couldn’t load this preview"
+                action={{
+                  label: "Retry",
+                  onClick: () => void matchupQuery.refetch(),
+                }}
+                className="min-w-0 flex-[999_1_35rem]"
+              >
+                {`The request failed${errorText(matchupQuery.error)}.`}
+              </Notice>
+            )
+          ) : (
+            <Loading
+              label="Loading preview"
+              className="min-w-0 flex-[999_1_35rem]"
+            >
+              <div className={`h-full min-h-56 ${SHAPE}`} />
+            </Loading>
+          )}
+          {radar}
+        </div>
+
+        {matchup !== undefined ? (
+          <>
+            <div className="flex flex-wrap items-stretch gap-7 empty:hidden">
+              <Meetings
+                game={game}
+                meetings={meetings}
+                record={matchup.head_to_head_record}
+                openable={openable}
+                onOpen={setOpenGame}
+                now={now}
+              />
+              <LastGames
+                // A new game starts on its own default side.
+                key={game.id}
+                game={game}
+                league={league}
+                teams={teams ?? []}
+                favoriteId={favoriteTeam?.id ?? null}
+                awayForm={matchup.away_form}
+                homeForm={matchup.home_form}
+                seasonLabel={standings?.season}
+                labelKnown={standingsQuery.isFetched}
+                now={now}
+              />
+              <StandingsContext game={game} standings={standings} />
             </div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
+            {hasLineup && matchup.lineup !== null && (
+              <Lineups game={game} lineup={matchup.lineup} />
+            )}
+            <Injuries
+              game={game}
+              away={matchup.away_injuries}
+              home={matchup.home_injuries}
+            />
+          </>
+        ) : (
+          !matchupQuery.isError && (
+            <div
+              aria-hidden="true"
+              className="flex animate-pulse flex-wrap gap-7"
+            >
+              {[0, 1, 2].map((index) => (
+                <div
+                  key={index}
+                  className={`h-72 min-w-0 flex-[1_1_21.25rem] ${SHAPE}`}
+                />
+              ))}
+            </div>
+          )
+        )}
 
-/** Section wrapper: an uppercase label over its content. */
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <section>
-      <h3 className="sd-eyebrow sd-rule mb-3.5 pb-2.5 text-zinc-500">
-        {title}
-      </h3>
-      {children}
-    </section>
-  );
-}
-
-function EmptyState({ title, message }: { title: string; message: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-800 py-12 text-center">
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        className="h-8 w-8 text-zinc-500"
-        aria-hidden="true"
-      >
-        <rect x="3" y="4" width="18" height="16" rx="2" />
-        <path d="M3 9h18M9 4v16" strokeLinecap="round" />
-      </svg>
-      <p className="text-sm font-medium text-zinc-300">{title}</p>
-      <p className="max-w-sm text-xs text-zinc-500">{message}</p>
-    </div>
-  );
-}
-
-/** Full-page skeleton while the upcoming-games list is still resolving. */
-function PageSkeleton() {
-  return (
-    <div className="flex animate-pulse flex-col gap-4" aria-hidden="true">
-      <div className="h-10 rounded-lg bg-zinc-800/60" />
-      <div className="h-9 w-48 rounded-full bg-zinc-800/60" />
-      <PreviewSkeleton />
-    </div>
-  );
-}
-
-/** Skeleton for the preview body while a matchup loads. */
-function PreviewSkeleton() {
-  return (
-    <div className="flex animate-pulse flex-col gap-6" aria-hidden="true">
-      <div className="h-20 rounded-xl bg-zinc-800/60" />
-      <div className="space-y-2">
-        <div className="h-3 w-28 rounded bg-zinc-800/60" />
-        <div className="h-16 rounded-lg bg-zinc-800/60" />
+        {openGame !== null && (
+          <GameDetailModal
+            gameId={openGame.id}
+            fallbackGame={openGame}
+            onClose={() => setOpenGame(null)}
+          />
+        )}
       </div>
-      <div className="space-y-2">
-        <div className="h-3 w-20 rounded bg-zinc-800/60" />
-        <div className="h-10 rounded-lg bg-zinc-800/60" />
-      </div>
-    </div>
+    </IdentityContext.Provider>
   );
 }

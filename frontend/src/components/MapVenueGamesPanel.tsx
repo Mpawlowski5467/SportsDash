@@ -134,7 +134,7 @@ export default function MapVenueGamesPanel({
           aria-hidden={!open}
           inert={!open}
           className={
-            "fixed bottom-0 right-0 top-0 z-[60] flex w-[20rem] max-w-[88vw] flex-col lg:top-12 lg:z-40 " +
+            "fixed bottom-0 right-0 top-0 z-[60] flex w-[20rem] max-w-[88vw] flex-col lg:top-[var(--bs-masthead-h)] lg:z-40 " +
             "border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform " +
             "duration-300 ease-out motion-reduce:transition-none sm:w-[22rem] " +
             (open ? "translate-x-0" : "pointer-events-none translate-x-full")

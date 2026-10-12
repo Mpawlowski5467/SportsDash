@@ -10,8 +10,11 @@ import {
   localDateKey,
   localDayOffset,
   localKeyFromDate,
+  longDay,
+  monthShort,
   parseLocalDateKey,
   relativeTime,
+  weekdayShort,
 } from "./time";
 
 afterEach(() => {
@@ -76,5 +79,29 @@ describe("relativeTime", () => {
 
   it("returns 'recently' for an unparseable timestamp", () => {
     expect(relativeTime("not-a-date")).toBe("recently");
+  });
+});
+
+describe("weekdayShort and longDay", () => {
+  it("are the viewer's local day", () => {
+    expect(weekdayShort("2026-07-30T02:05:00Z")).toBe("Wed");
+    expect(longDay("2026-07-30T02:05:00Z")).toBe("Wednesday, July 29");
+  });
+
+  it("take a Date as the day it already is", () => {
+    const day = parseLocalDateKey("2026-07-31");
+    expect(weekdayShort(day)).toBe("Fri");
+    expect(longDay(day)).toBe("Friday, July 31");
+  });
+});
+
+describe("monthShort", () => {
+  it("is the month of the viewer's local day", () => {
+    // 02:05 UTC on August 1 is still July 31 in New York.
+    expect(monthShort("2026-08-01T02:05:00Z")).toBe("Jul");
+  });
+
+  it("takes a Date as the day it already is", () => {
+    expect(monthShort(parseLocalDateKey("2026-08-01"))).toBe("Aug");
   });
 });

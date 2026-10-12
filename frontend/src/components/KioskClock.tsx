@@ -59,12 +59,12 @@ export default function KioskClock() {
         >
           {liveCount} live
         </span>
-        <span className="text-zinc-700" aria-hidden="true">
+        <span className="text-zinc-500" aria-hidden="true">
           ·
         </span>
         <span className="text-zinc-400">{upcomingCount} upcoming today</span>
       </div>
-      <div className="absolute bottom-8 text-xs uppercase tracking-widest text-zinc-700">
+      <div className="absolute bottom-8 text-xs uppercase tracking-widest text-zinc-500">
         Sports<span className="text-amber-400/70">Dash</span> kiosk
       </div>
     </div>

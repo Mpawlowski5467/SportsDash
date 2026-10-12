@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" data-theme="light" data-palette="brand">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#09090b" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#ffffff" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
@@ -16,50 +16,109 @@
     <title>SportsDash</title>
     <!--
       No-FOUC theme bootstrap. Runs before the stylesheet paints and before
-      main.tsx loads, so the persisted theme's palette is in place on the
-      very first frame (no flash of the dark default). Mirrors the values in
-      src/lib/theme.ts (localStorage key, allowed ids, default). Kept inline
-      and dependency-free on purpose.
+      main.tsx loads, so the persisted appearance is in place on the very
+      first frame (no flash of the light default, and no flash of the brand
+      orange under the Team palette). Mirrors src/lib/theme.ts: the storage
+      keys, the id table (STORED_THEME_IDS) and the defaults. A test
+      (theme.test.ts) reads this script and fails if the two drift. Kept
+      inline and dependency-free on purpose.
 
-      `THEMES` below maps id -> is-dark, so adding a theme is ONE edit here
-      rather than two: the id list and the dark-based test used to be
-      separate expressions, and a new dark theme that was added to the first
-      but not the second booted with the wrong `dark` class for a frame.
+      `STORED` maps every id a build has ever written to [base, palette it
+      implied]. Until Box Score the theme was one choice, so "custom" (and
+      "stadium" before it) meant the dark base tinted by a followed team:
+      now Dark + Team. An explicit stored palette always wins over the one
+      an old id implies.
+
+      `BASES` maps base -> [is dark, takes the Team palette, theme-color],
+      so adding a base is ONE edit here rather than three.
     -->
     <script>
       (function () {
         try {
-          var THEMES = { dark: 1, light: 0, custom: 1, contrast: 1 };
-          // Retired/renamed ids still sitting in a returning user's storage.
-          // Mirrors LEGACY_THEME_IDS in src/lib/theme.ts; without it the
-          // first paint would use the default while React later applied the
-          // migrated theme, which is the flash this script exists to avoid.
-          var LEGACY = {
-            stadium: "custom",
-            floodlight: "dark",
-            ember: "dark",
-            newsprint: "light",
+          var STORED = {
+            light: ["light"],
+            dark: ["dark"],
+            contrast: ["contrast"],
+            custom: ["dark", "team"],
+            stadium: ["dark", "team"],
+            floodlight: ["dark"],
+            ember: ["dark"],
+            newsprint: ["light"],
           };
-          var stored = window.localStorage.getItem("sportsdash.theme");
+          var BASES = {
+            light: [0, 1, "#ffffff"],
+            dark: [1, 1, "#171c22"],
+            contrast: [1, 0, "#000000"],
+          };
+          var storage = window.localStorage;
           // hasOwnProperty, not `in` / truthiness: a stored value of
           // "constructor" or "toString" hits Object.prototype and would
           // otherwise be accepted as a theme id.
           var own = Object.prototype.hasOwnProperty;
-          var theme = "dark";
-          if (stored !== null) {
-            if (own.call(THEMES, stored)) theme = stored;
-            else if (own.call(LEGACY, stored)) theme = LEGACY[stored];
-          }
+          var stored = storage.getItem("sportsdash.theme");
+          var known =
+            stored !== null && own.call(STORED, stored)
+              ? STORED[stored]
+              : ["light"];
+          var theme = known[0];
+          var base = BASES[theme];
+          var storedPalette = storage.getItem("sportsdash.palette");
+          var palette =
+            storedPalette === "brand" || storedPalette === "team"
+              ? storedPalette
+              : known[1] || "brand";
+          if (base[1] !== 1) palette = "brand";
+
           var root = document.documentElement;
           root.setAttribute("data-theme", theme);
-          root.classList.toggle("dark", THEMES[theme] === 1);
+          root.setAttribute("data-palette", palette);
+          var scheme = document.querySelector('meta[name="color-scheme"]');
+          if (scheme) scheme.setAttribute("content", base[0] ? "dark" : "light");
+          var chrome = document.querySelector('meta[name="theme-color"]');
+          if (chrome) chrome.setAttribute("content", base[2]);
+
+          // Kiosk scales the sheet from the root font size; set it before
+          // paint so a wall display does not start small and jump.
+          if (storage.getItem("sportsdash.kiosk") === "1") {
+            root.setAttribute("data-kiosk", "");
+          }
+
+          // Last, because it parses stored JSON: a corrupt cache throws to
+          // the catch below and must not take anything above with it.
+          // The Team palette's measured colours, cached by the app for this
+          // base (see setTeamAccent). Only known variable names and plain
+          // colour values are applied: this is storage, so it is untrusted.
+          if (palette === "team") {
+            var cached = JSON.parse(
+              storage.getItem("sportsdash.teamAccent") || "null",
+            );
+            if (cached && cached.theme === theme && cached.vars) {
+              var names = [
+                "--sd-accent",
+                "--sd-on-accent",
+                "--sd-accent-text",
+                "--sd-accent-edge",
+                "--sd-accent-edge-block",
+              ];
+              for (var i = 0; i < names.length; i++) {
+                var value = cached.vars[names[i]];
+                if (
+                  typeof value === "string" &&
+                  /^(#[0-9a-f]{6}|transparent)$/.test(value)
+                ) {
+                  root.style.setProperty(names[i], value);
+                }
+              }
+            }
+          }
         } catch (e) {
-          /* storage blocked — leave the dark default from <html class="dark"> */
+          /* storage blocked or corrupt: the light default in the markup
+             and stylesheet stands */
         }
       })();
     </script>
   </head>
-  <body style="background-color: var(--color-zinc-950, #09090b)">
+  <body style="background-color: var(--bs-ground, #f1f2f4)">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

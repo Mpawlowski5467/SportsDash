@@ -17,6 +17,20 @@ const SHORT_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
 });
 
+const WEEKDAY_SHORT_FORMAT = new Intl.DateTimeFormat("en-US", {
+  weekday: "short",
+});
+
+const LONG_DAY_FORMAT = new Intl.DateTimeFormat("en-US", {
+  weekday: "long",
+  month: "long",
+  day: "numeric",
+});
+
+const MONTH_SHORT_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+});
+
 /**
  * Newer ICU versions emit a narrow no-break space (U+202F) before the
  * AM/PM marker; normalize to a plain space so output is exactly "7:30 PM".
@@ -33,6 +47,27 @@ export function formatTime(iso: string): string {
 /** "Jun 11" in the local timezone. */
 export function formatShortDate(iso: string): string {
   return normalizeSpaces(SHORT_DATE_FORMAT.format(new Date(iso)));
+}
+
+/**
+ * "Wed" in the local timezone. A `Date` is taken as it is: a calendar day
+ * already parsed to local midnight, where an ISO string is a moment.
+ */
+export function weekdayShort(when: string | Date): string {
+  return WEEKDAY_SHORT_FORMAT.format(new Date(when));
+}
+
+/** "Wednesday, July 29" in the local timezone; a `Date` as for `weekdayShort`. */
+export function longDay(when: string | Date): string {
+  return LONG_DAY_FORMAT.format(new Date(when));
+}
+
+/**
+ * "Jul" in the local timezone; a `Date` as for `weekdayShort`. The month
+ * over a date cell (Calendar, News).
+ */
+export function monthShort(when: string | Date): string {
+  return MONTH_SHORT_FORMAT.format(new Date(when));
 }
 
 /** "Jun 11, 7:30 PM" in the local timezone. */

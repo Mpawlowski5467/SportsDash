@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import type { Game, GameOdds, GameSide, League, Sport } from "../types";
 import { useTeams } from "../hooks";
 import { watchability } from "../lib/whyWatch";
+import { ScoreFigure } from "./bs";
 import GameDetailModal from "./GameDetailModal";
 import StatusBadge, {
   fightResultOf,
@@ -149,15 +150,14 @@ function Side({
         {side.name}
       </span>
       {showScore && (
-        <span
-          key={side.score ?? "none"}
+        <ScoreFigure
+          of={game.id}
+          value={side.score}
           className={
-            "sd-score sd-figure shrink-0 " +
+            "sd-figure shrink-0 " +
             (isLeader ? "font-bold text-zinc-100" : "text-zinc-400")
           }
-        >
-          {side.score}
-        </span>
+        />
       )}
     </span>
   );
@@ -279,9 +279,9 @@ export default function GameRow({
               )}
               {isWholeComp && leagueName !== undefined && (
                 <>
-                  <span className="truncate" style={{ color: accent }}>
-                    {leagueName}
-                  </span>
+                  {/* Ink, not the sport colour: the row already carries
+                      that as its strip, and as text it is under 4.5:1. */}
+                  <span className="truncate">{leagueName}</span>
                   {meta.length > 0 && (
                     <span aria-hidden="true" className="text-zinc-500">
                       ·

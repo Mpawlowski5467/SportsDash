@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { Icon } from "./bs";
 import KioskClock from "./KioskClock";
+import { MastheadWordmark, SportsDashBall } from "./logo";
 import ScoreTicker from "./ScoreTicker";
 import { useIdle } from "../lib/useIdle";
 import { useTicker } from "../lib/useTicker";
@@ -56,6 +58,13 @@ function useKiosk(): [boolean, () => void] {
     }
   });
 
+  // Kiosk scales the whole sheet from the root font size (`html[data-kiosk]`
+  // in index.css). The index.html bootstrap sets the same attribute before
+  // first paint, so a wall display does not start small and jump.
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-kiosk", kiosk);
+  }, [kiosk]);
+
   const toggle = useCallback(() => {
     setKiosk((prev) => {
       const next = !prev;
@@ -83,8 +92,11 @@ function useClock(): string {
   return now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+const MENU_ITEM =
+  "bs-focus-inset flex min-h-11 w-full cursor-pointer items-center px-4 text-left font-condensed text-[1.0625rem] font-bold uppercase tracking-[0.06em] text-ink hover:bg-hover";
+
 /**
- * Gear button with a tiny dropdown: "Manage teams" (the onboarding wizard in
+ * Settings button with a tiny dropdown: "Manage teams" (the onboarding wizard in
  * manage mode) and "Settings" (appearance + ticker). Closes on
  * outside click, Escape, or after a selection.
  */
@@ -97,6 +109,7 @@ function SettingsMenu({
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -121,47 +134,45 @@ function SettingsMenu({
 
   const choose = (action?: () => void) => {
     setOpen(false);
+    // The menu item is about to unmount. Park focus on the trigger first, so
+    // the overlay this opens records a launcher that still exists and can
+    // hand focus back to it when it closes.
+    triggerRef.current?.focus();
     action?.();
   };
 
   return (
     <div ref={containerRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((prev) => !prev)}
         aria-label="Settings"
         title="Settings"
         aria-haspopup="menu"
         aria-expanded={open}
-        className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+        className="bs-btn bs-btn--icon"
       >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="h-4 w-4"
-          aria-hidden="true"
-        >
-          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-          <circle cx="12" cy="12" r="3" />
-        </svg>
+        <Icon size={20}>
+          <path d="M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10M20 18h0" />
+          <circle cx="15" cy="6" r="2.5" />
+          <circle cx="9" cy="12" r="2.5" />
+          <circle cx="17" cy="18" r="2.5" />
+        </Icon>
       </button>
 
       {open && (
         <div
           role="menu"
           aria-label="Settings"
-          className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-md border border-zinc-800 bg-zinc-900 py-1 shadow-xl shadow-black/40"
+          className="absolute right-0 top-full z-50 mt-1 w-48 border-2 border-ink bg-sheet"
         >
           {onManageTeams && (
             <button
               type="button"
               role="menuitem"
               onClick={() => choose(onManageTeams)}
-              className="block w-full px-3 py-2 text-left text-sm text-zinc-200 transition-colors hover:bg-zinc-800"
+              className={MENU_ITEM}
             >
               Manage teams
             </button>
@@ -171,7 +182,7 @@ function SettingsMenu({
               type="button"
               role="menuitem"
               onClick={() => choose(onOpenSettings)}
-              className="block w-full px-3 py-2 text-left text-sm text-zinc-200 transition-colors hover:bg-zinc-800"
+              className={MENU_ITEM + " border-t border-hair"}
             >
               Settings
             </button>
@@ -191,26 +202,12 @@ function KioskToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
       aria-label="Kiosk mode"
       aria-pressed={on}
       title={on ? "Kiosk mode on — click to stop" : "Kiosk mode"}
-      className={
-        on
-          ? "rounded-md p-1 text-amber-400 transition-colors hover:bg-zinc-800"
-          : "rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
-      }
+      className="bs-btn bs-btn--icon"
     >
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="h-4 w-4"
-        aria-hidden="true"
-      >
-        <rect x="2" y="3" width="20" height="14" rx="2" />
-        <path d="M8 21h8" />
-        <path d="M12 17v4" />
-      </svg>
+      <Icon size={20}>
+        <rect x="2" y="3" width="20" height="14" rx="1" />
+        <path d="M8 21h8M12 17v4" />
+      </Icon>
     </button>
   );
 }
@@ -296,16 +293,28 @@ export default function Layout({
   }, [kiosk, onChange]);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <header className="sticky top-0 z-50 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur">
-        <div className="mx-auto flex min-h-12 max-w-[1600px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 lg:h-12 lg:flex-nowrap lg:gap-4 lg:py-0">
-          <span className="shrink-0 select-none whitespace-nowrap text-base font-bold tracking-tight">
-            Sports<span className="text-amber-400">Dash</span>
-          </span>
+    <div className="min-h-screen bg-ground text-ink">
+      {/* Masthead: a white sheet over a 3px ink rule. One 68px row from
+          1280px; below that the nav drops to its own scrolling row. Keep
+          --bs-masthead-h in index.css in step with the row heights here. */}
+      <header className="sticky top-0 z-50 border-b-[3px] border-ink bg-sheet">
+        <div className="mx-auto flex max-w-[90rem] flex-wrap items-center gap-x-3 px-4 sm:gap-x-7 sm:px-8">
+          <button
+            type="button"
+            onClick={() => onChange("today")}
+            aria-label="SportsDash home"
+            className="flex min-h-14 shrink-0 cursor-pointer select-none items-center gap-2 text-ink sm:min-h-[4.25rem] sm:gap-2.5"
+          >
+            <SportsDashBall
+              variant="ink"
+              className="h-7 w-7 sm:h-[2.125rem] sm:w-[2.125rem]"
+            />
+            <MastheadWordmark className="text-[1.375rem] sm:text-3xl" />
+          </button>
 
           <nav
             aria-label="Sections"
-            className="order-last flex w-full min-w-0 items-center gap-1 overflow-x-auto pb-1 lg:order-none lg:w-auto lg:pb-0"
+            className="order-last flex w-full min-w-0 items-stretch overflow-x-auto font-condensed text-[1.1875rem] tracking-[0.06em] xl:order-none xl:w-auto xl:overflow-visible"
           >
             {TABS.map((tab) => {
               const isActive = tab.id === active;
@@ -316,56 +325,73 @@ export default function Layout({
                   onClick={() => onChange(tab.id)}
                   aria-current={isActive ? "page" : undefined}
                   className={
-                    isActive
-                      ? "shrink-0 whitespace-nowrap rounded-full bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 transition-colors lg:py-1"
-                      : "shrink-0 whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200 lg:py-1"
+                    // `uppercase` is on the button, not the nav: browsers
+                    // reset text-transform on buttons, so it does not inherit.
+                    "bs-focus-inset grid min-h-11 shrink-0 cursor-pointer place-items-center whitespace-nowrap px-[1.125rem] uppercase xl:min-h-[4.25rem] " +
+                    (isActive
+                      ? "bg-tab font-bold text-on-tab"
+                      : "font-semibold text-ink hover:bg-hover")
                   }
                 >
-                  {tab.label}
+                  <span className="col-start-1 row-start-1">{tab.label}</span>
+                  {/* Holds the bold width, so the tabs to the right do not
+                      shift when this one becomes current. */}
+                  <span
+                    aria-hidden="true"
+                    className="invisible col-start-1 row-start-1 font-bold"
+                  >
+                    {tab.label}
+                  </span>
                 </button>
               );
             })}
           </nav>
 
-          <time className="ml-auto whitespace-nowrap text-sm tabular-nums text-zinc-400">
-            {clock}
-          </time>
+          <div className="ml-auto flex min-h-14 items-center gap-2 sm:min-h-[4.25rem] sm:gap-3">
+            <time className="whitespace-nowrap font-condensed text-[1.375rem] font-bold leading-none sm:text-3xl">
+              {clock}
+            </time>
 
-          {kiosk && (
-            <span
-              aria-live="polite"
-              title="Kiosk mode — auto-rotating tabs"
-              className="flex select-none items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-0.5 text-xs font-medium text-amber-300"
-            >
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-400" />
+            {kiosk && (
+              <span
+                title="Kiosk mode — auto-rotating tabs"
+                className="bs-spot select-none"
+              >
+                Kiosk
+                {secondsLeft !== null && (
+                  <span className="hidden tabular-nums sm:inline">
+                    {" "}
+                    · next in {secondsLeft}s
+                  </span>
+                )}
               </span>
-              Kiosk
-              {secondsLeft !== null && (
-                <span className="hidden tabular-nums text-amber-400/70 sm:inline">
-                  next in {secondsLeft}s
-                </span>
-              )}
-            </span>
-          )}
+            )}
 
-          <KioskToggle on={kiosk} onToggle={toggleKiosk} />
+            <KioskToggle on={kiosk} onToggle={toggleKiosk} />
 
-          {(onManageTeams || onOpenSettings) && (
-            <SettingsMenu
-              onManageTeams={onManageTeams}
-              onOpenSettings={onOpenSettings}
-            />
-          )}
+            {(onManageTeams || onOpenSettings) && (
+              <SettingsMenu
+                onManageTeams={onManageTeams}
+                onOpenSettings={onOpenSettings}
+              />
+            )}
+          </div>
         </div>
       </header>
 
-      {/* Live scoreboard, under the nav, on every tab. Hidden while the kiosk
-          idle clock is up (idle is only ever true in kiosk mode). */}
+      {/* The score line, under the masthead, on every tab. Hidden while the
+          kiosk idle clock is up (idle is only ever true in kiosk mode). */}
       {ticker && !idle && <ScoreTicker />}
 
-      <main className="mx-auto max-w-[1600px] px-4 py-4">{children}</main>
+      {/* Focusable by script only: a jump from another view lands here
+          (see `navigate` in App), so the next Tab starts in the page. */}
+      <main
+        id="sd-main"
+        tabIndex={-1}
+        className="mx-auto max-w-[90rem] px-4 pb-10 pt-7 outline-none sm:px-8"
+      >
+        {children}
+      </main>
 
       {kiosk && idle && <KioskClock />}
     </div>

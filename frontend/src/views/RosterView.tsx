@@ -185,7 +185,7 @@ export default function RosterView() {
       teams.map((team) => ({
         id: team.id,
         label: team.name,
-        logoUrl: team.logo_url,
+        abbreviation: team.abbreviation,
         color: team.color,
       })),
     [teams],

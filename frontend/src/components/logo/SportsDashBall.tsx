@@ -9,6 +9,10 @@ import { useId, type CSSProperties } from "react";
  *                       ~28px and up.
  *   variant="flat"      solid wedges, no seams (invisible that small). Use
  *                       below ~28px, and as the favicon source.
+ *   variant="ink"       the Box Score masthead mark: the detailed fills
+ *                       with no seams, and heavy separators, ring and hub
+ *                       drawn in `currentColor`, so they are ink on a light
+ *                       sheet and light on a dark one.
  *
  * `onDark` dims the outer ring (#2B2D33) and centre hub (#15171C) so they read
  * against an ink background (Prompt 2 splash); the white separators stay white.
@@ -18,10 +22,13 @@ import { useId, type CSSProperties } from "react";
  * assembly purely from CSS without this component needing to know about it.
  */
 
-export type SportsDashBallVariant = "detailed" | "flat";
+export type SportsDashBallVariant = "detailed" | "flat" | "ink";
 
 export interface SportsDashBallProps {
-  /** Rendered pixel size (square). Defaults to 120. */
+  /**
+   * Rendered pixel size (square). Defaults to 120. Sizing classes on
+   * `className` win over it, which is how the masthead sizes the mark in rem.
+   */
   size?: number;
   variant?: SportsDashBallVariant;
   /** Dim ring + hub for placement on a dark/ink surface. */
@@ -114,8 +121,9 @@ export default function SportsDashBall({
   const clipId = (i: number) => `sd-wedge-${i}-${uid}`;
 
   const detailed = variant === "detailed";
-  const ringStroke = onDark ? "#2B2D33" : "#FFFFFF";
-  const hubFill = onDark ? "#15171C" : "#FFFFFF";
+  const ink = variant === "ink";
+  const ringStroke = ink ? "currentColor" : onDark ? "#2B2D33" : "#FFFFFF";
+  const hubFill = ink ? "currentColor" : onDark ? "#15171C" : "#FFFFFF";
 
   return (
     <svg
@@ -142,7 +150,7 @@ export default function SportsDashBall({
 
       {WEDGES.map((w, i) => (
         <g key={w.key} className={`sd-w${i + 1}`}>
-          <path d={w.d} fill={detailed ? w.detailed : w.flat} />
+          <path d={w.d} fill={variant === "flat" ? w.flat : w.detailed} />
           {detailed ? (
             <g clipPath={`url(#${clipId(i)})`}>
               <Seams seams={SEAMS[i]} />
@@ -156,15 +164,22 @@ export default function SportsDashBall({
           <path
             key={i}
             d={d}
-            stroke="#FFFFFF"
-            strokeWidth={detailed ? 2.6 : 3}
+            stroke={ink ? "currentColor" : "#FFFFFF"}
+            strokeWidth={ink ? 4 : detailed ? 2.6 : 3}
             strokeLinecap="round"
           />
         ))}
-        {detailed ? (
+        {detailed || ink ? (
           <>
-            <circle cx="60" cy="60" r="52" fill="none" stroke={ringStroke} strokeWidth="2.6" />
-            <circle cx="60" cy="60" r="4.5" fill={hubFill} />
+            <circle
+              cx="60"
+              cy="60"
+              r="52"
+              fill="none"
+              stroke={ringStroke}
+              strokeWidth={ink ? 4 : 2.6}
+            />
+            <circle cx="60" cy="60" r={ink ? 6 : 4.5} fill={hubFill} />
           </>
         ) : null}
       </g>
