@@ -17,6 +17,12 @@ pin that every gate passed happily. A green suite is not a sighting.
 ```mermaid
 flowchart LR
     shipped["Shipped in 1.4.0<br/>motorsport · player follows<br/>watch links · highlights · metrics"]:::done
+    redrawn["On main, not yet released<br/>Box Score look · six of seven tabs<br/>base + team colour themes"]:::done
+
+    subgraph redesign["Finish the redesign"]
+        mapview["The Map in<br/>the Box Score look"]
+        surfaces["Box score · team profile<br/>setup wizard · loaders"]
+    end
 
     subgraph verify["Verify in the wild"]
         race["Observe live race gaps<br/>NASCAR · 2026-08-08<br/>F1 · 2026-08-23"]
@@ -36,6 +42,9 @@ flowchart LR
         components["Focused React<br/>component harness"]
     end
 
+    shipped --> redrawn
+    redrawn --> mapview
+    mapview --> surfaces
     shipped --> race
     shipped --> roster
     race --> signing
@@ -57,6 +66,74 @@ for a live sighting.
 
 ## ✅ Recently shipped
 
+- **The app is redrawn as a printed scorecard** (2026-10-11) — the look
+  called Box Score: sharp corners, heavy ink rules and hairlines where the
+  rounded cards were, two typefaces (Barlow and Barlow Condensed,
+  self-hosted) and one spot colour that is only ever a fill or a small
+  square marker, never text. Rebuilt in it: the shell — masthead, tabs,
+  and a score line of today's games under them on every tab — and Today,
+  Results, League, Calendar, Matchup, News and Settings. Today leads with
+  one game in progress as a hero (line score, live win probability, venue,
+  where to watch) and the other live games as rows under it, then what is
+  to come, **Final today** and last night, with standings boxes and On
+  this day beside them and the next seven days below. Results is one
+  team's season at a time: tiles for the record, the last eight, the
+  streak and the scoring, then a table per month. League puts a leaders
+  board and a panel for each followed team beside the table. The Calendar
+  is hand-built — Week (the default, Monday first), Month and Agenda — and
+  FullCalendar is out of the bundle; it follows today until it is moved,
+  so a display left on this week rolls into the next one. Matchup shows
+  one game with its win probability before the start and now, the lines,
+  the past meetings, form, table places, projected lineups and injuries.
+  The rebuilt views draw a team as a colour block with its code rather
+  than a crest.
+  The theme stopped being one choice. It is a **base** — Light (the
+  default), Dark or High contrast — and a **colour**: the SportsDash
+  orange or the favourite team's, the second on Light and Dark only so
+  that High contrast keeps its AAA. A stored `custom` opens as Dark +
+  Team (`STORED_THEME_IDS`, in `lib/theme.ts` and the no-FOUC bootstrap).
+  Text is held to 4.5:1 on Light and Dark and 7:1 on High contrast by
+  tests that read the stylesheet, and a team's colour is measured rather
+  than trusted: a sweep of 4,096 colours has to clear 4.5:1. In kiosk
+  mode the root font size follows the window
+  (`clamp(100%, 100vw / 90, 175%)`), so a design drawn at 1440px fills a
+  wall display. The rules each screen has to keep, and what each left out
+  because the API does not carry it, are in
+  [docs/CONTRACTS.md](docs/CONTRACTS.md) under "Box Score: …".
+  Seen running the same evening on live data — 13 followed teams in five
+  leagues, three games in progress — on every tab in Light, and on Today
+  in each base and with a team's colour.
+  Known gaps: the Map, the box score and leaderboard modals, the team
+  profile, the setup wizard, the loaders and the kiosk clock are not
+  redrawn. 24 component files still colour themselves through the legacy
+  ramp in `index.css`, which points the old zinc utilities at the new
+  tokens: they follow the theme and keep their old layout (see *In
+  progress* below). It is on main and in no release; the version is still
+  1.4.0.
+- **The README, its screenshots and the trailer show the app as it is**
+  (2026-10-11) — all three still showed the look before Box Score, and
+  the README's prose had drifted further than its pictures: four themes,
+  a month/week calendar, "streak / last-10 chips", a three-step wizard, a
+  notification panel in Settings that was taken out in August, and a
+  Calendar that "stays on the month it was opened in". The text was
+  checked against the code and rewritten where it was wrong. The eleven
+  screenshots come from `frontend/scripts/capture-screenshots.mjs`, which
+  now takes what to show from `SD_*` environment variables — the league,
+  the conference, the team, the stadium to fly to, a clock to pin —
+  instead of edits to the file. The trailer (`docs/trailer.mp4`: 24.5
+  seconds, 1080p, a synthesised music bed, and a 15 fps GIF beside it for
+  the README) is composed from captures of the running app. Every picture
+  is real data from one evening, 2026-10-11: a scratch database following
+  13 teams, with an MLB playoff game, an NFL game and an NBA preseason
+  game in progress. The trailer's Today scene steps through eight score
+  changes as they came in. The README now links the trailer file in the
+  repository rather than a release asset, and
+  `docs/trailer-overlays/` and `docs/trailer-poster.svg`, parts of the
+  old trailer that nothing referenced, are gone.
+  Known gaps: the two Map screenshots and the trailer's Map scene show
+  the Map before its redraw, and the team profile and wizard screenshots
+  were dropped rather than shown in the old layout. Only the rendered
+  trailer is in the repository; its composition and stills are not.
 - **A display left running stays current** (2026-10-11) — most views
   fetched their data once and never again, so a wall display, a pinned tab
   or the desktop app went on showing the standings, calendar, results,
@@ -96,13 +173,15 @@ for a live sighting.
   rather than a board built from the few matches that got through. A season
   archive of which only part arrived is shown but not cached, and a
   forecast past Open-Meteo's 15-day window is no longer requested at all.
-  Left as they are, on purpose: the Calendar stays on the month it was
-  opened in, and a tab visited once keeps refreshing behind the others.
+  Left as it is, on purpose: a tab visited once keeps refreshing behind
+  the others. (This entry first said the Calendar stays on the month it
+  was opened in. That was the old calendar; the rebuilt one follows
+  today.)
   Known gaps: while ESPN is down the Matchup preview and an open box score
   stay up but lose the sections ESPN supplies at their next refresh, and
-  the odds chips drop if the list of games changes meanwhile (that one
-  needs a stable query key in `hooks.ts`; the calendar's forecast icons
-  share it for an Open-Meteo outage). In the desktop app a backend crash
+  the odds on Today's rows drop if the list of games changes meanwhile
+  (that one needs a stable query key in `hooks.ts`; the calendar's
+  forecasts share it for an Open-Meteo outage). In the desktop app a backend crash
   is retried after a minute rather than five, because its 500 reaches the
   webview without a status. Pinned against a real
   QueryClient under fake timers and, for the backend, on SQLite and
@@ -271,6 +350,9 @@ for a live sighting.
   is `GameRow`. Applied at the view level: **58 `sd-*` usages in, 58
   ad-hoc pixel sizes still in inner components** (modals, panels, roster,
   bracket) awaiting the same treatment.
+  *Superseded 2026-10-11:* the rebuilt views are made of the Box Score
+  pieces instead. The Column classes are still used, but only by what is
+  not yet redrawn (the setup wizard, a Map panel, the old game row).
 - **The separator glyphs were failing WCAG AA in every theme**
   (2026-08-19) — `·`, `@`, `vs` and `Bench:` were painted with
   `text-zinc-600`, a token documented as "muted icon / track", which put
@@ -288,6 +370,9 @@ for a live sighting.
   were retired; `LEGACY_THEME_IDS` maps a stored id from any of them onto
   a survivor in both `lib/theme.ts` and the no-FOUC bootstrap, so a
   returning choice migrates instead of silently resetting.
+  *Superseded 2026-10-11:* the one choice is now a base and a colour (top
+  of this list). Custom is Dark + Team, and the table is
+  `STORED_THEME_IDS`.
 - **The setup wizard says where you are** (2026-08-19) — the league step
   was a wrapping row of pills that sized themselves by name length, so
   the rows came out ragged and the nested "Follow all" pill read as part
@@ -472,6 +557,42 @@ for a live sighting.
   launches with no browser, no Docker, and no Python install. One-command
   build (`scripts/build-desktop.sh`). See [docs/desktop.md](docs/desktop.md).
 - **Branded app icon** generated from the SportsDash logo.
+
+## 🚧 In progress — the rest of the redesign
+
+The Box Score look (top of the list above) covers the shell and six of the
+seven tabs. What is left, in the order it is planned:
+
+- **The Map** — a MapLibre style of its own in the Box Score look, with a
+  dark counterpart, in place of the stock basemap, and the controls and
+  the two panels (`MapTeamPanel`, `MapVenueGamesPanel`) redrawn with it.
+  Which basemap is a decision to make before any of it is built, with the
+  options side by side. Clustering, the plane and fan animations, the
+  filters and the fly-in have to come through unchanged.
+  *Verify:* open the Map in Light, Dark, High contrast and with a team's
+  colour, and check that labels and pins read against both land and water
+  in each (4.5:1 for text). Then the behaviour, on real data: follow a
+  whole league so clustering engages and pan across it; in Stadiums mode
+  watch a plane leave for an away game; click a pin and see the fly-in
+  end on 3D buildings with the panel open.
+- **The surfaces the mockups never drew** — the box score and tournament
+  leaderboard modals, the team profile, the setup wizard, the loaders and
+  the kiosk clock. They take the tokens and the shared pieces; changing
+  their layout is a separate decision. When the last of them is done the
+  legacy ramp in `index.css` goes, and with it the old shared pieces
+  nothing uses any more (`RosterView` is already imported nowhere).
+  *Verify:* delete the ramp, and `grep -rE 'zinc-[0-9]' frontend/src`
+  finds nothing (24 component files today). Then open each surface in
+  every theme, Team included, once with a dark team colour and once with
+  a pale one: a box score on a game in progress, a golf and a race
+  leaderboard, a team profile with its roster, the wizard from countries
+  through review, the boot splash, the kiosk idle clock.
+- **The pictures of them** — the README's two Map screenshots and the
+  trailer's Map scene are of the old Map, and the team profile and the
+  wizard have no screenshot until they are redrawn.
+  *Verify:* add the two missing shots to
+  `frontend/scripts/capture-screenshots.mjs`, run it, and read the README
+  top to bottom: no image shows a surface in the old layout.
 
 ## 🎯 Near-term — distribution & packaging
 

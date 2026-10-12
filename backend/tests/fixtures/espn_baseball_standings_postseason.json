@@ -1,0 +1,125 @@
+{
+  "uid": "s:1~l:9100~g:9",
+  "id": "9",
+  "name": "Meridian Baseball Association",
+  "abbreviation": "MBA",
+  "shortName": "MBA",
+  "season": {
+    "year": 2027,
+    "startDate": "2027-02-18T08:00Z",
+    "endDate": "2027-12-11T07:59Z",
+    "displayName": "2027"
+  },
+  "seasons": [
+    {
+      "year": 2026,
+      "startDate": "2026-02-19T08:00Z",
+      "endDate": "2026-11-12T07:59Z",
+      "displayName": "2026"
+    },
+    {
+      "year": 2025,
+      "startDate": "2025-02-15T08:00Z",
+      "endDate": "2025-12-11T07:59Z",
+      "displayName": "2025"
+    }
+  ],
+  "children": [
+    {
+      "uid": "s:1~l:9100~g:7",
+      "id": "7",
+      "name": "Lantern League",
+      "abbreviation": "LL",
+      "shortName": "LL",
+      "children": [
+        {
+          "uid": "s:1~l:9100~g:1",
+          "id": "1",
+          "name": "Lantern League East",
+          "abbreviation": "LLE",
+          "shortName": "LL East",
+          "standings": {
+            "id": "0",
+            "name": "overall",
+            "displayName": "Standings",
+            "season": 2026,
+            "seasonType": 2,
+            "seasonDisplayName": "2026",
+            "entries": [
+              {
+                "team": {"id": "611", "displayName": "Saltmarsh Herons", "abbreviation": "SMH"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 2.0, "displayValue": "2"},
+                  {"name": "wins", "value": 91.0, "displayValue": "91"},
+                  {"name": "losses", "value": 71.0, "displayValue": "71"},
+                  {"name": "winPercent", "value": 0.5617284, "displayValue": ".562"},
+                  {"name": "gamesBehind", "value": 6.0, "displayValue": "6"},
+                  {"name": "overall", "value": null, "displayValue": "91-71"}
+                ]
+              },
+              {
+                "team": {"id": "612", "displayName": "Dunmore Lamplighters", "abbreviation": "DUN"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 1.0, "displayValue": "1"},
+                  {"name": "wins", "value": 97.0, "displayValue": "97"},
+                  {"name": "losses", "value": 65.0, "displayValue": "65"},
+                  {"name": "winPercent", "value": 0.5987654, "displayValue": ".599"},
+                  {"name": "gamesBehind", "value": 0.0, "displayValue": "-"},
+                  {"name": "overall", "value": null, "displayValue": "97-65"}
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "uid": "s:1~l:9100~g:8",
+      "id": "8",
+      "name": "Pennant League",
+      "abbreviation": "PL",
+      "shortName": "PL",
+      "children": [
+        {
+          "uid": "s:1~l:9100~g:5",
+          "id": "5",
+          "name": "Pennant League Central",
+          "abbreviation": "PLC",
+          "shortName": "PL Cent",
+          "standings": {
+            "id": "0",
+            "name": "overall",
+            "displayName": "Standings",
+            "season": 2026,
+            "seasonType": 2,
+            "seasonDisplayName": "2026",
+            "entries": [
+              {
+                "team": {"id": "621", "displayName": "Harrowgate Millers", "abbreviation": "HGM"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 1.0, "displayValue": "1"},
+                  {"name": "wins", "value": 103.0, "displayValue": "103"},
+                  {"name": "losses", "value": 59.0, "displayValue": "59"},
+                  {"name": "winPercent", "value": 0.6358025, "displayValue": ".636"},
+                  {"name": "gamesBehind", "value": 0.0, "displayValue": "-"},
+                  {"name": "overall", "value": null, "displayValue": "103-59"}
+                ]
+              },
+              {
+                "team": {"id": "622", "displayName": "Quillfield Barnstormers", "abbreviation": "QFB"},
+                "stats": [
+                  {"name": "playoffSeed", "value": 5.0, "displayValue": "5"},
+                  {"name": "wins", "value": 89.0, "displayValue": "89"},
+                  {"name": "losses", "value": 73.0, "displayValue": "73"},
+                  {"name": "winPercent", "value": 0.5493827, "displayValue": ".549"},
+                  {"name": "gamesBehind", "value": 14.0, "displayValue": "14"},
+                  {"name": "overall", "value": null, "displayValue": "89-73"}
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -590,6 +590,8 @@ real ESPN traffic (see ROADMAP Phase 2).
   `?seasontype=3` and merge by game id (NHL defaults to the current
   phase only — playoffs-only during playoffs; verified). Keep the
   soccer two-call merge as-is; reuse the same merge helper.
+  (Amended 2026-10-11: baseball too — see *Baseball schedules are asked
+  for by season type* at the end of this file.)
 - Schedule competitor scores arrive as OBJECTS here ({value,
   displayValue}) vs strings on the scoreboard — `_coerce_int` already
   handles both; don't regress.
@@ -2513,6 +2515,15 @@ to nothing when unpriced.
   "2026"), ``season_label`` the provider's display form. ``StandingsORM``
   remains the rolling current snapshot; the scheduler upserts every
   standings refresh into the archive too.
+- An ESPN table is labelled with its OWN season (amended 2026-10-11):
+  ``_parse_season`` reads ``seasonDisplayName`` / ``season`` off the
+  standings blocks that were parsed, and the payload's top-level
+  ``season`` only when no block carries one. That top-level object is
+  the league's current season and moves on before the table does (MLB
+  from the end of the regular season: top-level 2027, table 2026), which
+  labelled the live table "2027", filed it in the archive under 2027 and
+  sent Results to a season list with no finished game. A refresh does
+  not remove an archive row already written under the wrong key.
 - ``app/providers/espn_history.py`` (standalone, espn_leaders-style — the
   ``SportsProvider`` protocol is unchanged): ``fetch_season_standings`` /
   ``fetch_season_results`` via ESPN's ``?season=`` params. Team sports
@@ -5877,6 +5888,71 @@ fetch raises the typed error and an empty answer is still `[]`
 `test_fetch_bracket_only_a_400_triggers_the_fallback` now expects the
 error instead of `[]`). `test_no_redis_url_means_noop` became
 `…_off_the_allowlist`.
+
+## Baseball schedules are asked for by season type (2026-10-11)
+
+Verified live 2026-10-11, MLB postseason under way: ESPN's bare
+`baseball/mlb/teams/{id}/schedule` is the CURRENT season phase only, as
+Phase 2 above found for hockey and football — and for baseball that is
+worse than playoffs-only.
+
+| Call | A team in the postseason | A team that missed it |
+| --- | --- | --- |
+| bare, with or without `season=2026` | 11 events, all postseason | 0 events |
+| `seasontype=2` | 165 events (162 final), regular season | 165 events (161 final) |
+| `seasontype=3` | the same 11 | 0 events (`200`, `events: []`) |
+| `seasontype=1` | 30 spring-training games | not asked |
+| bare, `season=2025` | 165 events, regular season only | 168 events, regular season only |
+| `season=2025&seasontype=3` | 9 events | 0 events |
+
+With one bare call, then: `GET /history/results/{team_id}?season=YYYY` for
+the season in play was the postseason finals alone, and a `404` for a team
+out of the postseason (an empty list); a PAST season never had its
+postseason; and `refresh_schedules` lost sight of the regular season the
+day the postseason began.
+
+- **`_SCHEDULE_PARAM_SETS` gains `Sport.BASEBALL: ({"seasontype": "2"},
+  {"seasontype": "3"})`.** Nothing else changes: baseball takes the path
+  hockey and football already take, in both users of the table.
+  `EspnProvider.get_schedule` merges the halves by game id, logging and
+  skipping one that failed; `espn_history.fetch_season_results` raises
+  `EspnHistoryError` for a failed half, so half a baseball season is
+  shown but never cached (*Historical archives* above).
+- **An empty half is an answer, not a failure.** `seasontype=3` is
+  `200` with no events before a postseason and for a team that missed
+  it; the other half stands alone.
+- **Cost: two schedule calls per followed baseball team where there was
+  one** — per `refresh_schedules` pass, and per team-season the archive
+  has not cached. The cache TTLs are unchanged.
+- **Spring training (`seasontype=1`) is not asked for**, as hockey's and
+  football's preseasons are not. Exhibition games therefore reach neither
+  the schedule nor a season's results, where they would count toward a
+  streak or a last-8 as if they were the season's. While spring training
+  was the current phase the bare call will have listed it and nothing
+  else (not checkable in October; the NBA's bare call, in its preseason
+  the same day, was its 4 preseason games alone). So this is a change in
+  February and March: spring-training games no longer appear, and the
+  regular season does — `season=2027&seasontype=2` already answers with
+  162 events.
+- **Entries cached before the change keep the old list until they
+  expire**: `history:results:{team_id}:{season}` lives 6 h for this
+  year's and last year's key and 7 d for an older one, which is a
+  regular season without its postseason. A restart clears the
+  in-process store.
+- **Basketball still makes one bare call, and the NBA's has the same
+  fault.** Checked the same day: bare is the preseason alone (the
+  regular season from 20 October is under `seasontype=2`), and bare
+  `season=2026` is the 82 regular-season games without the 7 playoff
+  games under `seasontype=3`. The WNBA's bare call returned all three
+  phases at once (2 preseason, 46 regular season, 5 postseason).
+  Deliberately left out of this change: an entry is per sport, so it
+  would change every basketball league together.
+
+Tests (hermetic): `test_espn.py` — a `_get_json` stub answering as ESPN
+did mid-postseason, for a team in it and a team that missed it: both
+season types are asked for and the regular season is in the result
+either way. `test_history.py` — the same two cases through
+`fetch_season_results`.
 
 ## Wikipedia "About" text: the article has to be the team's own (2026-10-11)
 
