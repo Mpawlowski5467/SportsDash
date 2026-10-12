@@ -13,7 +13,9 @@ desktop tab, or your phone. Follow teams — or whole leagues — across **ten
 sports** and 50+ competitions, and see today's games, live scores, a full
 calendar, standings, stat leaders, playoff brackets, rosters, results, news,
 and a world map of stadiums, all in one place. Get push notifications when a
-game is about to start, a period begins, or a final goes in the books.
+game is about to start, a period begins, or a final goes in the books. It is
+drawn like a printed scorecard: sharp corners, heavy rules, and one spot
+colour, which can be your team's.
 
 Everything runs on your own machine. Run it as a **server** with
 `docker compose up` and open it in any browser, or build it as a **native
@@ -26,100 +28,140 @@ tennis, MMA, golf, motorsport, and volleyball.**
 
 ## Screenshots
 
-![Today view — live scores across your followed teams](docs/screenshots/today.png)
+[![SportsDash trailer](docs/trailer-preview.gif)](docs/trailer.mp4)
 
-| Playoff bracket | World stadium map |
+*The preview plays inline on GitHub. Click it for the full trailer, 25
+seconds in 1080p with sound.*
+
+![Today — a playoff game in progress with its line score and win probability, two more live games under it, and the day's finals](docs/screenshots/today.png)
+
+| Matchup | League |
 |---|---|
-| ![NBA playoff bracket](docs/screenshots/bracket.png) | ![Stadium map](docs/screenshots/map.png) |
-| **Follow individual players** | **Ten sports, including motorsport** |
-| ![Team profile roster with player-follow stars](docs/screenshots/player-follows.png) | ![Sports catalog with Formula 1, NASCAR Cup, and IndyCar](docs/screenshots/onboarding-leagues.png) |
-| **Standings** | **Calendar** |
-| ![League standings](docs/screenshots/standings.png) | ![Calendar](docs/screenshots/calendar.png) |
-| **Stat leaders** | |
-| ![Leaders](docs/screenshots/leaders.png) | |
+| ![Matchup — the game sheet, win probability before the start and now, betting lines, and recent meetings](docs/screenshots/matchup.png) | ![League standings by division, with the teams you follow marked](docs/screenshots/standings.png) |
+| **Calendar** | **Results** |
+| ![Calendar — a week of games in day columns, with a golf tournament and a race weekend as bars](docs/screenshots/calendar.png) | ![Results — one team's season record, form, streak and scoring, then its games by month](docs/screenshots/results.png) |
+| **Stat leaders** | **News** |
+| ![Leaders — a league's points leaders](docs/screenshots/leaders.png) | ![News — the top story and the headlines under it](docs/screenshots/news.png) |
+| **Map** | **A stadium up close** |
+| ![Map — a pin for every followed team's stadium](docs/screenshots/map.png) | ![Map — one arena among 3D buildings, with its team panel](docs/screenshots/map-stadium.png) |
 
-[![SportsDash live product trailer](docs/trailer-preview.gif)](https://github.com/Mpawlowski5467/SportsDash/releases/download/v1.4.0/SportsDash-1.4.0-trailer.mp4)
+![Bracket — playoff series, round by round](docs/screenshots/bracket.png)
 
-*The preview plays inline on GitHub. Click it for the full 720p trailer with sound.*
+![The same Today view in Light, Dark, High contrast, and Light with a team's colour](docs/screenshots/themes.png)
+
+*Light, Dark, High contrast, and Light with a followed team's colour as the
+spot colour.*
+
+The screenshots and the trailer show real data from one evening, Sunday,
+October 11, 2026. `frontend/scripts/capture-screenshots.mjs` regenerates the
+screenshots from a running app.
 
 ## Features
 
-- **Today** — every game for the teams and leagues you follow, with live
-  scores, period/clock, and auto-refresh that polls faster while a game is in
-  progress. Cards carry a where-to-watch chip when the provider names the
-  broadcast networks, and a small why-watch flag when a game is tight late,
-  an upset watch, or a toss-up. Click any card for a box score (line scores
-  + top performers, plus highlight clips where ESPN has them). In-progress
-  golf and race-weekend leaderboards sit here too — a race board names each
-  car's constructor, number, and grid slot, shows a running gap while the
-  race is on wherever ESPN publishes one for that car, and once the race
-  finishes fills in the race time, the gap (`+15.080`, `+1 lap`), DNF, or DSQ.
-- **Calendar** — month/week calendar of all games, colored per team, with
-  multi-day golf tournaments and race weekends drawn as span bars, plus an
-  `.ics` / `webcal://` feed you can subscribe to from any calendar app.
+- **Today** — every game for the teams and leagues you follow, on one
+  sheet. A game in progress leads the page as a **Live now** hero with its
+  line score, live win probability, venue, and where to watch; any other
+  live games sit under it, then what is still to come, the day's finals, and
+  last night's. Scores refresh by themselves, faster while a game is in
+  progress. A row names the broadcast when the provider gives the networks
+  and the favorite (a win percentage or a moneyline), and carries a small
+  why-watch flag when a game is tight late, an upset watch, or a toss-up.
+  Click any row for a box score (line scores + top performers, plus
+  highlight clips where ESPN has them). Beside the games are the standings
+  your teams sit in; under them, the next seven days. In-progress golf and
+  race-weekend leaderboards sit here too, as the top three and anyone you
+  follow — open one for the full field, where a race board names each car's
+  constructor, number, and grid slot, shows a running gap while the race is
+  on wherever ESPN publishes one for that car, and once the race finishes
+  fills in the race time, the gap (`+15.080`, `+1 lap`), DNF, or DSQ.
+- **Calendar** — your games by **week** (the default), **month**, or as an
+  **agenda**, with a W or L on each of your teams' finals, multi-day golf
+  tournaments and race weekends drawn as bars across their days, and a
+  coming-up list with the forecast for outdoor games, plus an `.ics` /
+  `webcal://` feed you can subscribe to from any calendar app.
+- **Matchup** — one game at a time, live or coming up in the next two
+  weeks: both records, win probability before the start and right now,
+  betting lines (moneyline, spread, total), recent meetings with the record
+  across seasons, your team's recent form, where each side sits in its
+  table, projected lineups, and injuries. An upset radar flags a game when
+  the model's favorite is the betting underdog, or when the side ahead in a
+  live game was the underdog before the start.
 - **Standings** — per-league tables with sport-appropriate columns and
-  conference/division grouping; team crests inline.
+  conference/division grouping, the league's top-ten leaders beside them,
+  and a panel for each team you follow there (record, place, form, next up).
 - **Leaders** — league-wide stat leaders (points, home runs, goals…), with
   the soccer Golden Boot derived from match scorers. Your players highlighted.
 - **Bracket** — soccer cup knockouts (e.g. the World Cup) and the US leagues'
   best-of-N **playoff series** (NBA/NHL/MLB), grouped by round through the
   finals.
-- **Rosters** — players, positions, jersey numbers, season stat lines, and
-  injury status.
+- **Rosters** — in each team's profile: players, positions, jersey numbers,
+  season stat lines, and injury status.
 - **Follow individual players** — star players on any followed roster;
   they're highlighted on the Leaders boards and you get injury-status
   alerts, plus a ruled-out heads-up shortly before their game starts.
-- **Results** — recent finals per team with streak / last-10 chips.
+- **Results** — one team's season at a time: its record, its last eight
+  games as a form strip, the current streak, what it scored and allowed
+  over those games, and its place in the table; then every final by month,
+  with the box score a click away, and the games still to come.
 - **Season archives** — jump any ESPN league or team back up to 15 years:
   past-season standings tables (archived in the DB after one fetch) and
   full past-season results, straight from the season pickers on the
-  Standings and Results views.
-- **On this day** — a Today-view card of each followed team's past games
+  League and Results views.
+- **On this day** — a box on Today with each followed team's past games
   that fell on today's date, pulled from the last five seasons of archives.
-- **News** — aggregated headlines per team (ESPN + Google News + RSS) with an
-  in-app reader.
+- **News** — aggregated headlines (ESPN + Google News + RSS): a top story,
+  a filter for each team or league you follow, and an in-app reader.
 - **Map** — your followed teams' (and every active competition's) home venues
   on a MapLibre map with 3D buildings; click a pin for stadium facts and
   fixtures. A team whose ground can't be pinned accurately is left off rather
   than placed approximately.
-- **Team & nation profiles** — click a team anywhere to open a unified page:
-  next match, recent form, fixtures, results, roster, news, and stadium.
+- **Team & nation profiles** — click a team in a standings table or on the
+  map to open one page for it: next match, recent form, fixtures, results,
+  roster, news, and stadium.
+- **Score line** — a band under the masthead that carries today's scores on
+  every tab. It can be switched off in Settings.
 - **Notifications** — pushed to your own [ntfy](https://ntfy.sh) topic:
   starting soon, game start, period start, intermission, final, and a
   followed player's injury or scratch. Injury alerts don't wait for the
   daily sync: a followed team's roster is re-checked in the hours before
   kickoff, so a same-day scratch reaches you the same afternoon.
   Deduplicated, so the same alert never fires twice.
-- **Themes & kiosk** — four themes (Dark, Light, Custom — accented with
-  your team's colors — and a WCAG-AAA High contrast), a
-  kiosk auto-rotation mode with an idle clock, and an installable PWA.
+- **Themes & kiosk** — three bases (Light, Dark, and a WCAG-AAA High
+  contrast) and, on Light and Dark, a choice of spot colour: the SportsDash
+  orange, or the colour of the team you pick as your favourite. A kiosk
+  mode that rotates through the tabs, scales the layout up to fill a wall
+  display, and shows a clock when idle; and an installable PWA.
 
 ## The pages, one by one
 
 The dashboard is a single-page app with seven tabs across the top, plus
-slide-over panels you reach by clicking a team or game anywhere in the UI.
+the panels and sheets that open over it.
 
 | Tab | What you see / do |
 |---|---|
-| **Today** | The landing page: every game for your follows on the local calendar day, with live score, period, and clock. It auto-refreshes — fast while a game is in progress, slow otherwise. Click a card for a **box score** (line scores + top performers). In-progress golf and race-weekend leaderboards show up here too — a race board carries each car's constructor, number, and grid slot, plus its race time, gap, DNF, or DSQ once the race is over. A live race board shows the field, the lap count ("Lap 44 of 70"), and a running gap for each car wherever ESPN publishes one. |
-| **Calendar** | A month / week grid of all your fixtures, color-coded per team, with golf tournaments spanning the days they run over (click one for its leaderboard — they show under *All teams*, since a tournament belongs to no team). **Subscribe** hands you ready-made `webcal://` feeds (all games, or one per team) and a one-off `.ics` export. |
-| **Matchup** | A pre-game **preview browser**: upcoming games with head-to-head context — recent form, last meetings, and where each side sits — so you can scan what's coming before it starts. |
-| **League** | Pick one of your leagues and drill in through three sub-tabs: **Standings** (sport-appropriate columns, conference/division grouping), **Leaders** (stat leaders, or the soccer Golden Boot), and **Bracket** (cup knockouts and best-of-N playoff series, grouped by round). |
-| **Results** | Recent **finals** per followed team, newest first, with streak and last-10 chips. |
-| **News** | Aggregated headlines per team (ESPN + Google News + RSS) with an in-app reader. |
+| **Today** | The landing page: every game for your follows on the local calendar day. A game in progress leads as the **Live now** hero (line score, win probability, venue, where to watch) with any other live games under it; then the games still to come, **Final today**, and last night's. It refreshes by itself — fast while a game is in progress, slow otherwise. Click a row for a **box score**. To the side: up to three standings boxes for the tables your teams are in, and **On this day**. Below: **Next 7 days**. In-progress golf and race-weekend leaderboards show up here too, as the top three and anyone you follow; the full board is a click away, and a race board carries each car's constructor, number, and grid slot, plus its race time, gap, DNF, or DSQ once the race is over. A live race board shows the field, the lap count ("Lap 44 of 70"), and a running gap for each car wherever ESPN publishes one. |
+| **Calendar** | All your fixtures by **Week** (the default, Monday first), **Month**, or as an **Agenda**, with a team filter and counts of finals, live games, and games to come. Golf tournaments and race weekends span the days they run over (click one for its leaderboard — they show under *All teams*, since a tournament belongs to no team). Under the grid: what is coming up, with a forecast for outdoor games, and a legend of who you follow. **Subscribe** hands you ready-made `webcal://` feeds (all games, or one per team) and an `.ics` download. |
+| **Matchup** | One game at a time, picked from the games that are live or within the next two weeks: the game sheet with both records, **win probability** before the start and right now, betting lines, an upset radar, recent meetings with the record across seasons, your team's recent form, each side's place in its table, projected lineups, and injuries. |
+| **League** | Pick one of your leagues (and, for ESPN team sports, a season) and drill in through three sub-tabs: **Standings** (sport-appropriate columns, conference/division grouping, a top-ten leaders board, and a panel for each team you follow), **Leaders** (stat leaders, or the soccer Golden Boot), and **Bracket** (cup knockouts and best-of-N playoff series, grouped by round). Leaders and Bracket are for the current season only. |
+| **Results** | One followed team's season: record, last-eight form, streak, scoring, and place in the table, then every **final** by month, newest first, and the next games. Pick the team and the season at the top. |
+| **News** | Aggregated headlines (ESPN + Google News + RSS): a top story, the rest newest first, a filter for each team or league you follow, and an in-app reader. |
 | **Map** | Your followed teams' — and every active competition's — home venues on a MapLibre world map with 3D buildings. Click a pin for stadium facts, current weather, and upcoming fixtures there. A pin only appears once the ground is known well enough to place it precisely; a team whose stadium no data source names stays off the map instead of being dropped on the middle of its county. |
 
-**Slide-over panels (click to open):**
+**Panels and sheets (click to open):**
 
-- **Team / nation profile** — click any crest to open a unified page: next
-  match, recent form, fixtures, results, roster, news, and home stadium (with
-  a jump-to-Map button).
+- **Box score** — click any game: line scores, top performers, win
+  probability and odds, key moments, and highlight clips where ESPN has them.
+- **Team / nation profile** — click a team in a League standings table, or
+  its pin on the Map, to open one page for it: next match, recent form,
+  fixtures, results, roster, news, and home stadium (with a jump-to-Map
+  button).
 - **Setup wizard** — *Manage teams* (and the first-run screen): choose
   leagues and teams, or **Follow all** a whole competition. *Manage teams*
   opens on what you already follow, and saving keeps everything you left
   selected, with its data.
-- **Settings & notifications** — theme switcher, per-scope notification
-  toggles, and kiosk mode.
+- **Settings** — the appearance (base, colours, and the favourite team the
+  Team colours come from) and the score line switch. Kiosk mode has its own
+  button in the masthead.
 
 ## Architecture
 
@@ -129,7 +171,7 @@ flowchart TB
 
     subgraph client["Frontend · Bun + Vite + React"]
         srv["Bun static server<br/>serves dist, proxies /api"]
-        spa["React SPA<br/>9 views · 4 themes · PWA"]
+        spa["React SPA<br/>7 tabs · 3 themes · PWA"]
     end
 
     subgraph backend["Backend · FastAPI"]
@@ -192,10 +234,10 @@ flowchart LR
   response boundary ("today" computation, the daily refresh hour) and in the
   frontend's display formatting.
 
-**Stack:** React + Vite + Tailwind v4 + TanStack Query (frontend, served by
-Bun); FastAPI + SQLAlchemy (async) + APScheduler (backend); PostgreSQL for
-storage, Redis for caching, ntfy for push. Tests and local dev run on SQLite
-with zero setup. Redis is optional: without it — the desktop app, local dev —
+**Stack:** React + Vite + Tailwind v4 + TanStack Query + MapLibre GL
+(frontend, served by Bun); FastAPI + SQLAlchemy (async) + APScheduler
+(backend); PostgreSQL for storage, Redis for caching, ntfy for push. Tests
+and local dev run on SQLite with zero setup. Redis is optional: without it — the desktop app, local dev —
 the caches in front of ESPN and the weather service are kept in the
 backend's own memory instead, so a view that refreshes does not repeat every
 upstream request.
@@ -275,12 +317,15 @@ code-signing notes are documented in **[docs/desktop.md](docs/desktop.md)**.
 Your followed set lives in the **database** and is chosen through the in-app
 **setup wizard** (Settings → *Manage teams*, or the first-run screen):
 
-1. **Choose leagues** — pick from 50+ leagues and competitions grouped by
+1. **Choose countries** — soccer is most of the catalog and is organised by
+   country, so the wizard asks where first. Pick as many as you like, or
+   none to see every league.
+2. **Choose leagues** — pick from 50+ leagues and competitions grouped by
    sport. Every league offers a **Follow all** toggle to follow it in full
    (every game, no team picks) — handy for a playoff race or the World Cup.
-2. **Pick teams** — for leagues you didn't "Follow all", select the specific
+3. **Pick teams** — for leagues you didn't "Follow all", select the specific
    teams (or players/fighters/golfers) to follow.
-3. **Review & confirm** — confirming saves your follows and kicks an
+4. **Review & confirm** — confirming saves your follows and kicks an
    immediate background sync, so data starts loading right away.
 
 Coming back later through *Manage teams* opens the same wizard on what you
@@ -324,6 +369,11 @@ non-Docker run (it is how the desktop app ships); under Compose it has to go
 in the `api` service's `environment:` block, because the root `.env` is only
 interpolated into `docker-compose.yml` and never injected into the container.
 
+Those preferences are set through the API for now. The panel that edited
+them in Settings was taken out until the whole path, from the scheduler to
+a phone, has been checked end to end on a real device; the
+[roadmap](ROADMAP.md) has the steps.
+
 Injury and scratch designations are only final in the hours before kickoff,
 and the daily 5am refresh can be a whole day stale. So every
 `SPORTSDASH_PREGAME_ROSTER_REFRESH_MINUTES` (15) SportsDash re-checks the
@@ -357,19 +407,23 @@ through to the backend, while the backend's own port is bound to loopback and
 so is reachable from the Docker host only.)
 
 In the Calendar tab, **Subscribe** offers ready-made `webcal://` links (all
-games plus one per followed team) with copy-to-clipboard, alongside the
-one-off **Export .ics** download.
+games plus one per followed team) with copy-to-clipboard, and a one-off
+**Download .ics file** in the same menu.
 
 ## Kiosk mode
 
 SportsDash is built to live on a wall display. Toggle **kiosk mode** with the
-monitor icon next to the gear (remembered in `localStorage`):
+monitor button in the masthead, next to Settings (remembered in
+`localStorage`):
 
 - The active tab **auto-advances** through every view (~12s, with a visible
   "next in Ns" countdown). Any interaction pauses rotation, then it resumes.
 - After idle, a full-screen **idle clock overlay** appears with the local
   time, date, and a compact "N live / N upcoming today" line. Any interaction
   dismisses it.
+- The layout is drawn for a 1440px-wide window and **grows with the screen**
+  from there (up to 175%), so on a wall display it fills the panel instead
+  of sitting small in the middle of it.
 
 **Left running, it stays current.** A display nobody reloads used to go on
 showing the standings, calendar and results it loaded on the day it was
@@ -389,21 +443,21 @@ arrive upstream as a burst. Three things to know:
   or a minimised window. It catches up as soon as it is back on screen: the
   database-backed views at once, the ones that call ESPN or the weather
   service one every 30 seconds rather than all together.
-- **The Calendar stays on the month it was opened in.** Its games and scores
-  stay current, but a display left on past the end of a month keeps showing
-  that month until you navigate or reload.
+- **The Calendar follows today until you move it.** Left on this week (or
+  this month) it rolls over to the next one by itself. A week you navigated
+  to stays where you put it, until the day comes when it holds today.
 - **An outage mostly leaves the wall as it was.** If the backend or ESPN
-  cannot be reached, a view keeps what it last loaded and asks again within
-  minutes. The Matchup preview and an open box score are the exceptions.
-  While the backend is down they show an error until their next successful
-  load. While only ESPN is down they stay up, but at their next refresh
-  they drop the parts ESPN supplies — betting lines and win probability,
-  the box score itself — until ESPN answers again. The odds chips on game
-  cards can also drop if the list of games changes during an outage (a
-  game kicks off, or the day rolls over), and so can the forecast icons on
-  the calendar while the weather service is down. A forecast icon can also
-  go missing for up to an hour when the weather service answered for some
-  games and not for others.
+  cannot be reached, a view keeps what it last loaded, says the connection
+  is lost, and asks again within minutes. An open box score is the
+  exception: while the backend is down it shows an error until its next
+  successful load. While only ESPN is down, the Matchup preview and an open
+  box score stay up, but at their next refresh they drop the parts ESPN
+  supplies — betting lines and win probability, the box score itself —
+  until ESPN answers again. The favorite on Today's rows can also drop if
+  the list of games changes during an outage (a game kicks off, or the day
+  rolls over), and so can the forecasts on the calendar while the weather
+  service is down. A forecast can also go missing for up to an hour when
+  the weather service answered for some games and not for others.
 
 The app is also an installable **PWA** — add it to your home screen for a
 chrome-less, full-screen kiosk window.
@@ -445,18 +499,21 @@ Backend (Python 3.12, SQLite by default — zero setup):
 cd backend
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
+pip install -r requirements.lock -r requirements-dev.txt
 uvicorn app.main:app --reload          # http://localhost:8000
 pytest                                  # run the test suite
 ```
 
-Frontend (Bun + Vite; the dev server proxies `/api` to `localhost:8000`):
+Frontend (Bun + Vite; the dev server proxies `/api` to `localhost:8000`).
+Use Node 22 LTS or 24 LTS for the tooling (`frontend/.node-version`):
 
 ```sh
 cd frontend
 bun install
 bun run dev                             # http://localhost:5173
 bun run typecheck                       # tsc --noEmit
+bun run lint                            # eslint
+bun run test                            # vitest
 ```
 
 ## API reference
@@ -482,6 +539,9 @@ representative selection:
 | `GET /api/history/on-this-day` | Followed teams' past games on today's date (last five seasons) |
 | `GET /api/news?team_id=&limit=` | Aggregated news items |
 | `GET /api/games/{game_id}` | On-demand box score (line scores + performers) |
+| `GET /api/matchup/{game_id}` | Game preview: odds, forecast, each side's form, past meetings, lineups, injuries |
+| `GET /api/odds?ids=` | Betting lines and win probability for a list of games |
+| `GET`/`PUT /api/notifications/prefs` | Per-scope notification mutes and event toggles |
 | `GET /api/map` | Followed/competition team venues for the map |
 | `GET /api/calendar.ics?team_id=` | iCalendar feed (−30 … +60 days) |
 | `GET /api/setup/leagues`, `GET /api/setup/teams/{id}` | Onboarding catalog |
