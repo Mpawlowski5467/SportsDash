@@ -591,7 +591,9 @@ real ESPN traffic (see ROADMAP Phase 2).
   phase only — playoffs-only during playoffs; verified). Keep the
   soccer two-call merge as-is; reuse the same merge helper.
   (Amended 2026-10-11: baseball too — see *Baseball schedules are asked
-  for by season type* at the end of this file.)
+  for by season type* at the end of this file — and basketball, with a
+  third call for the play-in: *Basketball schedules are asked for by
+  season type, the play-in included*, after it.)
 - Schedule competitor scores arrive as OBJECTS here ({value,
   displayValue}) vs strings on the scoreboard — `_coerce_int` already
   handles both; don't regress.
@@ -5939,17 +5941,133 @@ day the postseason began.
   year's and last year's key and 7 d for an older one, which is a
   regular season without its postseason. A restart clears the
   in-process store.
-- **Basketball still makes one bare call, and the NBA's has the same
-  fault.** Checked the same day: bare is the preseason alone (the
-  regular season from 20 October is under `seasontype=2`), and bare
+- **Basketball was left with its one bare call here, though the NBA's
+  has the same fault.** Checked the same day: bare is the preseason alone
+  (the regular season from 20 October is under `seasontype=2`), and bare
   `season=2026` is the 82 regular-season games without the 7 playoff
   games under `seasontype=3`. The WNBA's bare call returned all three
-  phases at once (2 preseason, 46 regular season, 5 postseason).
-  Deliberately left out of this change: an entry is per sport, so it
-  would change every basketball league together.
+  phases at once (2 preseason, 46 regular season, 5 postseason). Left
+  out of this change because an entry is per sport, so it changes every
+  basketball league together; settled the same day, once both leagues
+  had been checked team by team — the next section.
 
 Tests (hermetic): `test_espn.py` — a `_get_json` stub answering as ESPN
 did mid-postseason, for a team in it and a team that missed it: both
 season types are asked for and the regular season is in the result
 either way. `test_history.py` — the same two cases through
 `fetch_season_results`.
+
+## Basketball schedules are asked for by season type, the play-in included (2026-10-11)
+
+Verified live 2026-10-11 for every team of both basketball leagues in
+`espn_catalog.CATALOG` — the NBA's 30, its preseason under way, and the
+WNBA's 15, its Finals a week off. The two leagues' bare
+`teams/{id}/schedule` behave differently, and the NBA has a season type
+the other sports' entries do not ask for.
+
+| NBA call | Answer (all 30 teams) |
+| --- | --- |
+| bare | 3–6 events, all preseason — the same list as `seasontype=1` |
+| `seasontype=2` | 80 events, the 2026-27 regular season from 20 October, none final |
+| `seasontype=3`, `seasontype=5` | 0 events (`200`, `events: []`) |
+| bare, `season=2026` | 82 or 83 events — the same list as `season=2026&seasontype=2` |
+| `season=2026&seasontype=3` | 4–23 events for the 16 playoff teams, 0 for the other 14 |
+| `season=2026&seasontype=5` | 1–2 events for the 8 play-in teams, 0 for the other 22 |
+
+| WNBA call | Answer (all 15 teams) |
+| --- | --- |
+| bare, with or without `season=2026` | all three phases at once: 1–3 preseason, 44–46 regular season and, for the 8 playoff teams, 2–13 postseason |
+| `seasontype=2` and `seasontype=3` together | the bare list less its preseason games, id for id |
+| `seasontype=5` | 0 events (`200`, `events: []`) |
+| bare, `season=2025` | the same shape for the 13 teams of that season; `seasontype` 1, 2 and 3 together are the bare list |
+
+**The NBA's play-in is a season type of its own.** ESPN's
+`seasons/{year}/types` lists five for the NBA — 1 Preseason, 2 Regular
+Season, 3 Postseason, 4 Off Season, 5 Play-In Season — and four for the
+WNBA, NHL, NFL and MLB. The six play-in games of April 2026 are under
+`seasontype=5` and nowhere else: not under 2, not under 3, not in the
+bare `season=2026` list. Four of the eight teams went out in the play-in,
+so their `seasontype=3` is empty; the other four have both. Spot checks
+of earlier seasons: play-in games under `seasontype=5` for 2020 (the
+first), 2021, 2023 and 2025, and none for 2019.
+
+With one bare call, then: through the NBA preseason `refresh_schedules`
+stored the exhibition games and none of the regular season until opening
+night; `GET /history/results/{team_id}?season=YYYY` for a past NBA season
+had neither its play-in nor its playoffs; and preseason finals were in
+both the stored results and the season's list (bare `season=2027` is the
+preseason too), where the Results view counts them toward the last eight
+and the streak. What the bare call lists during the play-in and the
+playoffs is not checkable in October.
+
+- **`_SCHEDULE_PARAM_SETS` gains `Sport.BASKETBALL: ({"seasontype":
+  "2"}, {"seasontype": "5"}, {"seasontype": "3"})`** — three calls, in
+  season order. Not the pair hockey, football and baseball have: with 2
+  and 3 alone a team's play-in game is never fetched, so it is never in
+  the schedule, `live_tick` (which only updates rows already stored)
+  never follows it, and no past season's results hold it. No game id is
+  in two of the three lists (all 45 teams), so today the order decides
+  nothing. Both users of the table take it as they take the others:
+  `EspnProvider.get_schedule` logs and skips a part that failed;
+  `espn_history.fetch_season_results` raises `EspnHistoryError` for one,
+  so part of a season is shown but never cached.
+- **The entry stays per sport, and is right for the WNBA.** Its `2` and
+  `3` are its bare list without the preseason. It has no play-in, and
+  `seasontype=5` answers `200` with no events — as does any season type
+  a league does not have (`seasontype=4` and `=9`, both leagues). That is
+  an empty answer, not a failure: nothing is logged and the season is
+  still cached.
+- **Cost: three schedule calls per followed basketball team where there
+  was one** — per `refresh_schedules` pass, and per team-season the
+  archive has not cached (the head-to-head and on-this-day scans read
+  five seasons each). For a WNBA team one of the three is always empty.
+  The cache TTLs are unchanged.
+- **Preseason (`seasontype=1`) is not asked for**, as for the other
+  sports: 3–6 games a team in the NBA's October, 1–3 in the WNBA's April
+  and May (five of 2026's against sides from outside the league).
+  So in the NBA preseason a team's schedule is now the regular season
+  ahead, as far as the refresh window reaches (18 games for a team
+  checked through the provider), and `season=2027` is an empty list —
+  a `404` from `/history/results` — until the first regular-season
+  final, where it was the preseason finals.
+- **Preseason games already stored are left alone.** No column records
+  a game's season type, so nothing in the database tells them from the
+  season's, and a purge would mean asking ESPN for the list this change
+  stops asking for. What becomes of them:
+  - A stored preseason game still to be played is no longer refreshed,
+    but `live_tick` reads stored rows against the league scoreboard,
+    which carries every season type, so it still goes live and final. One
+    that never does is removed by `prune_stale_games` three days after
+    its start.
+  - A stored preseason final stays (`prune_stale_games` leaves finals),
+    and while it is among a team's newest results it still counts. The
+    Results view's `mergeSeason` keeps the stored games that lead up to
+    the season list's first game, each within `SEASON_GAP_DAYS` (21) of
+    the next, and the NBA's last preseason game is four days before
+    opening night. So on an install that followed an NBA team in October
+    2026 they are in the last eight until eight regular-season games
+    have been played, and in a streak until it is broken — the first
+    fortnight or so of this one season. A later preseason leaves nothing
+    behind for a team follow.
+- **A whole-league follow still stores preseason games.**
+  `get_competition_schedule` reads the scoreboard, not a team schedule,
+  and the scoreboard has every season type (the NBA's October 2026
+  month: 67 preseason events beside 88 regular-season ones; April 2026:
+  96, 6 play-in and 42 postseason). A preseason game there is tagged
+  with a followed team's id when one is a side, and its final reaches
+  that team's stored results as before. Not changed here.
+- **Entries cached before the change keep the old list until they
+  expire**, as for baseball above: a past NBA season cached without its
+  play-in and playoffs can stand for up to 7 days.
+
+Tests (hermetic): `test_espn.py` — a `_get_json` stub answering by season
+type as ESPN did: in the preseason the three season types are asked for
+and the result is the regular season ahead, with no exhibition game; a
+team through the play-in into the playoffs, one out in the play-in, and
+one with no play-in each get every game they have.
+`test_non_soccer_schedule_makes_single_bare_call` used a basketball
+league and became
+`test_schedule_of_a_sport_with_no_param_sets_makes_single_bare_call`, on
+a volleyball one: every team sport the ESPN catalog offers now has an
+entry. `test_history.py` — the same cases through
+`fetch_season_results`, each call carrying the season.

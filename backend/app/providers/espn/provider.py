@@ -386,11 +386,11 @@ class EspnProvider:
         team: Team,
         param_sets: tuple[dict[str, str] | None, ...],
     ) -> list[Game]:
-        """Fetch + merge the halves of a split ESPN team schedule.
+        """Fetch + merge the parts of a split ESPN team schedule.
 
         ESPN splits some team schedules across multiple calls (see
         ``_SCHEDULE_PARAM_SETS``).  The calls are independent — if one
-        fails, log it and use the others (a half schedule beats none);
+        fails, log it and use the others (part of a schedule beats none);
         only when all fail does the error propagate.  Duplicate game ids
         keep the earlier param set's version (see ``_merge_games``).
         """
