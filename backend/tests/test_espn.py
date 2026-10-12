@@ -1009,7 +1009,7 @@ async def test_non_soccer_schedule_makes_single_bare_call() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Hockey/football schedule seasontype 2+3 double-call + merge
+# Hockey/football/baseball schedule seasontype 2+3 double-call + merge
 # ---------------------------------------------------------------------------
 
 HOCKEY_TEAM = Team(
@@ -1139,6 +1139,102 @@ async def test_hockey_schedule_survives_one_failed_seasontype_call() -> None:
     )
     # Half a schedule beats none: the postseason half still comes through.
     assert [game.id for game in games] == ["espn:9500111"]
+
+
+BASEBALL_TEAM = Team(
+    id="saltmarsh-herons",
+    league_id=BASEBALL_LEAGUE.id,
+    name="Saltmarsh Herons",
+    abbreviation="SLT",
+    provider_key="21",
+)
+
+
+def _baseball_event(event_id: str, date: str, *, final: bool = True) -> dict[str, Any]:
+    return _event(
+        event_id=event_id,
+        date=date,
+        home=("21", "Saltmarsh Herons", "SLT"),
+        away=("22", "Cobblewick Badgers", "CBW"),
+        home_score={"value": 5.0, "displayValue": "5"} if final else None,
+        away_score={"value": 3.0, "displayValue": "3"} if final else None,
+        status=(
+            _status(state="post", name="STATUS_FINAL", period=9)
+            if final
+            else _status(state="pre", name="STATUS_SCHEDULED")
+        ),
+    )
+
+
+def _baseball_schedule_mid_postseason(
+    calls: list[dict[str, str] | None], *, made_postseason: bool
+) -> Any:
+    """A ``_get_json`` stub answering as ESPN's baseball schedule did with a
+    postseason under way (verified live 2026-10-11).
+
+    The bare call is the CURRENT phase only: the postseason games of a team
+    still in it, and no events at all for a team that missed out.
+    ``seasontype=2`` is the whole regular season either way, ``seasontype=3``
+    the same as the bare call.
+    """
+    regular_season = {
+        "events": [
+            _baseball_event("9300501", "2026-09-26T23:05Z"),
+            _baseball_event("9300502", "2026-09-27T19:10Z"),
+        ]
+    }
+    postseason: dict[str, Any] = {"events": []}
+    if made_postseason:
+        postseason["events"] = [
+            _baseball_event("9300601", "2026-10-04T20:08Z"),
+            _baseball_event("9300602", "2026-10-13T00:08Z", final=False),
+        ]
+
+    async def fake_get_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        calls.append(params)
+        if params and params.get("seasontype") == "2":
+            return regular_season
+        return postseason
+
+    return fake_get_json
+
+
+async def test_baseball_schedule_keeps_the_regular_season_during_the_postseason() -> None:
+    """One bare call listed the postseason alone once it began, so the
+    regular season's last games were no longer fetched."""
+    provider = EspnProvider()
+    calls: list[dict[str, str] | None] = []
+    provider._get_json = _baseball_schedule_mid_postseason(  # type: ignore[method-assign]
+        calls, made_postseason=True
+    )
+    games = await provider.get_schedule(
+        BASEBALL_LEAGUE, BASEBALL_TEAM, date(2026, 9, 20), date(2026, 11, 15)
+    )
+    assert calls == [{"seasontype": "2"}, {"seasontype": "3"}]
+    assert [game.id for game in games] == [
+        "espn:9300501",
+        "espn:9300502",
+        "espn:9300601",
+        "espn:9300602",
+    ]
+    phases = [game.state.phase for game in games if game.state is not None]
+    assert phases == [GamePhase.FINAL, GamePhase.FINAL, GamePhase.FINAL, GamePhase.SCHEDULED]
+
+
+async def test_baseball_schedule_of_a_team_that_missed_the_postseason() -> None:
+    """Its bare call answers with no events at all in October; the regular
+    season is still there under seasontype=2, and the empty postseason
+    half is not an error."""
+    provider = EspnProvider()
+    calls: list[dict[str, str] | None] = []
+    provider._get_json = _baseball_schedule_mid_postseason(  # type: ignore[method-assign]
+        calls, made_postseason=False
+    )
+    games = await provider.get_schedule(
+        BASEBALL_LEAGUE, BASEBALL_TEAM, date(2026, 9, 20), date(2026, 11, 15)
+    )
+    assert calls == [{"seasontype": "2"}, {"seasontype": "3"}]
+    assert [game.id for game in games] == ["espn:9300501", "espn:9300502"]
 
 
 # ---------------------------------------------------------------------------

@@ -57,10 +57,10 @@ async def season_results_out(
             convert.league_from_row(league_row), convert.team_from_row(team_row), season
         )
     except espn_history.EspnHistoryError as exc:
-        # One of the season's schedule calls failed (hockey and football
-        # fetch the regular season and the playoffs separately).  What did
-        # come back is still worth showing, but it is not the season:
-        # cached, it would stand in for it for up to a week.
+        # One of the season's schedule calls failed (hockey, football and
+        # baseball fetch the regular season and the playoffs separately).
+        # What did come back is still worth showing, but it is not the
+        # season: cached, it would stand in for it for up to a week.
         games, complete = exc.games, False
     if not games:
         return []

@@ -145,15 +145,21 @@ def _month_buckets(start: date, end: date) -> list[str]:
 # Sports whose ESPN team schedules are split across multiple calls; each
 # entry lists the query param sets to fetch and merge (first set wins on
 # duplicate game ids).  Soccer: the bare endpoint returns completed
-# results only, ``?fixture=true`` the upcoming fixtures only.  Hockey and
-# football: the bare endpoint defaults to the CURRENT season phase only
-# (playoffs-only during the playoffs — verified live), so regular season
-# (seasontype 2) and postseason (3) must both be requested explicitly;
-# out of season one of them is simply empty.
+# results only, ``?fixture=true`` the upcoming fixtures only.  Hockey,
+# football and baseball: the bare endpoint defaults to the CURRENT season
+# phase only (playoffs-only during the playoffs — verified live), so
+# regular season (seasontype 2) and postseason (3) must both be requested
+# explicitly; out of season one of them is simply empty.  Baseball's bare
+# call is worse than playoffs-only (verified live 2026-10-11): it is EMPTY
+# for a team that missed the postseason, and with ``?season=`` for a past
+# year it is the regular season alone.  Preseason (seasontype 1, baseball's
+# spring training) is not requested, so exhibition games reach neither the
+# schedule nor a season's results.
 _SCHEDULE_PARAM_SETS: dict[Sport, tuple[dict[str, str] | None, ...]] = {
     Sport.SOCCER: (None, {"fixture": "true"}),
     Sport.HOCKEY: ({"seasontype": "2"}, {"seasontype": "3"}),
     Sport.FOOTBALL: ({"seasontype": "2"}, {"seasontype": "3"}),
+    Sport.BASEBALL: ({"seasontype": "2"}, {"seasontype": "3"}),
 }
 
 

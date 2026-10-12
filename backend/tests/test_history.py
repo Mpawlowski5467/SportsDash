@@ -212,7 +212,7 @@ async def test_fetch_season_results_returns_finals_only(
 
 
 # ---------------------------------------------------------------------------
-# A season ESPN serves in two calls (hockey, football): regular + playoffs
+# A season ESPN serves in two calls (hockey, football, baseball): regular + playoffs
 # ---------------------------------------------------------------------------
 
 HOCKEY_LEAGUE_ROW = LeagueORM(
@@ -374,6 +374,43 @@ async def test_last_years_season_key_keeps_the_short_ttl(
         await season_results.season_results_out(HOCKEY_LEAGUE_ROW, HOCKEY_TEAM_ROW, season)
 
     assert ttls == {"2027": 6 * 3600, "2026": 6 * 3600, "2025": 7 * 24 * 3600}
+
+
+BASEBALL_LEAGUE = domain.League(
+    id="meridian-baseball",
+    sport=domain.Sport.BASEBALL,
+    name="Meridian Baseball Association",
+    provider="espn",
+    provider_key="baseball/meridian",
+)
+
+
+@pytest.mark.parametrize(("made_postseason", "finals"), [(True, 24), (False, 20)])
+async def test_baseball_season_is_the_regular_season_and_the_postseason(
+    monkeypatch: pytest.MonkeyPatch, made_postseason: bool, finals: int
+) -> None:
+    """ESPN's bare baseball schedule is one phase of a season (verified live
+    2026-10-11): with a postseason under way it is those games alone, or no
+    events at all for a team that missed out, and for a past year it is the
+    regular season without its postseason.  Asked for by seasontype, the
+    season comes back whole."""
+    calls: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seasontype = request.url.params.get("seasontype")
+        calls.append(seasontype)
+        if seasontype == "2":
+            return httpx.Response(200, json=_REGULAR_SEASON)
+        # seasontype=3 — and what a bare call got mid-postseason.
+        return httpx.Response(200, json=_PLAYOFFS if made_postseason else {"events": []})
+
+    _route_history(monkeypatch, handler)
+    games = await espn_history.fetch_season_results(BASEBALL_LEAGUE, FOXES, 2024)
+
+    assert calls == ["2", "3"]
+    assert len(games) == finals
+    assert games[-1].id == "espn:reg-0"  # the regular season, back to its first game
+    assert games[0].id == ("espn:po-3" if made_postseason else "espn:reg-19")
 
 
 # ---------------------------------------------------------------------------
