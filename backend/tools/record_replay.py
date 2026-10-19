@@ -158,6 +158,119 @@ def is_terminal(status: dict[str, Any]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Field shapes (pure; the weekly live canary compares a live scoreboard
+# against the recorded fixtures with these — tests/live_smoke.py)
+# ---------------------------------------------------------------------------
+
+
+def _json_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"  # ESPN mixes 3 and 3.0; the parsers coerce both
+    return "string" if isinstance(value, str) else type(value).__name__
+
+
+def field_paths(node: Any, path: str = "") -> dict[str, set[str]]:
+    """Every leaf path in ``node`` with the JSON types seen there.
+
+    List positions collapse to ``[]`` (``competitions[].status.period``), so
+    one event yields the same paths however many competitors it has.
+    """
+    out: dict[str, set[str]] = {}
+
+    def walk(value: Any, at: str) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                walk(child, f"{at}.{key}" if at else key)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child, f"{at}[]")
+        else:
+            out.setdefault(at, set()).add(_json_type(value))
+
+    walk(node, path)
+    return out
+
+
+@dataclass(frozen=True)
+class FieldShape:
+    """What the recorded events of one league look like, path by path."""
+
+    total: int  # recorded events the shape was built from
+    seen: dict[str, int]  # path -> how many of them carry it
+    types: dict[str, set[str]]  # path -> JSON types recorded there
+
+    def required(self, path: str) -> bool:
+        return self.seen.get(path, 0) == self.total
+
+
+def fixture_shape(events: list[dict[str, Any]]) -> FieldShape:
+    """The shape of a league's recorded (trimmed) scoreboard events."""
+    seen: dict[str, int] = {}
+    types: dict[str, set[str]] = {}
+    for event in events:
+        for path, kinds in field_paths(event).items():
+            seen[path] = seen.get(path, 0) + 1
+            types.setdefault(path, set()).update(kinds)
+    return FieldShape(total=len(events), seen=seen, types=types)
+
+
+@dataclass(frozen=True)
+class Drift:
+    failures: list[str]  # a required field gone everywhere, or a type change
+    warnings: list[str]  # a required field missing from only some live events
+
+
+def shape_drift(label: str, expected: FieldShape, live_events: list[dict[str, Any]]) -> Drift:
+    """Compare live scoreboard events against the recorded shape.
+
+    Only the paths the fixtures carry are checked — they are trimmed to what
+    the parsers read, so a field ESPN adds is not drift, and one it removes
+    or retypes is.  A required path (in every recorded event) missing from
+    *every* live event is drift; missing from only some is a warning, since
+    one odd status (a postponement, say) can legitimately lack a field.
+    """
+    failures: list[str] = []
+    warnings: list[str] = []
+    if not live_events:
+        return Drift(failures, warnings)
+    live = [field_paths(event) for event in live_events]
+    n = len(live)
+    for path in sorted(expected.seen):
+        carrying = [paths[path] for paths in live if path in paths]
+        recorded = "/".join(sorted(expected.types[path]))
+        if expected.required(path) and len(carrying) < n:
+            where = f"{expected.seen[path]}/{expected.total} recorded polls"
+            line = (
+                f"{label}: {path} missing in {n - len(carrying)}/{n} live events "
+                f"(was {recorded} in {where})"
+            )
+            (failures if not carrying else warnings).append(line)
+        live_types = set().union(*carrying) if carrying else set()
+        new_types = live_types - expected.types[path] - {"null"}
+        if new_types:
+            failures.append(
+                f"{label}: {path} is now {'/'.join(sorted(new_types))} (was {recorded})"
+            )
+    return Drift(failures, warnings)
+
+
+def load_fixture_events(fixture_dir: Path = FIXTURE_DIR) -> dict[str, list[dict[str, Any]]]:
+    """Recorded scoreboard events per league key, from every replay fixture."""
+    by_league: dict[str, list[dict[str, Any]]] = {}
+    for path in sorted(fixture_dir.glob("*.json.gz")):
+        doc = json.loads(gzip.decompress(path.read_bytes()))
+        events = by_league.setdefault(doc["league_key"], [])
+        for record in doc["snapshots"]:
+            if record.get("source") == "scoreboard":
+                events.extend((record.get("payload") or {}).get("events") or [])
+    return by_league
+
+
+# ---------------------------------------------------------------------------
 # Recording
 # ---------------------------------------------------------------------------
 
