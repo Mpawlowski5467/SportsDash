@@ -15,7 +15,13 @@ from app.config import get_settings
 from app.db import session_scope
 from app import background
 from app.models import domain
-from app.models.domain import EventType, GameEvent, GamePhase, GameState
+from app.models.domain import (
+    SPORTS_WITH_BREAKS,
+    EventType,
+    GameEvent,
+    GamePhase,
+    GameState,
+)
 from app.models.orm import EventORM, GameORM, NotificationPrefORM, PlayerORM
 from app.services import (
     notify,
@@ -346,6 +352,7 @@ async def live_tick() -> None:
                             new_state,
                             home_name=target.home_name,
                             away_name=target.away_name,
+                            breaks=league.sport in SPORTS_WITH_BREAKS,
                         )
                         # No row any more: a follow save landed while the
                         # scoreboard was being fetched and deleted this game.

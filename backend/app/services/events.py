@@ -59,15 +59,24 @@ def diff_states(
     *,
     home_name: str,
     away_name: str,
+    breaks: bool = True,
 ) -> list[GameEvent]:
     """Detect notification-worthy transitions between two snapshots.
 
     ``prev`` is the previously stored snapshot (``None`` when the game
     has never been observed live before); ``new`` is the snapshot just
     fetched from the provider.  Multiple events can fire from a single
-    diff (e.g. a period bump and the final whistle observed in the same
-    poll); they are returned in rule order: GAME_START, PERIOD_START,
-    INTERMISSION, FINAL.  Identical snapshots produce no events.
+    diff (e.g. a break and the next period observed in the same poll);
+    they are returned in rule order: GAME_START, INTERMISSION,
+    PERIOD_START, FINAL.  Identical snapshots produce no events.
+
+    ``breaks`` says whether the game's sport has between-period breaks
+    worth announcing — the one policy the caller decides per sport (see
+    ``SPORTS_WITH_BREAKS``).  Without it no INTERMISSION fires at all:
+    baseball's Mid/End half-inning breaks are flagged as intermissions
+    for display, but are not notification-worthy.  With it, a break the
+    poll never saw (ESPN shows a quarter break for under a poll interval)
+    is announced when the next period appears, just before it.
     """
     events: list[GameEvent] = []
     title = _title(home_name, away_name)
@@ -88,32 +97,25 @@ def diff_states(
     # PERIOD_START: the period counter advanced while the game was in
     # progress.  Period 1 is covered by GAME_START.  Requires a previous
     # snapshot — there is nothing to compare against on first sighting.
-    if (
+    period_advanced = (
         prev is not None
         and (prev.phase is GamePhase.IN_PROGRESS or new.phase is GamePhase.IN_PROGRESS)
         and new.period > prev.period
         and new.period > 1
-    ):
-        label = _label_or_period(new.period_label, new.period)
-        events.append(
-            GameEvent(
-                type=EventType.PERIOD_START,
-                game_id=game_id,
-                title=title,
-                message=f"{label} is underway.",
-                dedupe_key=f"{game_id}:period:{new.period}",
-            )
-        )
+    )
 
-    # INTERMISSION: the intermission flag flipped on while the game is
-    # in progress (halftime, between quarters, ...).  The message names
-    # the period that just ended, so it needs the previous label.
+    # INTERMISSION, before the PERIOD_START it precedes.  Either the flag
+    # flipped on while the game is in progress (halftime, between quarters,
+    # ...), or — catch-up — the next period began although the break
+    # before it was never observed.  The message names the period that
+    # just ended, so it needs the previous label.
     if (
-        prev is not None
+        breaks
+        and prev is not None
         and prev.phase is GamePhase.IN_PROGRESS
         and new.phase is GamePhase.IN_PROGRESS
         and not prev.is_intermission
-        and new.is_intermission
+        and (new.is_intermission or (period_advanced and prev.period >= 1))
     ):
         prev_label = _label_or_period(prev.period_label, prev.period)
         score = _score_line(new, home_name=home_name, away_name=away_name)
@@ -124,6 +126,18 @@ def diff_states(
                 title=title,
                 message=f"End of {prev_label}. {score}.",
                 dedupe_key=f"{game_id}:intermission:{prev.period}",
+            )
+        )
+
+    if period_advanced:
+        label = _label_or_period(new.period_label, new.period)
+        events.append(
+            GameEvent(
+                type=EventType.PERIOD_START,
+                game_id=game_id,
+                title=title,
+                message=f"{label} is underway.",
+                dedupe_key=f"{game_id}:period:{new.period}",
             )
         )
 

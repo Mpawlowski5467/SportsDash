@@ -227,6 +227,11 @@ def _hockey_label(period: int) -> str:
     return "OT" if overtime == 1 else f"{overtime}OT"
 
 
+# Regulation length for the sports whose end-of-period status can also be
+# the end of the game (see ``_normalize_period``'s ``scores_level``).
+_REGULATION_PERIODS = {Sport.BASKETBALL: 4, Sport.FOOTBALL: 4, Sport.HOCKEY: 3}
+
+
 def _normalize_period(
     sport: Sport,
     phase: GamePhase,
@@ -234,8 +239,16 @@ def _normalize_period(
     status_name: str,
     display_clock: str | None,
     detail_text: str,
+    *,
+    scores_level: bool = True,
 ) -> tuple[int, str, str | None, bool]:
-    """Return ``(period, period_label, clock, is_intermission)`` per sport."""
+    """Return ``(period, period_label, clock, is_intermission)`` per sport.
+
+    ``scores_level`` matters only at the end of regulation: an "End of 4th"
+    (or a hockey "End of 3rd") with the scores apart is the end of the game
+    — ESPN shows it for a poll or so before Final — not a break.  Level
+    scores keep it a break: the one before overtime.
+    """
     if phase in (GamePhase.SCHEDULED, GamePhase.POSTPONED, GamePhase.CANCELED):
         # Real ESPN payloads report ``period: 1`` for pre-game baseball
         # (and postponed games), which would leak a bogus "Inning 1"
@@ -248,9 +261,9 @@ def _normalize_period(
         # Football quarters map exactly like basketball ("Q1".."Q4",
         # period 5 → "OT"); STATUS_HALFTIME / quarter-break statuses are
         # intermissions for both.
-        intermission = live and (
-            "HALFTIME" in upper or "END_PERIOD" in upper or "END_OF_PERIOD" in upper
-        )
+        end_of_period = "END_PERIOD" in upper or "END_OF_PERIOD" in upper
+        game_over = end_of_period and period >= _REGULATION_PERIODS[sport] and not scores_level
+        intermission = live and ("HALFTIME" in upper or end_of_period) and not game_over
         clock = display_clock if (live and not intermission) else None
         return period, _quarter_label(period), clock, intermission
 
@@ -268,11 +281,11 @@ def _normalize_period(
         # Between-period breaks: live + an END_PERIOD-style status name,
         # or a detail like "End of 1st Period".  (Defensive: the live
         # intermission shape is unverified until the next live window.)
-        intermission = (
-            live
-            and not shootout
-            and ("END_PERIOD" in upper or "END_OF_PERIOD" in upper or "END OF" in upper_detail)
+        end_of_period = (
+            "END_PERIOD" in upper or "END_OF_PERIOD" in upper or "END OF" in upper_detail
         )
+        game_over = end_of_period and period >= _REGULATION_PERIODS[sport] and not scores_level
+        intermission = live and not shootout and end_of_period and not game_over
         label = "SO" if shootout else _hockey_label(period)
         clock = display_clock if (live and not intermission) else None
         return period, label, clock, intermission
@@ -365,14 +378,22 @@ def _build_state(
     detail_text = " ".join(
         str(stype.get(key) or "") for key in ("shortDetail", "detail", "altDetail")
     )
+    home_score = _coerce_int(home.get("score")) or 0
+    away_score = _coerce_int(away.get("score")) or 0
     period, label, clock, intermission = _normalize_period(
-        league.sport, phase, raw_period, status_name, display_clock, detail_text
+        league.sport,
+        phase,
+        raw_period,
+        status_name,
+        display_clock,
+        detail_text,
+        scores_level=home_score == away_score,
     )
     return GameState(
         game_id=game_id,
         phase=phase,
-        home_score=_coerce_int(home.get("score")) or 0,
-        away_score=_coerce_int(away.get("score")) or 0,
+        home_score=home_score,
+        away_score=away_score,
         period=period,
         period_label=label,
         clock=clock,

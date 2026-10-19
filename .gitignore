@@ -29,3 +29,7 @@ backups/
 # Throwaway screen recordings / preview captures from map & UI tuning sessions
 *.mp4
 *-preview.png
+
+# Replay recorder working files (backend/tools/record_replay.py); finished
+# games are gzipped into backend/tests/fixtures/replay/
+backend/.replay-work/

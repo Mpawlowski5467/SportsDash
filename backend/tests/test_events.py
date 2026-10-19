@@ -63,7 +63,8 @@ def soccer_diff(prev: GameState | None, new: GameState) -> list:
 
 
 def baseball_diff(prev: GameState | None, new: GameState) -> list:
-    return diff_states(prev, new, home_name=BASEBALL_HOME, away_name=BASEBALL_AWAY)
+    # live_tick turns break events off for baseball (SPORTS_WITH_BREAKS).
+    return diff_states(prev, new, home_name=BASEBALL_HOME, away_name=BASEBALL_AWAY, breaks=False)
 
 
 # --------------------------------------------------------------------------
@@ -88,8 +89,9 @@ class TestQuarterFlow:
 
     @pytest.mark.parametrize("period", [2, 3, 4])
     def test_later_quarters_fire_period_start(self, period: int) -> None:
+        """Out of an observed break, the next quarter fires PERIOD_START only."""
         prev = make_state(
-            period=period - 1, label=f"Q{period - 1}", home=20, away=18, clock="00:00"
+            period=period - 1, label=f"Q{period - 1}", home=20, away=18, intermission=True
         )
         new = make_state(period=period, label=f"Q{period}", home=20, away=18, clock="12:00")
 
@@ -102,7 +104,7 @@ class TestQuarterFlow:
         assert event.dedupe_key == f"{BBALL_GAME_ID}:period:{period}"
 
     def test_overtime_fires_period_start_with_label(self) -> None:
-        prev = make_state(period=4, label="Q4", home=98, away=98, clock="00:00")
+        prev = make_state(period=4, label="Q4", home=98, away=98, intermission=True)
         new = make_state(period=5, label="OT", home=98, away=98, clock="05:00")
 
         events = bball_diff(prev, new)
@@ -110,6 +112,50 @@ class TestQuarterFlow:
         assert [e.type for e in events] == [EventType.PERIOD_START]
         assert "OT" in events[0].message
         assert events[0].dedupe_key == f"{BBALL_GAME_ID}:period:5"
+
+    def test_missed_break_is_announced_before_the_next_quarter(self) -> None:
+        """A quarter break the poll never saw (ESPN shows it for under a poll
+        interval) is caught up when the next quarter appears, ahead of it."""
+        prev = make_state(period=1, label="Q1", home=7, away=3, clock="00:39")
+        new = make_state(period=2, label="Q2", home=7, away=3, clock="15:00")
+
+        events = bball_diff(prev, new)
+
+        assert [e.dedupe_key for e in events] == [
+            f"{BBALL_GAME_ID}:intermission:1",
+            f"{BBALL_GAME_ID}:period:2",
+        ]
+        assert "End of Q1" in events[0].message
+
+    def test_break_and_next_period_in_one_poll_put_the_break_first(self) -> None:
+        """ESPN once reported the end of Q1 as Halftime with period 2: the
+        break still belongs to Q1 and comes before Q2."""
+        prev = make_state(period=1, label="Q1", home=7, away=0, clock="00:20")
+        new = make_state(period=2, label="Q2", home=7, away=0, intermission=True)
+
+        events = bball_diff(prev, new)
+
+        assert [e.dedupe_key for e in events] == [
+            f"{BBALL_GAME_ID}:intermission:1",
+            f"{BBALL_GAME_ID}:period:2",
+        ]
+
+    def test_no_catch_up_break_when_the_game_ends(self) -> None:
+        prev = make_state(period=4, label="Q4", home=24, away=17, clock="00:05")
+        new = make_state(GamePhase.FINAL, period=4, label="Q4", home=24, away=17)
+
+        assert [e.type for e in bball_diff(prev, new)] == [EventType.FINAL]
+
+    def test_breaks_off_fires_no_intermission_at_all(self) -> None:
+        prev = make_state(period=1, label="Q1", clock="00:39")
+        flagged = make_state(period=1, label="Q1", intermission=True)
+        advanced = make_state(period=2, label="Q2", clock="15:00")
+
+        def diff(a: GameState, b: GameState) -> list:
+            return diff_states(a, b, home_name=BBALL_HOME, away_name=BBALL_AWAY, breaks=False)
+
+        assert diff(prev, flagged) == []
+        assert [e.type for e in diff(prev, advanced)] == [EventType.PERIOD_START]
 
     def test_intermission_carries_prev_label_and_score(self) -> None:
         prev = make_state(period=2, label="Q2", home=51, away=48, clock="00:14")
@@ -243,6 +289,18 @@ class TestInningsFlow:
         new = make_state(game_id=BASEBALL_GAME_ID, period=5, label="Bot 5", home=2, away=4)
 
         assert baseball_diff(prev, new) == []
+
+    def test_half_inning_breaks_fire_nothing(self) -> None:
+        """Mid/End N are flagged intermissions for display, but not
+        notification-worthy (owner ruling): no INTERMISSION for baseball."""
+        top = make_state(game_id=BASEBALL_GAME_ID, period=3, label="Top 3")
+        mid = make_state(game_id=BASEBALL_GAME_ID, period=3, label="Mid 3", intermission=True)
+        bot = make_state(game_id=BASEBALL_GAME_ID, period=3, label="Bot 3")
+        end = make_state(game_id=BASEBALL_GAME_ID, period=3, label="End 3", intermission=True)
+
+        assert baseball_diff(top, mid) == []
+        assert baseball_diff(mid, bot) == []
+        assert baseball_diff(bot, end) == []
 
     def test_new_inning_fires_period_start(self) -> None:
         prev = make_state(game_id=BASEBALL_GAME_ID, period=5, label="Bot 5", home=2, away=4)
@@ -405,7 +463,7 @@ class TestDedupeKeys:
         assert start.dedupe_key == f"{gid}:start"
 
         period = bball_diff(
-            make_state(period=2, label="Q2"),
+            make_state(period=2, label="Q2", intermission=True),
             make_state(period=3, label="Q3"),
         )[0]
         assert period.dedupe_key == f"{gid}:period:3"
