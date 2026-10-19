@@ -186,15 +186,21 @@ Sport-agnostic transition detector. Pure functions, no I/O, no sport
 specifics (providers already normalized period semantics).
 
 ```python
-def diff_states(prev: GameState | None, new: GameState, *, home_name: str, away_name: str) -> list[GameEvent]
+def diff_states(prev: GameState | None, new: GameState, *, home_name: str, away_name: str, breaks: bool = True) -> list[GameEvent]
 def starting_soon_event(game_row_start_utc: datetime, game_id: str, *, home_name: str, away_name: str, minutes_out: int) -> GameEvent
 ```
 
 Rules for `diff_states` (in this order; multiple events can fire in one diff):
 - phase `scheduled→in_progress` (or `prev is None` and new is live) → `GAME_START`, dedupe `"{game_id}:start"`.
+- only when `breaks`: while `in_progress`, `is_intermission` False→True — or, catch-up, the period advanced (rule below) out of a period whose break was never observed (`prev.is_intermission` False) → `INTERMISSION` ("End of {prev.period_label}…" with score), dedupe `"{game_id}:intermission:{prev.period}"`. It always precedes the `PERIOD_START` of the same diff: the break belongs to the period that ended.
 - while `in_progress`, `new.period > prev.period` and `new.period > 1` → `PERIOD_START`, message uses `new.period_label`, dedupe `"{game_id}:period:{new.period}"`. (Period 1 is covered by GAME_START.)
-- while `in_progress`, `is_intermission` False→True → `INTERMISSION` ("End of {prev.period_label}…" with score), dedupe `"{game_id}:intermission:{prev.period}"`.
 - phase →`final` (from anything non-final) → `FINAL` with final score, dedupe `"{game_id}:final"`.
+- `breaks` is the caller's per-sport policy: `live_tick` passes
+  `league.sport in SPORTS_WITH_BREAKS` (basketball, football, hockey,
+  soccer). Baseball is excluded by owner ruling (2026-10-18): Mid/End
+  half-inning breaks stay `is_intermission=True` for display but are not
+  notification-worthy. The catch-up exists because ESPN shows an NFL
+  quarter break for less than one 45s poll (recorded live 2026-10-18).
 - `starting_soon_event` dedupe `"{game_id}:soon"`; its message shows the
   start time localized to `settings.tzinfo` (a push notification is a
   response boundary — never UTC there).
@@ -576,14 +582,14 @@ real ESPN traffic (see ROADMAP Phase 2).
     `type.detail`/`altDetail` containing "SO" in preference to raw
     period). clock from displayClock while live. Intermission:
     state "in" + `END_PERIOD`-style status name (or detail "End of
-    {n}th") → is_intermission=True.
-    **Still provisional.** That intermission mapping was written
-    defensively from ESPN's documented status names and has never been
-    checked against a live NHL feed; it cannot be, because verifying it
-    needs a game actually sitting between periods. Next window: the
-    2026-27 NHL season, from October 2026. Tracked as *NHL intermission,
-    verified live* under **Loose ends** in
-    [ROADMAP.md](../ROADMAP.md).
+    {n}th") → is_intermission=True. **Verified live 2026-10-18**
+    (CBJ @ MIN, recorded in `backend/tests/fixtures/replay/`): state
+    `in`, name `STATUS_END_PERIOD`, detail "End of 1st"/"End of 2nd".
+    The same feed shows "End of 3rd" for one poll before Final, so an
+    end-of-period status at or past the last regulation period (hockey
+    3, basketball/football 4) with the scores apart is the end of the
+    game, not a break; level scores keep it the break before OT. Still
+    unverified: a playoff period 5 reading `2OT` rather than `SO`.
   - Football: quarters like basketball ("Q1".."Q4", period≥5 → "OT");
     `STATUS_HALFTIME` → intermission.
 - Schedules: for hockey AND football leagues fetch `?seasontype=2` and

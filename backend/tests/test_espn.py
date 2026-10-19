@@ -830,6 +830,52 @@ def test_football_halftime_is_intermission(football_games: dict[str, Any]) -> No
     assert state.clock is None
 
 
+@pytest.mark.parametrize(
+    ("league", "period", "detail", "home_score", "away_score", "expected"),
+    [
+        # Scores apart at the end of regulation: the game is over (ESPN shows
+        # this for a poll before Final, as recorded live), not a break.
+        (HOCKEY_LEAGUE, 3, "End of 3rd", "4", "2", False),
+        (FOOTBALL_LEAGUE, 4, "End of 4th", "27", "20", False),
+        (BASKETBALL_LEAGUE, 4, "End of 4th", "101", "98", False),
+        # Level scores: the break before overtime.
+        (HOCKEY_LEAGUE, 3, "End of 3rd", "2", "2", True),
+        (FOOTBALL_LEAGUE, 4, "End of 4th", "20", "20", True),
+        # Before the end of regulation the score doesn't matter.
+        (HOCKEY_LEAGUE, 2, "End of 2nd", "3", "1", True),
+        (FOOTBALL_LEAGUE, 1, "End of 1st", "7", "0", True),
+    ],
+)
+def test_end_of_regulation_with_a_leader_is_not_a_break(
+    league: League,
+    period: int,
+    detail: str,
+    home_score: str,
+    away_score: str,
+    expected: bool,
+) -> None:
+    event = _event(
+        event_id="9700001",
+        date="2026-10-18T23:00Z",
+        home=("31", "Gravenford Owls", "GRV"),
+        away=("32", "Tidewick Gulls", "TDW"),
+        home_score=home_score,
+        away_score=away_score,
+        status=_status(
+            state="in",
+            name="STATUS_END_PERIOD",
+            period=period,
+            display_clock="0:00",
+            detail=detail,
+            short_detail=detail,
+        ),
+    )
+    state = _parse_scoreboard({"events": [event]}, league)[0].state
+    assert state is not None
+    assert state.phase is GamePhase.IN_PROGRESS
+    assert state.is_intermission is expected
+
+
 # ---------------------------------------------------------------------------
 # Team schedule
 # ---------------------------------------------------------------------------

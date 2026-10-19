@@ -41,6 +41,13 @@ LEADERBOARD_SPORTS = frozenset({Sport.GOLF, Sport.RACING})
 # sports (basketball, hockey, volleyball, mma) skip the weather lookup.
 WEATHER_SPORTS = frozenset({Sport.SOCCER, Sport.BASEBALL, Sport.FOOTBALL, Sport.GOLF, Sport.TENNIS})
 
+# Sports whose between-period breaks (quarter breaks, halftime, hockey
+# intermissions) are announced — ``diff_states(..., breaks=...)``.  Baseball
+# is out by owner ruling: a half-inning break is not an intermission worth
+# a notification, even though the provider flags Mid/End for display.
+# Tennis, MMA and volleyball report no breaks at all.
+SPORTS_WITH_BREAKS = frozenset({Sport.BASKETBALL, Sport.FOOTBALL, Sport.HOCKEY, Sport.SOCCER})
+
 
 class GamePhase(str, Enum):
     SCHEDULED = "scheduled"
